@@ -146,12 +146,25 @@ async def initialize_agent():
     global agent_executor, memory
     
     try:
+    
         # Initialize OpenAI LLM
+        load_dotenv()
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("BASE_URL")    
+
         llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.1,
-            streaming=True
-        )
+                model="gemini-1.5-flash",
+                base_url=base_url,
+                api_key=api_key,
+                temperature=0.1,
+                streaming=True         
+            )
+
+        # llm = ChatOpenAI(
+        #     model="gpt-4o-mini",
+        #     temperature=0.1,
+        #     streaming=True
+        # )
         
         # Get MCP tools and convert to LangChain format
         mcp_tools = await get_mcp_tools()
