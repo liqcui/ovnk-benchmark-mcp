@@ -167,6 +167,65 @@ async def initialize_components():
         unified_analyzer = UnifiedPerformanceAnalyzer()
 
 @app.tool(
+    name="get_mcp_health_status",
+    description="""Health check for the MCP server. Verifies MCP server is running, Prometheus connectivity, and Kubernetes API connectivity. Returns component statuses and timestamps."""
+)
+async def get_mcp_health_status() -> Dict[str, Any]:
+    """Return health status for MCP server, Prometheus, and KubeAPI"""
+    global auth_manager, prometheus_client
+    try:
+        # Ensure components exist
+        if not auth_manager or not prometheus_client:
+            await initialize_components()
+
+        # Test Prometheus connectivity
+        prometheus_ok = False
+        prometheus_error: Optional[str] = None
+        try:
+            # Prefer lightweight 'up' query via PrometheusBaseQuery
+            if prometheus_client:
+                prometheus_ok = await prometheus_client.test_connection()
+            # Fallback to auth method if needed
+            if not prometheus_ok and auth_manager:
+                prometheus_ok = await auth_manager.test_prometheus_connection()
+        except Exception as e:
+            prometheus_error = str(e)
+            prometheus_ok = False
+
+        # Test Kube API connectivity
+        kubeapi_ok = False
+        kubeapi_error: Optional[str] = None
+        try:
+            if auth_manager:
+                kubeapi_ok = await auth_manager.test_kubeapi_connection()
+        except Exception as e:
+            kubeapi_error = str(e)
+            kubeapi_ok = False
+
+        status = "healthy" if prometheus_ok and kubeapi_ok else ("degraded" if prometheus_ok or kubeapi_ok else "unhealthy")
+
+        return {
+            "status": status,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "mcp_server": {
+                "running": True,
+                "transport": "streamable-http",
+            },
+            "prometheus": {
+                "connected": prometheus_ok,
+                "url": getattr(auth_manager, "prometheus_url", None) if auth_manager else None,
+                "error": prometheus_error,
+            },
+            "kubeapi": {
+                "connected": kubeapi_ok,
+                "node_count": (auth_manager.cluster_info.get("node_count") if (auth_manager and auth_manager.cluster_info) else None),
+                "error": kubeapi_error,
+            },
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@app.tool(
     name="get_openshift_general_info",
     description="""Get comprehensive OpenShift cluster information including NetworkPolicy counts, AdminNetworkPolicy counts, EgressFirewall counts, node status, and resource utilization. This tool provides cluster-wide configuration and status information that is essential for understanding the overall state of the OpenShift cluster before analyzing performance metrics.
 

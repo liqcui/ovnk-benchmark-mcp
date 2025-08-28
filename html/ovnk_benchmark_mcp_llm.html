@@ -517,32 +517,32 @@
             <div class="quick-actions">
                 <h3>Quick Actions</h3>
                 <button class="action-button" onclick="sendQuickMessage('Perform a comprehensive health check')">
-                    🔍 Health Check
+                    Health Check
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('What is the current cluster status?')">
-                    🏛️ Cluster Overview
+                    Cluster Overview
                 </button>
                 <button class="action-button"
                     onclick="sendQuickMessage('Show me node information with resource utilization')">
-                    🖥️ Cluster Node Usage
+                    Cluster Node Usage
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Check API server performance metrics')">
-                    ⚡ API Performance
+                    API Performance
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
-                    🔀 OVN-K Deep Dive
+                    OVN-K Deep Dive
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Analyze OVS performance metrics')">
-                    🌐 OVS Analysis
+                    OVS Analysis
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Check Multus CNI performance')">
-                    🎯 Multus Analysis
+                    Multus Analysis
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Analyze sync duration performance')">
-                    ⏱️ Sync Duration
+                    Sync Duration
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Run unified performance analysis')">
-                    📈 Full Performance Report
+                    Full Performance Report
                 </button>
             </div>
 
@@ -700,7 +700,7 @@
                 } catch (error) {
                     this.showTyping(false);
                     this.addMessage(
-                        `⚠️ Connection Error: ${error.message}<br><em>Make sure the MCP client is running on port 8001</em>`,
+                        `Connection Error: ${error.message}<br><em>Make sure the MCP client is running on port 8001</em>`,
                         'error'
                     );
                 }
@@ -746,7 +746,7 @@
 
                                     } else if (data.type === 'error') {
                                         this.showTyping(false);
-                                        this.addMessage('⚠️ ' + data.content, 'error');
+                                        this.addMessage(data.content, 'error');
                                     }
                                 } catch (e) {
                                     console.error('Error parsing SSE data:', e);
@@ -842,17 +842,17 @@
 
             async checkClusterHealth() {
                 try {
-                    const clusterResponse = await fetch('http://localhost:8001/api/tools/health_check', {
+                    const clusterResponse = await fetch('http://localhost:8001/api/tools/get_performance_health_check', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({})
                     });
                     const clusterHealth = await clusterResponse.json();
 
-                    const overallStatus = clusterHealth.overall_status;
-                    if (overallStatus === 'excellent' || overallStatus === 'good') {
+                    const overallStatus = clusterHealth.overall_cluster_health || 'unknown';
+                    if (overallStatus === 'EXCELLENT' || overallStatus === 'excellent' || overallStatus === 'GOOD' || overallStatus === 'good') {
                         this.updateClusterStatus('connected', `Cluster ${overallStatus.toUpperCase()}`);
-                    } else if (overallStatus === 'moderate') {
+                    } else if (overallStatus === 'MODERATE' || overallStatus === 'moderate') {
                         this.updateClusterStatus('checking', 'Cluster MODERATE');
                     } else {
                         this.updateClusterStatus('disconnected', 'Cluster Issues Detected');

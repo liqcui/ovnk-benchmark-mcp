@@ -282,6 +282,25 @@ class OpenShiftAuth:
             print(f"Prometheus connection test failed: {e}")
             return False
     
+    async def test_kubeapi_connection(self) -> bool:
+        """Test connectivity to the Kubernetes API server"""
+        try:
+            if not self.kube_client:
+                if self.kubeconfig_path and os.path.exists(self.kubeconfig_path):
+                    config.load_kube_config(config_file=self.kubeconfig_path)
+                elif os.path.exists('/var/run/secrets/kubernetes.io/serviceaccount/token'):
+                    config.load_incluster_config()
+                else:
+                    config.load_kube_config()
+                self.kube_client = client.ApiClient()
+
+            v1 = client.CoreV1Api(self.kube_client)
+            v1.list_namespace(limit=1)
+            return True
+        except Exception as e:
+            print(f"KubeAPI connection test failed: {e}")
+            return False
+    
     def get_cluster_summary(self) -> Dict[str, Any]:
         """Get a summary of cluster information"""
         return {
