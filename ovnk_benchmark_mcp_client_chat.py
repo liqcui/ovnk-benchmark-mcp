@@ -162,7 +162,10 @@ class MCPClient:
                             logger.info(f"Session ID: in call_tool {get_session_id()}")
                         logger.info(f"Calling tool {tool_name} with params {params}")
 
-                        request_data = params or {}
+                        request_data = {
+                            request: params or {}
+                        }
+    
                         result = await session.call_tool(tool_name, request_data)
                         json_data = json.loads(result.content[0].text)
                         return json_data
