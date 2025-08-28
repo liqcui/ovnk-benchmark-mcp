@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional, TypedDict, Annotated
 import aiohttp
 import traceback
-
+import load_dotenv
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
@@ -45,12 +45,17 @@ class PerformanceDataAgent:
         self.duration = duration
         self.run_id = str(uuid.uuid4())
         
-        # Initialize LLM
+        load_dotenv()
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("BASE_URL")    
+
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.1,
-            api_key=openai_api_key
-        )
+                model="gemini-1.5-flash",
+                base_url=base_url,
+                api_key=api_key,
+                temperature=0.1,
+                streaming=True         
+            )
         
         # Create workflow graph
         self.workflow = self._create_workflow()

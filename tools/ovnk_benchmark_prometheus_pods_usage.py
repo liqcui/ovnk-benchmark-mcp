@@ -241,6 +241,9 @@ class PodsUsageCollector:
                 node_info = await self._get_node_info(pod_name)
                 if node_info:
                     pod_usage[pod_name]['pod_info'] = node_info
+                    # Update node_name from pod_info if it was 'unknown'
+                    if pod_usage[pod_name]['node_name'] == 'unknown' and 'node_name' in node_info:
+                        pod_usage[pod_name]['node_name'] = node_info['node_name']
             
             # Create summary
             summary = self._create_usage_summary(pod_usage, is_instant=True)
@@ -339,11 +342,16 @@ class PodsUsageCollector:
                                 'end_time': max(timestamps) if timestamps else None
                             }
             
-            # Get additional pod information
+            # Get additional pod information and ensure node names are populated
             for pod_name in pod_usage:
                 node_info = await self._get_node_info(pod_name)
+                print("#*"*35)
+                print("node_info in side of collect_duration_usage:\n",node_info)
                 if node_info:
                     pod_usage[pod_name]['pod_info'] = node_info
+                    # Update node_name from pod_info if it was 'unknown' or empty
+                    if pod_usage[pod_name]['node_name'] in ['unknown', ''] and 'node_name' in node_info:
+                        pod_usage[pod_name]['node_name'] = node_info['node_name']
             
             # Create summary
             summary = self._create_usage_summary(pod_usage, is_instant=False)
@@ -411,9 +419,16 @@ class PodsUsageCollector:
             memory_mb = memory_usage / (1024 * 1024) if memory_usage > 0 else 0
             usage_score = cpu_usage + memory_mb * 0.01  # Weight memory less than CPU
             
+            # Get node name - prioritize from pod_info, then from initial data
+            node_name = 'unknown'
+            if 'pod_info' in pod_data and 'node_name' in pod_data['pod_info']:
+                node_name = pod_data['pod_info']['node_name']
+            elif pod_data.get('node_name') and pod_data.get('node_name') != 'unknown':
+                node_name = pod_data['node_name']
+            
             pod_rankings.append({
                 'pod_name': pod_name,
-                'node_name': pod_data.get('node_name', 'unknown'),
+                'node_name': node_name,
                 'cpu_usage_percent': cpu_usage,
                 'memory_usage_bytes': memory_usage,
                 'usage_score': usage_score,
@@ -434,10 +449,16 @@ class PodsUsageCollector:
         
         for rank, pod in enumerate(top_10_pods, 1):
             pod_data = pod['pod_data']
+            
+            # Ensure node_name is always present in the summary
+            node_name = pod['node_name']
+            if node_name == 'unknown' and 'pod_info' in pod_data and 'node_name' in pod_data['pod_info']:
+                node_name = pod_data['pod_info']['node_name']
+            
             pod_summary = {
                 'rank': rank,
                 'pod_name': pod['pod_name'],
-                'node_name': pod['node_name'],
+                'node_name': node_name,
                 'usage_metrics': {}
             }
             

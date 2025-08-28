@@ -15,6 +15,14 @@ from pydantic import BaseModel, Field, ConfigDict
 import fastmcp
 from fastmcp.server import FastMCP
 
+import warnings
+# Suppress urllib3 deprecation warning triggered by kubernetes client using HTTPResponse.getheaders()
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"HTTPResponse\.getheaders\(\) is deprecated"
+)
+
 from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
 from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
@@ -24,7 +32,7 @@ from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
 from tools.ovnk_benchmark_prometheus_nodes_usage import NodeUsageQuery
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 from config.ovnk_benchmark_config import Config
-from elt.ovnk_benchmark_performance_elt import PerformanceELT
+from elt.ovnk_benchmark_elt_duckdb import PerformanceELT
 from storage.ovnk_benchmark_storage_ovnk import PrometheusStorage
 
 # Import analysis modules

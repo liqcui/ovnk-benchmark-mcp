@@ -15,26 +15,10 @@ from pydantic import BaseModel, Field, ConfigDict
 import signal
 import sys
 
+# Add these imports to the existing imports section
 from tools.ovnk_benchmark_openshift_cluster_stat import ClusterStatCollector
 from analysis.ovnk_benchmark_analysis_cluster_stat import ClusterStatAnalyzer
 from tools.ovnk_benchmark_prometheus_ovnk_basicinfo import ovnBasicInfoCollector, get_pod_phase_counts
-from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo,collect_cluster_information,get_cluster_info_json
-from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
-from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
-from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
-from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
-from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
-from tools.ovnk_benchmark_prometheus_nodes_usage import NodeUsageQuery
-from ocauth.ovnk_benchmark_auth import OpenShiftAuth
-from config.ovnk_benchmark_config import Config
-from elt.ovnk_benchmark_elt_duckdb import PerformanceELT
-from storage.ovnk_benchmark_storage_ovnk import PrometheusStorage
-from analysis.ovnk_benchmark_performance_analysis_allovnk import OVNKPerformanceAnalyzer
-from analysis.ovnk_benchmark_performance_analysis_clusters_api import ClusterAPIPerformanceAnalyzer
-from analysis.ovnk_benchmark_performance_analysis_overall import (
-    OverallPerformanceAnalyzer,
-    analyze_overall_performance_with_auth
-)
 
 import fastmcp
 from fastmcp.server import FastMCP
@@ -248,21 +232,19 @@ class ComprehensivePerformanceRequest(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 class OCPOVERALLPerformanceRequest(BaseModel):
-    """Request model for overall OCP cluster performance analysis"""
+    """Request model for overall performance analysis"""
     duration: str = Field(
         default="1h",
-        description="Analysis duration for metrics collection using Prometheus time format (e.g., '5m', '30m', '1h', '2h', '24h'). Longer durations provide more comprehensive trend analysis but take more time to process. Recommended values: '5m' for quick checks, '1h' for standard analysis, '24h' for trend analysis."
+        description="Analysis duration for metrics collection (e.g., '5m', '30m', '1h', '2h', '24h'). Longer durations provide more comprehensive trend analysis but take more time to process."
     )
     include_detailed_analysis: bool = Field(
         default=True,
-        description="Whether to include detailed component-level analysis in the response. When True, provides comprehensive breakdown of each component's performance metrics, resource usage, and health status. Set to False for faster execution when only summary metrics are needed."
+        description="Whether to include detailed component analysis in the response. Set to False for faster summary-only results."
     )
     focus_areas: Optional[List[str]] = Field(
         default=None,
-        description="Optional list of specific focus areas to emphasize in analysis. Available areas: ['cluster', 'api', 'ovnk', 'nodes', 'databases', 'sync']. Use to optimize analysis time by focusing on specific components. Examples: ['cluster', 'api'] for control plane focus, ['ovnk', 'sync'] for networking focus, ['nodes'] for compute focus. If not specified, analyzes all areas comprehensively."
+        description="Optional list of focus areas to emphasize in analysis: ['cluster', 'api', 'ovnk', 'nodes', 'databases', 'sync']. If not specified, analyzes all areas."
     )
-    
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 
 # Initialize FastMCP app
@@ -1046,248 +1028,6 @@ async def query_ovnk_sync_duration_seconds_metrics(request: MetricsRequest) -> D
     except Exception as e:
         logger.error(f"Error querying sync duration metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-@app.tool(
-    name="analyze_ovnk_comprehensive_performance",
-    description="""Perform comprehensive OVN-Kubernetes performance analysis across all components including pods, OVS, sync operations, and database metrics with automated risk assessment and actionable recommendations. This is the primary tool for complete OVNK performance evaluation and health monitoring.
-
-Parameters:
-- duration (optional): Analysis time window using Prometheus format (e.g., "5m", "1h", "1d", "7d"). If not provided, performs instant snapshot analysis using latest available data points
-- generate_report (default: true): Whether to generate a human-readable summary report with key findings, risk assessment, and recommendations in addition to structured JSON data
-- save_to_file (default: false): Whether to save complete analysis results to timestamped JSON file for documentation, audit trails, and historical reference
-- include_risk_assessment (default: true): Whether to include automated risk assessment with threshold-based alerting, severity classification (critical/warning/normal), and prioritized recommendations
-- performance_thresholds (optional): Custom performance thresholds for risk assessment that override system defaults. Use structure: {'cpu': {'warning': 70.0, 'critical': 90.0}, 'memory': {'warning': 1073741824, 'critical': 2147483648}, 'sync_duration': {'warning': 5.0, 'critical': 10.0}, 'db_size': {'warning': 104857600, 'critical': 524288000}}
-
-Returns comprehensive performance analysis including:
-
-CORE METRICS ANALYSIS:
-- OVN database sizes (Northbound/Southbound) with growth trends and storage utilization alerts
-- Pod resource utilization across ovnkube-controller, ovnkube-node, and multus components with CPU/memory statistics
-- OVS dataplane performance including vswitchd and ovsdb-server resource consumption and flow processing efficiency
-- Sync operation performance with controller and node sync duration analysis and resource reconciliation times
-- Cluster-wide pod status distribution with health indicators and failed pod analysis
-
-AUTOMATED RISK ASSESSMENT:
-- Critical risks requiring immediate attention with specific component identification and recommended actions
-- Warning-level risks for proactive monitoring and preventive maintenance planning
-- Performance threshold violations with severity classification and historical context
-- Component-specific health scoring and degradation indicators
-- Risk categorization by type (cpu_usage, memory_usage, sync_duration, database_size) and affected components
-
-INTELLIGENT RECOMMENDATIONS:
-- Prioritized action items based on risk severity and operational impact
-- Resource optimization suggestions including scaling recommendations and resource limit adjustments
-- Performance tuning guidance specific to identified bottlenecks and inefficiencies
-- Capacity planning insights based on current utilization trends and growth patterns
-- Maintenance recommendations for database cleanup, configuration optimization, and monitoring improvements
-
-PERFORMANCE SUMMARIES:
-- Overall cluster health status (normal/warning/critical) with confidence scoring
-- Component-level performance statistics with min/avg/max values and trend indicators
-- Resource utilization efficiency analysis across different OVNK components
-- Performance comparison between components for load balancing insights
-- Key performance indicators (KPIs) with historical baselines when available
-
-OPERATIONAL INSIGHTS:
-- Executive summary suitable for management reporting and stakeholder communication
-- Technical findings for engineering teams with specific metrics and thresholds
-- Trend analysis identifying performance degradation or improvement over time
-- Capacity planning data with utilization forecasts and scaling recommendations
-- Compliance reporting for operational SLAs and performance requirements
-
-Use this tool for:
-- Regular operational health monitoring and proactive issue identification
-- Performance troubleshooting and root cause analysis for degraded cluster performance
-- Capacity planning and resource optimization initiatives
-- Pre-maintenance health verification and post-deployment validation
-- Executive reporting on infrastructure health and performance metrics
-- Compliance auditing and operational SLA monitoring
-- Performance baseline establishment for future comparison and trend analysis
-- Automated alerting integration with threshold-based risk assessment
-
-This tool consolidates data from multiple specialized collectors (basic info, OVS metrics, sync operations, pod usage) into a unified analysis with intelligent interpretation, making it the primary choice for comprehensive OVNK performance evaluation."""
-)
-async def analyze_ovnk_comprehensive_performance(request: ComprehensivePerformanceRequest) -> Dict[str, Any]:
-    """
-    Perform comprehensive OVN-Kubernetes performance analysis across all components including
-    pods, OVS, sync operations, and database metrics with automated risk assessment.
-    
-    This is the primary tool for complete OVNK performance evaluation and health monitoring.
-    """
-    global prometheus_client, auth_manager
-    try:
-        if not prometheus_client or not auth_manager:
-            await initialize_components()
-        
-        logger.info(f"Starting comprehensive OVNK performance analysis (duration: {request.duration})")
-        
-        # Initialize the performance analyzer
-        analyzer = OVNKPerformanceAnalyzer(
-            prometheus_url=auth_manager.prometheus_url,
-            token=auth_manager.prometheus_token,
-            auth_client=auth_manager
-        )
-        
-        # Apply custom thresholds if provided
-        if request.performance_thresholds:
-            logger.info("Applying custom performance thresholds")
-            analyzer.thresholds.update(request.performance_thresholds)
-        
-        # Perform comprehensive analysis with timeout
-        analysis_result = await asyncio.wait_for(
-            analyzer.analyze_comprehensive_performance(request.duration),
-            timeout=120.0  # Extended timeout for comprehensive analysis
-        )
-        
-        # Check if analysis completed successfully
-        if 'error' in analysis_result:
-            return {
-                'error': f"Analysis failed: {analysis_result['error']}",
-                'timestamp': datetime.now(timezone.utc).isoformat()
-            }
-        
-        # Generate human-readable report if requested
-        if request.generate_report:
-            try:
-                summary_report = analyzer.generate_summary_report(analysis_result)
-                analysis_result['summary_report'] = summary_report
-                logger.info("Summary report generated successfully")
-            except Exception as report_error:
-                logger.warning(f"Failed to generate summary report: {report_error}")
-                analysis_result['summary_report_error'] = str(report_error)
-        
-        # Save to file if requested
-        if request.save_to_file:
-            try:
-                saved_file = analyzer.save_analysis_to_file(analysis_result)
-                analysis_result['saved_file'] = saved_file
-                logger.info(f"Analysis saved to file: {saved_file}")
-            except Exception as save_error:
-                logger.warning(f"Failed to save analysis to file: {save_error}")
-                analysis_result['save_file_error'] = str(save_error)
-        
-        # Add tool-specific metadata
-        analysis_result['tool_metadata'] = {
-            'tool_name': 'analyze_ovnk_comprehensive_performance',
-            'parameters_used': {
-                'duration': request.duration,
-                'generate_report': request.generate_report,
-                'save_to_file': request.save_to_file,
-                'include_risk_assessment': request.include_risk_assessment,
-                'custom_thresholds_applied': bool(request.performance_thresholds)
-            },
-            'analysis_completion_time': datetime.now(timezone.utc).isoformat()
-        }
-        
-        # Log analysis summary
-        risk_summary = analysis_result.get('risk_assessment', {})
-        total_risks = risk_summary.get('total_risks', 0)
-        critical_risks = risk_summary.get('critical_risks', 0)
-        warning_risks = risk_summary.get('warning_risks', 0)
-        overall_health = analysis_result.get('performance_summary', {}).get('overall_health', 'unknown')
-        
-        logger.info(f"Comprehensive analysis completed - Health: {overall_health}, "
-                   f"Total risks: {total_risks} (Critical: {critical_risks}, Warning: {warning_risks})")
-        
-        return analysis_result
-        
-    except asyncio.TimeoutError:
-        return {
-            'error': 'Timeout during comprehensive performance analysis - this may indicate cluster performance issues',
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'suggestion': 'Try reducing the analysis duration or checking cluster health'
-        }
-    except Exception as e:
-        logger.error(f"Error in comprehensive performance analysis: {e}")
-        return {
-            'error': str(e),
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-
-@app.tool(
-    name="analyze_overall_ocp_performance",
-    description="""Perform comprehensive overall OpenShift cluster performance analysis combining cluster health, node utilization, API server performance, OVNK networking components, OVS dataplane metrics, pod resource usage, and database performance. This tool provides a unified view of the entire cluster's health and performance status with automated health scoring, critical issue detection, and actionable recommendations.
-
-Parameters:
-- duration (default: "1h"): Analysis duration for metrics collection using Prometheus time format (e.g., '5m', '30m', '1h', '2h', '24h'). Longer durations provide more comprehensive trend analysis but take more time to process. Recommended: '5m' for quick checks, '1h' for standard analysis, '24h' for trend analysis.
-- include_detailed_analysis (default: true): Whether to include detailed component-level analysis in the response. When True, provides comprehensive breakdown of each component's performance metrics, resource usage, and health status. Set to False for faster execution when only summary metrics are needed.
-- focus_areas (optional): Optional list of specific focus areas to emphasize in analysis. Available areas: ['cluster', 'api', 'ovnk', 'nodes', 'databases', 'sync']. Examples: ['cluster', 'api'] for control plane focus, ['ovnk', 'sync'] for networking focus, ['nodes'] for compute focus. If not specified, analyzes all areas comprehensively.
-
-Returns comprehensive cluster analysis including:
-- Overall cluster health score (0-100) with weighted component scoring across cluster health (25%), API performance (25%), OVNK networking (30%), and node utilization (20%)
-- Individual component health scores for cluster operators, API server latency, OVNK networking performance, and node resource utilization
-- Critical issues requiring immediate attention with severity classification and impact assessment
-- Warning issues for proactive monitoring and preventive maintenance planning
-- Cluster general information including node counts, resource distributions, network policy counts, and operator status
-- Node resource utilization analysis grouped by role (master/worker/infra) with CPU, memory, disk, and network metrics
-- OVNK pod performance analysis including ovnkube-controller, ovnkube-node resource consumption and health status
-- Container-level metrics within OVNK pods for granular resource usage analysis
-- Multus CNI performance metrics for secondary network interface management
-- OVS (Open vSwitch) dataplane performance including flow processing, bridge statistics, and connection metrics
-- OVN synchronization duration analysis for control plane performance assessment
-- Kubernetes API server latency analysis including read-only and mutating operation performance
-- OVN database size monitoring for Northbound and Southbound databases
-- Cluster-wide pod status distribution and health indicators
-- Prioritized recommendations for performance optimization, capacity planning, and issue resolution
-- Execution metrics showing analysis duration and component collection success rates
-
-Use this tool for:
-- Comprehensive cluster health monitoring and operational dashboards
-- Performance troubleshooting and root cause analysis across all cluster components
-- Capacity planning and resource optimization analysis
-- Pre-maintenance cluster health verification and post-deployment validation
-- Executive reporting on overall infrastructure performance and health status
-- Automated alerting and monitoring system integration
-- Performance baseline establishment and trend analysis over time
-- Multi-component performance correlation analysis to identify systemic issues
-
-The tool automatically weighs component importance, detects cross-component performance issues, and provides holistic cluster health assessment suitable for both technical teams and management reporting."""
-)
-async def analyze_overall_ocp_performance(request: OCPOVERALLPerformanceRequest) -> Dict[str, Any]:
-    """
-    Perform comprehensive overall OpenShift cluster performance analysis combining
-    cluster health, node utilization, API server performance, OVNK networking components,
-    OVS dataplane metrics, pod resource usage, and database performance.
-    
-    Provides unified view of entire cluster health and performance with automated scoring
-    and actionable recommendations.
-    """
-    global auth_manager
-    try:
-        if not auth_manager:
-            await initialize_components()
-        
-        logger.info(f"Starting overall OCP performance analysis for duration: {request.duration}")
-        
-        # Add timeout to prevent hanging
-        result = await asyncio.wait_for(
-            analyze_overall_performance_with_auth(
-                duration=request.duration,
-                include_detailed_analysis=request.include_detailed_analysis,
-                focus_areas=request.focus_areas,
-                auth_client=auth_manager
-            ),
-            timeout=120.0  # 2 minutes timeout for comprehensive analysis
-        )
-        
-        logger.info("Overall OCP performance analysis completed successfully")
-        return result
-        
-    except asyncio.TimeoutError:
-        return {
-            'error': 'Timeout during overall performance analysis - cluster may be experiencing significant issues',
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'analysis_duration': request.duration,
-            'timeout_seconds': 120
-        }
-    except Exception as e:
-        logger.error(f"Error in overall performance analysis: {e}")
-        return {
-            'error': str(e),
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'analysis_duration': request.duration
-        }
-
 
 async def shutdown_handler():
     """Handle graceful shutdown"""

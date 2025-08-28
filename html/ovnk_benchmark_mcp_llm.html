@@ -516,32 +516,39 @@
 
             <div class="quick-actions">
                 <h3>Quick Actions</h3>
-                <button class="action-button" onclick="sendQuickMessage('Perform a comprehensive health check')">
-                    🔍 Health Check
-                </button>
-                <button class="action-button" onclick="sendQuickMessage('What is the current cluster status?')">
+                <button class="action-button" onclick="sendQuickMessage('Tell me the cluster genernal information?')">
                     🏛️ Cluster Overview
+                </button>
+                <button class="action-button"
+                    onclick="sendQuickMessage('Perform comprehensive/overal OpenShift cluster status')">
+                    🔍 Cluster Health Check
                 </button>
                 <button class="action-button"
                     onclick="sendQuickMessage('Show me node information with resource utilization')">
                     🖥️ Cluster Node Usage
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check API server performance metrics')">
-                    ⚡ API Performance
-                </button>
                 <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
-                    🔀 OVN-K Deep Dive
+                    🌐 OVN-K Pods Usage
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Analyze OVS performance metrics')">
+                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVS performance metrics')">
                     🌐 OVS Analysis
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check Multus CNI performance')">
-                    🎯 Multus Analysis
+                <button class="action-button" onclick="sendQuickMessage('Check and Analyze Multus CNI performance')">
+                    🌐 Multus Analysis
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Analyze sync duration performance')">
-                    ⏱️ Sync Duration
+                <button class="action-button" onclick="sendQuickMessage('Check and Analyze sync duration performance')">
+                    🌐 Sync Duration
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Run unified performance analysis')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Check and Analyze API server performance metrics')">
+                    ⚡ API Performance
+                </button>
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me OVN-K components comprehensive analysis')">
+                    🔀 OVN-K Deep Dive
+                </button>
+                <button class="action-button"
+                    onclick="sendQuickMessage('Run overall OCP Cluster Performane analysis, include API perormance')">
                     📈 Full Performance Report
                 </button>
             </div>
@@ -563,7 +570,7 @@
                 <h2>AI Chat Interface</h2>
                 <div class="header-actions">
                     <button class="btn btn-secondary" onclick="clearChat()">Clear Chat</button>
-                    <button class="btn btn-primary" onclick="checkHealth()">Refresh Status</button>
+                    <button class="btn btn-primary" onclick="manualHealthCheck()">Refresh Status</button>
                 </div>
             </div>
 
@@ -623,11 +630,12 @@
                 this.conversationId = 'web-' + Math.random().toString(36).substr(2, 9);
                 this.isConnected = false;
                 this.isTyping = false;
+                this.healthCheckInterval = null;
 
                 // Initialize DOM elements
                 this.initializeElements();
                 this.setupEventListeners();
-                this.checkHealth();
+                this.startAutoHealthCheck();
             }
 
             initializeElements() {
@@ -664,11 +672,50 @@
                     e.target.style.height = (e.target.scrollHeight) + 'px';
                     this.sendButton.disabled = !e.target.value.trim() || this.isTyping;
                 });
+
+                // Handle page visibility change to pause/resume auto-refresh
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) {
+                        this.stopAutoHealthCheck();
+                    } else {
+                        this.startAutoHealthCheck();
+                    }
+                });
+
+                // Handle window beforeunload to cleanup intervals
+                window.addEventListener('beforeunload', () => {
+                    this.stopAutoHealthCheck();
+                });
+            }
+
+            startAutoHealthCheck() {
+                // Clear any existing interval
+                this.stopAutoHealthCheck();
+
+                // Perform initial health check
+                this.checkHealth(false);
+
+                // Set up automatic refresh every 30 seconds
+                this.healthCheckInterval = setInterval(() => {
+                    this.checkHealth(false);
+                }, 30000);
+
+                console.log('Auto health check started');
+            }
+
+            stopAutoHealthCheck() {
+                if (this.healthCheckInterval) {
+                    clearInterval(this.healthCheckInterval);
+                    this.healthCheckInterval = null;
+                    console.log('Auto health check stopped');
+                }
             }
 
             async sendMessage(customMessage = null) {
                 const message = customMessage || this.messageInput.value.trim();
                 if (!message || this.isTyping) return;
+
+                console.log(message, "in sendMessage");
 
                 // Clear input if not using custom message
                 if (!customMessage) {
@@ -682,7 +729,7 @@
                 this.showTyping(true);
 
                 try {
-                    const response = await fetch('http://localhost:8001/chat/stream', {
+                    const response = await fetch('/chat/stream', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -700,7 +747,7 @@
                 } catch (error) {
                     this.showTyping(false);
                     this.addMessage(
-                        `⚠️ Connection Error: ${error.message}<br><em>Make sure the MCP client is running on port 8001</em>`,
+                        `Connection Error: ${error.message}<br><em>Make sure the MCP client is running</em>`,
                         'error'
                     );
                 }
@@ -746,7 +793,7 @@
 
                                     } else if (data.type === 'error') {
                                         this.showTyping(false);
-                                        this.addMessage('⚠️ ' + data.content, 'error');
+                                        this.addMessage(data.content, 'error');
                                     }
                                 } catch (e) {
                                     console.error('Error parsing SSE data:', e);
@@ -814,16 +861,36 @@
                 this.tablesDiv.innerHTML = '';
             }
 
-            async checkHealth() {
-                this.loadingOverlay.style.display = 'flex';
+            async checkHealth(showLoading = true) {
+                if (showLoading) {
+                    this.loadingOverlay.style.display = 'flex';
+                }
 
                 try {
-                    const response = await fetch('http://localhost:8001/api/health');
+                    const response = await fetch('/api/mcp/health', {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    // Check content type before parsing
+                    const contentType = response.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        const text = await response.text();
+                        throw new Error(`Expected JSON response but got ${contentType}. Response: ${text.substring(0, 200)}`);
+                    }
+
                     const health = await response.json();
 
                     if (health.status === 'healthy') {
                         this.updateMCPStatus('connected', 'MCP Client Connected');
-                        await this.checkClusterHealth();
+                        await this.checkClusterHealth(false);
                     } else {
                         this.updateMCPStatus('disconnected', 'MCP Client Disconnected');
                         this.updateClusterStatus('disconnected', 'Cluster Unknown');
@@ -832,33 +899,59 @@
                     this.isConnected = health.status === 'healthy';
 
                 } catch (error) {
-                    this.updateMCPStatus('disconnected', 'Connection Failed');
+                    console.error('MCP health check failed:', error);
+                    this.updateMCPStatus('disconnected', `Connection Failed: ${error.message}`);
                     this.updateClusterStatus('disconnected', 'Cluster Unknown');
                     this.isConnected = false;
                 } finally {
-                    this.loadingOverlay.style.display = 'none';
+                    if (showLoading) {
+                        this.loadingOverlay.style.display = 'none';
+                    }
                 }
             }
 
-            async checkClusterHealth() {
+            async checkClusterHealth(showLoading = true) {
                 try {
-                    const clusterResponse = await fetch('http://localhost:8001/api/tools/health_check', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({})
+                    const clusterResponse = await fetch('/api/cluster/health', {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        }
                     });
-                    const clusterHealth = await clusterResponse.json();
 
-                    const overallStatus = clusterHealth.overall_status;
-                    if (overallStatus === 'excellent' || overallStatus === 'good') {
-                        this.updateClusterStatus('connected', `Cluster ${overallStatus.toUpperCase()}`);
-                    } else if (overallStatus === 'moderate') {
-                        this.updateClusterStatus('checking', 'Cluster MODERATE');
+                    if (!clusterResponse.ok) {
+                        throw new Error(`HTTP ${clusterResponse.status}: ${clusterResponse.statusText}`);
+                    }
+
+                    // Check content type before parsing
+                    const contentType = clusterResponse.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        const text = await clusterResponse.text();
+                        throw new Error(`Expected JSON response but got ${contentType}. Response: ${text.substring(0, 200)}`);
+                    }
+
+                    const clusterHealth = await clusterResponse.json();
+                    console.log('Cluster health response:', clusterHealth);
+
+                    // Look for cluster health in the details object
+                    const healthDetails = clusterHealth.details || {};
+                    const overallStatus = healthDetails.overall_cluster_health ||
+                        healthDetails.health_details?.overall_cluster_health ||
+                        'unknown';
+
+                    console.log('Overall status:', overallStatus);
+
+                    if (overallStatus === 'healthy') {
+                        this.updateClusterStatus('connected', `Cluster ${overallStatus.charAt(0).toUpperCase()}${overallStatus.slice(1).toLowerCase()}`);
+                    } else if (overallStatus === 'unknown') {
+                        this.updateClusterStatus('checking', 'Cluster Status Unknown');
                     } else {
                         this.updateClusterStatus('disconnected', 'Cluster Issues Detected');
                     }
                 } catch (e) {
-                    this.updateClusterStatus('disconnected', 'Cluster Unreachable');
+                    console.error('Cluster health check failed:', e);
+                    this.updateClusterStatus('disconnected', `Cluster Error: ${e.message}`);
                 }
             }
 
@@ -878,9 +971,6 @@
 
         document.addEventListener('DOMContentLoaded', function () {
             chatApp = new ChatApplication();
-
-            // Periodic health check
-            setInterval(() => chatApp.checkHealth(), 30000);
         });
 
         // Global functions for button onclick handlers
@@ -896,8 +986,8 @@
             chatApp?.clearChat();
         }
 
-        function checkHealth() {
-            chatApp?.checkHealth();
+        function manualHealthCheck() {
+            chatApp?.checkHealth(true);
         }
     </script>
 </body>

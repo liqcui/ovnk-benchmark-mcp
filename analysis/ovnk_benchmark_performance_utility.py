@@ -11,7 +11,6 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 from abc import ABC, abstractmethod
 
-
 class PerformanceLevel(Enum):
     """Unified performance level classification"""
     EXCELLENT = "excellent"
@@ -494,39 +493,6 @@ class ReportGenerator:
             print(f"Error saving text report: {e}")
             return False
 
-
-class UnifiedAnalysisInterface:
-    """Unified interface for all performance analyzers"""
-    
-    def __init__(self):
-        self.analyzers = {}
-    
-    def register_analyzer(self, name: str, analyzer: BasePerformanceAnalyzer):
-        """Register a performance analyzer"""
-        self.analyzers[name] = analyzer
-    
-    def analyze(self, analyzer_name: str, metrics_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze using specified analyzer"""
-        if analyzer_name not in self.analyzers:
-            raise ValueError(f"Analyzer '{analyzer_name}' not found")
-        
-        return self.analyzers[analyzer_name].analyze_metrics_data(metrics_data)
-    
-    def analyze_all(self, metrics_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-        """Analyze using all registered analyzers"""
-        results = {}
-        for name, analyzer in self.analyzers.items():
-            try:
-                results[name] = analyzer.analyze_metrics_data(metrics_data)
-            except Exception as e:
-                results[name] = {"error": str(e)}
-        return results
-    
-    def get_available_analyzers(self) -> List[str]:
-        """Get list of available analyzers"""
-        return list(self.analyzers.keys())
-
-
 # Example usage and testing utilities
 def create_sample_metrics_data(component_type: str = "general") -> Dict[str, Any]:
     """Create sample metrics data for testing"""
@@ -584,6 +550,511 @@ def classify_performance_level(value: float, thresholds: PerformanceThreshold) -
     """Classify performance level - backward compatibility function"""
     return ThresholdClassifier.classify_performance(value, thresholds)
 
+"""
+Additional utility functions for ovnk_benchmark_performance_utility.py
+These functions should be added to the existing utility module
+"""
+
+from typing import Dict, List, Any, Optional
+import statistics
+from datetime import datetime, timezone
+from .ovnk_benchmark_performance_utility import (
+    PerformanceThreshold, PerformanceLevel, AlertLevel, 
+    ResourceType, PerformanceAlert
+)
+
+
+class ClusterResourceAnalyzer:
+    """Additional utility class for cluster-level resource analysis"""
+    
+    @staticmethod
+    def analyze_cluster_resource_distribution(node_groups: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze resource distribution across cluster node groups"""
+        distribution_analysis = {
+            'total_capacity': {'cpu_cores': 0, 'memory_gb': 0},
+            'usage_patterns': {},
+            'resource_imbalance': {},
+            'efficiency_metrics': {}
+        }
+        
+        total_cpu_capacity = 0
+        total_memory_capacity = 0
+        role_resources = {}
+        
+        for role, group_data in node_groups.items():
+            if not group_data.get('nodes'):
+                continue
+                
+            role_cpu = 0
+            role_memory = 0
+            role_usage = {'cpu': [], 'memory': []}
+            
+            for node in group_data['nodes']:
+                # Extract capacity (would need to be added to node data structure)
+                # For now, estimate based on usage patterns
+                if 'metrics' in node:
+                    cpu_usage = node['metrics'].get('cpu_usage', {}).get('avg', 0)
+                    memory_usage = node['metrics'].get('memory_usage', {}).get('avg', 0)
+                    
+                    role_usage['cpu'].append(cpu_usage)
+                    role_usage['memory'].append(memory_usage)
+            
+            if role_usage['cpu']:
+                role_resources[role] = {
+                    'avg_cpu_usage': round(statistics.mean(role_usage['cpu']), 2),
+                    'avg_memory_usage_gb': round(statistics.mean(role_usage['memory']) / 1024, 2),
+                    'cpu_efficiency': ClusterResourceAnalyzer._calculate_efficiency(role_usage['cpu']),
+                    'memory_efficiency': ClusterResourceAnalyzer._calculate_efficiency(role_usage['memory'])
+                }
+        
+        distribution_analysis['usage_patterns'] = role_resources
+        return distribution_analysis
+    
+    @staticmethod
+    def _calculate_efficiency(usage_values: List[float]) -> str:
+        """Calculate resource efficiency based on usage distribution"""
+        if not usage_values:
+            return "unknown"
+        
+        avg_usage = statistics.mean(usage_values)
+        std_dev = statistics.stdev(usage_values) if len(usage_values) > 1 else 0
+        
+        # Efficiency based on utilization and consistency
+        if avg_usage < 30:
+            return "underutilized"
+        elif avg_usage > 80:
+            return "overutilized"
+        elif std_dev > 20:
+            return "inconsistent"
+        else:
+            return "optimal"
+
+
+class APILatencyAnalyzer:
+    """Specialized analyzer for API server latency patterns"""
+    
+    @staticmethod
+    def analyze_latency_trends(latency_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze API latency trends and patterns"""
+        analysis = {
+            'latency_comparison': {},
+            'performance_trends': {},
+            'bottleneck_indicators': []
+        }
+        
+        # Compare read-only vs mutating latencies
+        if 'readonly' in latency_data and 'mutating' in latency_data:
+            ro_p99 = latency_data['readonly'].get('p99_seconds', 0)
+            mut_p99 = latency_data['mutating'].get('p99_seconds', 0)
+            
+            analysis['latency_comparison'] = {
+                'readonly_vs_mutating_ratio': round(ro_p99 / mut_p99 if mut_p99 > 0 else 0, 2),
+                'difference_seconds': round(abs(mut_p99 - ro_p99), 4),
+                'pattern': APILatencyAnalyzer._classify_latency_pattern(ro_p99, mut_p99)
+            }
+            
+            # Identify potential bottlenecks
+            if mut_p99 > ro_p99 * 3:
+                analysis['bottleneck_indicators'].append("Mutating operations significantly slower - possible admission controller issues")
+            elif ro_p99 > 0.5:
+                analysis['bottleneck_indicators'].append("High read latency - possible etcd performance issues")
+        
+        return analysis
+    
+    @staticmethod
+    def _classify_latency_pattern(ro_latency: float, mut_latency: float) -> str:
+        """Classify the latency pattern between read-only and mutating operations"""
+        if ro_latency < 0.1 and mut_latency < 0.2:
+            return "optimal"
+        elif ro_latency < 0.5 and mut_latency < 1.0:
+            return "acceptable"
+        elif mut_latency > ro_latency * 5:
+            return "mutating_bottleneck"
+        elif ro_latency > 1.0:
+            return "read_bottleneck"
+        else:
+            return "degraded"
+
+
+class NetworkPolicyImpactAnalyzer:
+    """Analyzer for network policy impact on cluster performance"""
+    
+    @staticmethod
+    def analyze_network_policy_impact(cluster_info: Dict[str, Any], 
+                                    network_usage: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze potential impact of network policies on performance"""
+        analysis = {
+            'policy_density': {},
+            'potential_impact': {},
+            'recommendations': []
+        }
+        
+        # Calculate policy density
+        resource_counts = cluster_info.get('resource_counts', {})
+        total_nodes = cluster_info.get('total_nodes', 1)
+        total_pods = resource_counts.get('pods', 0)
+        
+        networkpolicies = resource_counts.get('networkpolicies', 0)
+        adminnetworkpolicies = resource_counts.get('adminnetworkpolicies', 0)
+        egressfirewalls = resource_counts.get('egressfirewalls', 0)
+        
+        analysis['policy_density'] = {
+            'networkpolicies_per_pod': round(networkpolicies / max(total_pods, 1), 4),
+            'adminnetworkpolicies_per_cluster': adminnetworkpolicies,
+            'egressfirewalls_per_cluster': egressfirewalls,
+            'total_network_policies': networkpolicies + adminnetworkpolicies + egressfirewalls
+        }
+        
+        # Assess potential impact
+        total_policies = networkpolicies + adminnetworkpolicies + egressfirewalls
+        
+        if total_policies > 100:
+            analysis['potential_impact']['level'] = 'high'
+            analysis['recommendations'].append("High number of network policies may impact performance")
+        elif total_policies > 50:
+            analysis['potential_impact']['level'] = 'medium'
+            analysis['recommendations'].append("Moderate network policy usage - monitor for performance impact")
+        else:
+            analysis['potential_impact']['level'] = 'low'
+        
+        # Check for excessive egress firewalls
+        if egressfirewalls > 10:
+            analysis['recommendations'].append("High number of egress firewalls detected - may impact outbound network performance")
+        
+        return analysis
+
+
+class HealthScoreCalculator:
+    """Enhanced health score calculator with component weighting"""
+    
+    @staticmethod
+    def calculate_weighted_cluster_health(node_groups_health: Dict[str, float],
+                                        api_health: float,
+                                        cluster_operators_available: int,
+                                        cluster_operators_total: int) -> Dict[str, Any]:
+        """Calculate weighted cluster health considering component importance"""
+        
+        # Component weights (master nodes and API are more critical)
+        weights = {
+            'master': 0.4,   # Master nodes are most critical
+            'api': 0.3,      # API server is very critical
+            'worker': 0.2,   # Worker nodes are important for workloads
+            'infra': 0.1,    # Infra nodes are least critical
+            'operators': 0.1 # Cluster operators baseline health
+        }
+        
+        # Calculate weighted score
+        total_weight = 0
+        weighted_score = 0
+        
+        # Node groups
+        for role, health_score in node_groups_health.items():
+            if role in weights:
+                weight = weights[role]
+                weighted_score += health_score * weight
+                total_weight += weight
+        
+        # API health
+        weighted_score += api_health * weights['api']
+        total_weight += weights['api']
+        
+        # Cluster operators health
+        if cluster_operators_total > 0:
+            operator_health = (cluster_operators_available / cluster_operators_total) * 100
+            weighted_score += operator_health * weights['operators']
+            total_weight += weights['operators']
+        
+        # Normalize score
+        final_score = weighted_score / total_weight if total_weight > 0 else 0
+        
+        # Determine health level
+        if final_score >= 90:
+            health_level = "excellent"
+        elif final_score >= 75:
+            health_level = "good"
+        elif final_score >= 60:
+            health_level = "moderate"
+        elif final_score >= 40:
+            health_level = "poor"
+        else:
+            health_level = "critical"
+        
+        return {
+            'weighted_score': round(final_score, 2),
+            'health_level': health_level,
+            'component_weights': weights,
+            'component_scores': {
+                'nodes': node_groups_health,
+                'api': api_health,
+                'operators': (cluster_operators_available / cluster_operators_total) * 100 if cluster_operators_total > 0 else 0
+            }
+        }
+
+
+class AlertSeverityProcessor:
+    """Enhanced alert processing and categorization"""
+    
+    @staticmethod
+    def categorize_alerts_by_impact(alerts: List[PerformanceAlert]) -> Dict[str, Any]:
+        """Categorize alerts by their potential cluster impact"""
+        categorization = {
+            'cluster_wide_impact': [],
+            'node_specific': [],
+            'service_degradation': [],
+            'capacity_warnings': []
+        }
+        
+        for alert in alerts:
+            # Cluster-wide impact alerts
+            if alert.pod_name == "kube-apiserver" or "master" in alert.node_name.lower():
+                categorization['cluster_wide_impact'].append(alert)
+            
+            # Service degradation
+            elif alert.severity == AlertLevel.CRITICAL:
+                categorization['service_degradation'].append(alert)
+            
+            # Capacity warnings
+            elif alert.resource_type in [ResourceType.CPU, ResourceType.MEMORY]:
+                if alert.current_value > alert.threshold_value * 0.8:  # 80% of threshold
+                    categorization['capacity_warnings'].append(alert)
+                else:
+                    categorization['node_specific'].append(alert)
+            
+            # Default to node-specific
+            else:
+                categorization['node_specific'].append(alert)
+        
+        return categorization
+    
+    @staticmethod
+    def generate_prioritized_action_items(alert_categorization: Dict[str, List[PerformanceAlert]]) -> List[Dict[str, Any]]:
+        """Generate prioritized action items from categorized alerts"""
+        action_items = []
+        
+        # Priority 1: Cluster-wide impact
+        if alert_categorization['cluster_wide_impact']:
+            action_items.append({
+                'priority': 1,
+                'category': 'cluster_stability',
+                'title': 'Address cluster-wide performance issues',
+                'alerts_count': len(alert_categorization['cluster_wide_impact']),
+                'urgency': 'immediate',
+                'estimated_impact': 'high'
+            })
+        
+        # Priority 2: Service degradation
+        if alert_categorization['service_degradation']:
+            action_items.append({
+                'priority': 2,
+                'category': 'service_recovery',
+                'title': 'Resolve critical service performance issues',
+                'alerts_count': len(alert_categorization['service_degradation']),
+                'urgency': 'high',
+                'estimated_impact': 'medium'
+            })
+        
+        # Priority 3: Capacity warnings
+        if alert_categorization['capacity_warnings']:
+            action_items.append({
+                'priority': 3,
+                'category': 'capacity_planning',
+                'title': 'Address capacity constraints',
+                'alerts_count': len(alert_categorization['capacity_warnings']),
+                'urgency': 'medium',
+                'estimated_impact': 'medium'
+            })
+        
+        # Priority 4: Node-specific issues
+        if alert_categorization['node_specific']:
+            action_items.append({
+                'priority': 4,
+                'category': 'node_optimization',
+                'title': 'Optimize individual node performance',
+                'alerts_count': len(alert_categorization['node_specific']),
+                'urgency': 'low',
+                'estimated_impact': 'low'
+            })
+        
+        return action_items
+
+
+def get_api_latency_threshold() -> PerformanceThreshold:
+    """Get API latency performance threshold"""
+    return PerformanceThreshold(
+        excellent_max=0.1,    # 100ms
+        good_max=0.5,         # 500ms
+        moderate_max=1.0,     # 1s
+        poor_max=2.0,         # 2s
+        unit="seconds",
+        component_type="api_latency"
+    )
+
+
+def get_network_throughput_threshold() -> PerformanceThreshold:
+    """Get network throughput performance threshold (in Mbps)"""
+    return PerformanceThreshold(
+        excellent_max=100,     # 100 Mbps
+        good_max=500,          # 500 Mbps
+        moderate_max=1000,     # 1 Gbps
+        poor_max=5000,         # 5 Gbps
+        unit="Mbps",
+        component_type="network_throughput"
+    )
+
+
+def calculate_node_resource_efficiency(cpu_usage: float, memory_usage_mb: float, 
+                                     estimated_cpu_capacity: float = 100.0,
+                                     estimated_memory_capacity_mb: float = 16384) -> Dict[str, Any]:
+    """Calculate resource efficiency metrics for a node"""
+    cpu_efficiency = (cpu_usage / estimated_cpu_capacity) * 100 if estimated_cpu_capacity > 0 else 0
+    memory_efficiency = (memory_usage_mb / estimated_memory_capacity_mb) * 100 if estimated_memory_capacity_mb > 0 else 0
+    
+    # Overall efficiency score (balanced between CPU and memory)
+    overall_efficiency = (cpu_efficiency + memory_efficiency) / 2
+    
+    return {
+        'cpu_efficiency_percent': round(cpu_efficiency, 2),
+        'memory_efficiency_percent': round(memory_efficiency, 2),
+        'overall_efficiency_percent': round(overall_efficiency, 2),
+        'efficiency_level': _classify_efficiency_level(overall_efficiency),
+        'recommendations': _generate_efficiency_recommendations(cpu_efficiency, memory_efficiency)
+    }
+
+
+def _classify_efficiency_level(efficiency_percent: float) -> str:
+    """Classify resource efficiency level"""
+    if efficiency_percent >= 90:
+        return "critical_utilization"
+    elif efficiency_percent >= 75:
+        return "high_utilization"
+    elif efficiency_percent >= 50:
+        return "moderate_utilization"
+    elif efficiency_percent >= 25:
+        return "low_utilization"
+    else:
+        return "very_low_utilization"
+
+
+def _generate_efficiency_recommendations(cpu_efficiency: float, memory_efficiency: float) -> List[str]:
+    """Generate recommendations based on resource efficiency"""
+    recommendations = []
+    
+    if cpu_efficiency > 90:
+        recommendations.append("CPU utilization is critically high - consider scaling or optimization")
+    elif cpu_efficiency < 25:
+        recommendations.append("CPU is underutilized - consider workload consolidation")
+    
+    if memory_efficiency > 90:
+        recommendations.append("Memory utilization is critically high - risk of OOM conditions")
+    elif memory_efficiency < 25:
+        recommendations.append("Memory is underutilized - consider reducing memory allocation")
+    
+    # Balanced utilization recommendations
+    efficiency_diff = abs(cpu_efficiency - memory_efficiency)
+    if efficiency_diff > 30:
+        if cpu_efficiency > memory_efficiency:
+            recommendations.append("CPU-bound workload detected - consider CPU optimization")
+        else:
+            recommendations.append("Memory-bound workload detected - consider memory optimization")
+    
+    return recommendations
+
+
+def generate_cluster_capacity_recommendations(node_groups_analysis: Dict[str, Any],
+                                            total_nodes: int) -> List[str]:
+    """Generate cluster capacity planning recommendations"""
+    recommendations = []
+    
+    high_usage_nodes = 0
+    critical_usage_nodes = 0
+    
+    for role, group_data in node_groups_analysis.items():
+        if 'performance_summary' not in group_data:
+            continue
+            
+        problematic_nodes = group_data['performance_summary'].get('problematic_nodes', [])
+        high_usage_nodes += len(problematic_nodes)
+        
+        # Count critical nodes
+        critical_nodes = sum(1 for node in problematic_nodes 
+                           if node.get('cpu_usage', 0) > 90 or node.get('memory_usage_mb', 0) > 8192)
+        critical_usage_nodes += critical_nodes
+    
+    # Generate recommendations based on usage patterns
+    high_usage_percentage = (high_usage_nodes / total_nodes) * 100 if total_nodes > 0 else 0
+    critical_usage_percentage = (critical_usage_nodes / total_nodes) * 100 if total_nodes > 0 else 0
+    
+    if critical_usage_percentage > 20:
+        recommendations.append("URGENT: More than 20% of nodes are in critical resource usage state")
+        recommendations.append("Immediate cluster scaling or workload redistribution required")
+    elif high_usage_percentage > 50:
+        recommendations.append("More than 50% of nodes show high resource usage")
+        recommendations.append("Plan for cluster capacity expansion in the near term")
+    elif high_usage_percentage > 30:
+        recommendations.append("Monitor cluster capacity - approaching resource constraints")
+    
+    # Role-specific capacity recommendations
+    master_issues = len(node_groups_analysis.get('master', {}).get('performance_summary', {}).get('problematic_nodes', []))
+    if master_issues > 0:
+        recommendations.append("Master node performance issues detected - critical for cluster stability")
+    
+    return recommendations
+
+
+def format_performance_summary_for_json(analysis_result: Any) -> Dict[str, Any]:
+    """Format analysis result for clean JSON output"""
+    if hasattr(analysis_result, '__dict__'):
+        # Convert dataclass to dict if needed
+        result_dict = asdict(analysis_result) if hasattr(analysis_result, '__dataclass_fields__') else analysis_result.__dict__
+    else:
+        result_dict = analysis_result
+    
+    # Clean up the dictionary for JSON serialization
+    def clean_dict(obj):
+        if isinstance(obj, dict):
+            return {k: clean_dict(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [clean_dict(item) for item in obj]
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif hasattr(obj, 'value'):  # Handle Enum objects
+            return obj.value
+        else:
+            return obj
+    
+    return clean_dict(result_dict)
+
+
+def create_performance_alert(severity: str, resource_type: str, component_name: str,
+                           message: str, current_value: float, threshold_value: float,
+                           unit: str, node_name: str = "") -> PerformanceAlert:
+    """Convenience function to create performance alerts"""
+    severity_map = {
+        'low': AlertLevel.LOW,
+        'medium': AlertLevel.MEDIUM,
+        'high': AlertLevel.HIGH,
+        'critical': AlertLevel.CRITICAL
+    }
+    
+    resource_map = {
+        'cpu': ResourceType.CPU,
+        'memory': ResourceType.MEMORY,
+        'network': ResourceType.NETWORK,
+        'disk': ResourceType.DISK,
+        'sync_duration': ResourceType.SYNC_DURATION
+    }
+    
+    return PerformanceAlert(
+        severity=severity_map.get(severity.lower(), AlertLevel.MEDIUM),
+        resource_type=resource_map.get(resource_type.lower(), ResourceType.CPU),
+        pod_name=component_name,
+        node_name=node_name,
+        message=message,
+        current_value=current_value,
+        threshold_value=threshold_value,
+        unit=unit,
+        timestamp=datetime.now(timezone.utc).isoformat()
+    )
 
 # Main example
 if __name__ == "__main__":

@@ -4,54 +4,14 @@ A comprehensive benchmarking and performance monitoring solution for OpenShift c
 
 ## Architecture Overview
 
-```mermaid
-graph TB
-    subgraph "OpenShift Cluster"
-        OCP[OpenShift Cluster]
-        PROM[Prometheus]
-        KAPI[Kubernetes API]
-        OVNK[OVN-Kubernetes Pods]
-        MULTUS[Multus CNI]
-    end
-    
-    subgraph "MCP Server Layer"
-        MCP[FastMCP Server<br/>Port 8000]
-        AUTH[Authentication Module]
-        TOOLS[MCP Tools]
-    end
-    
-    subgraph "AI Agents"
-        AGENT1[Performance Data<br/>Collection Agent]
-        AGENT2[Report Generation<br/>Agent]
-        LLM[OpenAI GPT-4]
-    end
-    
-    subgraph "Storage & Reports"
-        DUCK[DuckDB Storage]
-        EXCEL[Excel Reports]
-        PDF[PDF Reports]
-    end
-    
-    OCP --> AUTH
-    PROM --> TOOLS
-    KAPI --> TOOLS
-    AUTH --> MCP
-    TOOLS --> MCP
-    
-    AGENT1 --> MCP
-    AGENT2 --> MCP
-    AGENT1 --> LLM
-    AGENT2 --> LLM
-    
-    MCP --> DUCK
-    AGENT2 --> EXCEL
-    AGENT2 --> PDF
-    
-    style MCP fill:#e1f5fe
-    style AGENT1 fill:#f3e5f5
-    style AGENT2 fill:#f3e5f5
-    style DUCK fill:#e8f5e8
-```
+## Topology
+
+<img width="859" height="572" alt="ovnk-benchmark-mcp-architecture-topology" src="https://github.com/user-attachments/assets/f741b136-40d2-4a60-ba02-ca660c3abbaa" />
+
+## Web UI
+
+<img width="1726" height="951" alt="ovnk-benchmark-mcp-web-ui" src="https://github.com/user-attachments/assets/54aab83b-f65e-458d-aa3e-ea59d023cd62" />
+
 
 ## Features
 
@@ -153,7 +113,7 @@ ocp-benchmark-mcp/
 ├── analysis/
 │   └── ovnk_benchmark_performance_analysis.py # Performance analysis
 ├── elt/
-│   └── ovnk_benchmark_performance_elt.py      # Data processing
+│   └── ovnk_benchmark_elt_duckdb.py      # Data processing
 ├── storage/
 │   └── ovnk_benchmark_prometheus_ovnk.py      # DuckDB storage
 └── exports/                                    # Generated reports
@@ -172,6 +132,10 @@ ocp-benchmark-mcp/
 | `REPORT_PERIOD_DAYS` | Report period in days | `7` |
 | `DATABASE_PATH` | DuckDB database path | `storage/ovnk_benchmark.db` |
 | `REPORT_OUTPUT_DIR` | Report output directory | `exports` |
+export OVNK_PROMETHEUS_USE_ROUTE=true          # Use OpenShift routes (default)
+export OVNK_PROMETHEUS_NAMESPACE=openshift-monitoring
+export OVNK_PROMETHEUS_SA=prometheus-k8s
+export KUBECONFIG=/path/to/kubeconfig
 
 ### Metrics Configuration
 
@@ -323,6 +287,7 @@ curl http://localhost:8000/health
 Enable debug logging:
 ```bash
 export LOG_LEVEL=DEBUG
+export OVNK_LOG_LEVEL=DEBUG
 ./ovnk_benchmark_mcp_command.sh server
 ```
 
