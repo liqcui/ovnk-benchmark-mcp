@@ -15,7 +15,7 @@ import aiohttp
 import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 
 # MCP and LangGraph imports
@@ -502,6 +502,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve the web UI HTML
+HTML_FILE_PATH = os.path.join(os.path.dirname(__file__), "html", "ovnk_benchmark_mcp_llm.html")
+
+@app.get("/", include_in_schema=False)
+async def serve_root_html():
+    if os.path.exists(HTML_FILE_PATH):
+        return FileResponse(HTML_FILE_PATH, media_type="text/html")
+    raise HTTPException(status_code=404, detail="ovnk_benchmark_mcp_llm.html not found")
+
+@app.get("/ui", include_in_schema=False)
+async def serve_ui_html():
+    if os.path.exists(HTML_FILE_PATH):
+        return FileResponse(HTML_FILE_PATH, media_type="text/html")
+    raise HTTPException(status_code=404, detail="ovnk_benchmark_mcp_llm.html not found")
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health_check():
