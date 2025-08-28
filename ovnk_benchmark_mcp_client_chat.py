@@ -524,6 +524,8 @@ async def serve_ui_html():
 async def health_check():
     """Health check endpoint"""
     health_data = await mcp_client.check_health()
+    print("#*"*35)
+    print(health_data)
     return HealthResponse(
         status=health_data["status"],
         timestamp=health_data["last_check"],
