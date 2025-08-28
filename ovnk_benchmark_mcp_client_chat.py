@@ -17,11 +17,10 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 from mcp import ClientSession
-from mcp.client.session import ClientSession
-from mcp.client.stdio import stdio_client
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -82,8 +81,8 @@ class MCPTool:
 async def initialize_mcp_session() -> ClientSession:
     """Initialize MCP session with the server"""
     try:
-        # For HTTP/SSE connection
-        session = await sse_client("http://localhost:8000/sse")
+        # For HTTP streamable connection
+        session = await streamable_http_client("http://localhost:8000")
         
         # Initialize the session
         await session.initialize()
@@ -385,7 +384,7 @@ async def stream_agent_response(message: str, conversation_id: str) -> AsyncGene
             
             # Handle tool calls and other events
             elif "tools" in event:
-                yield f"data: {json.dumps({'type': 'message', 'content': '🔧 Executing analysis tools...\n\n'})}\n\n"
+                yield "data: " + json.dumps({'type': 'message', 'content': 'ðŸ"§ Executing analysis tools...\n\n'}) + "\n\n"
             
     except Exception as e:
         error_msg = f"Error: {str(e)}"
