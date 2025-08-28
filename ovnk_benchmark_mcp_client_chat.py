@@ -47,6 +47,8 @@ class MCPSessionManager:
     async def __aenter__(self):
         """Enter the session context"""
         try:
+            logger.info(f"Attempting to connect to MCP server at: {self.server_url}")
+            
             # Create the streamable HTTP client
             self.client_context = streamablehttp_client(self.server_url)
             
@@ -70,6 +72,7 @@ class MCPSessionManager:
             
         except Exception as e:
             logger.error(f"Error initializing MCP session manager: {e}")
+            logger.error(f"Make sure MCP server is running at {self.server_url}")
             await self.cleanup()
             raise
     
@@ -91,6 +94,19 @@ class MCPSessionManager:
                 
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+
+    async def test_connection(self):
+        """Test if the MCP server is reachable"""
+        import httpx
+        try:
+            async with httpx.AsyncClient() as client:
+                # Try a simple GET request to check if server is running
+                response = await client.get(self.server_url, timeout=5.0)
+                logger.info(f"Server response status: {response.status_code}")
+                return True
+        except Exception as e:
+            logger.error(f"Connection test failed: {e}")
+            return False
 
 class ChatRequest(BaseModel):
     message: str
@@ -138,21 +154,50 @@ async def initialize_mcp_session():
     """Initialize MCP session with the server"""
     global mcp_session_manager
     
-    try:
-        MCP_SERVER_URL = "http://localhost:8000"
-        
-        # Create and initialize the session manager
-        mcp_session_manager = MCPSessionManager(MCP_SERVER_URL)
-        await mcp_session_manager.__aenter__()
-        
-        logger.info("MCP session initialized successfully")
-        
-    except Exception as e:
-        logger.error(f"Error initializing MCP session: {e}")
-        if mcp_session_manager:
-            await mcp_session_manager.cleanup()
-            mcp_session_manager = None
-        raise
+    # Try different common MCP server URLs
+    possible_urls = [
+        "http://localhost:8000",
+        "http://localhost:8000/mcp",
+        "http://localhost:8000/api/mcp",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8000/mcp"
+    ]
+    
+    # Also check environment variables for custom URL
+    custom_url = os.getenv("MCP_SERVER_URL")
+    if custom_url:
+        possible_urls.insert(0, custom_url)
+    
+    for server_url in possible_urls:
+        try:
+            logger.info(f"Trying MCP server at: {server_url}")
+            
+            # Create and test connection first
+            mcp_session_manager = MCPSessionManager(server_url)
+            
+            # Test basic connectivity before attempting MCP connection
+            if await mcp_session_manager.test_connection():
+                logger.info(f"Basic connectivity confirmed for {server_url}")
+                
+                # Try to establish MCP session
+                await mcp_session_manager.__aenter__()
+                logger.info(f"MCP session initialized successfully at {server_url}")
+                return
+            else:
+                logger.warning(f"No response from server at {server_url}")
+                
+        except Exception as e:
+            logger.warning(f"Failed to connect to {server_url}: {e}")
+            if mcp_session_manager:
+                await mcp_session_manager.cleanup()
+                mcp_session_manager = None
+            continue
+    
+    # If we get here, none of the URLs worked
+    error_msg = f"Could not connect to MCP server at any of these URLs: {possible_urls}"
+    logger.error(error_msg)
+    logger.error("Please ensure your MCP server is running and accessible")
+    raise Exception(error_msg)
 
 async def get_mcp_tools() -> List[MCPTool]:
     """Retrieve available tools from MCP server"""
@@ -281,19 +326,27 @@ async def lifespan(app: FastAPI):
     
     # Startup
     try:
+        logger.info("Starting MCP Client initialization...")
+        
+        # Check if MCP_SERVER_URL is set in environment
+        mcp_url = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
+        logger.info(f"MCP_SERVER_URL environment variable: {mcp_url}")
+        
         # Wait for MCP server to be ready and initialize session
-        max_retries = 30
+        max_retries = 10  # Reduced retries since we try multiple URLs
         for i in range(max_retries):
             try:
                 await initialize_mcp_session()
-                logger.info("MCP server is ready")
+                logger.info("MCP server connection established")
                 break
             except Exception as e:
                 if i < max_retries - 1:
-                    logger.info(f"Waiting for MCP server... attempt {i+1}/{max_retries}")
-                    await asyncio.sleep(2)
+                    logger.info(f"Retrying MCP connection... attempt {i+1}/{max_retries}")
+                    await asyncio.sleep(3)
                 else:
-                    logger.error(f"MCP server not available after {max_retries * 2} seconds: {e}")
+                    logger.error(f"Failed to connect to MCP server after {max_retries} attempts")
+                    logger.error("Please check that your MCP server is running")
+                    logger.error("You can set MCP_SERVER_URL environment variable to specify the server URL")
                     raise Exception("MCP server not available")
         
         # Initialize agent
@@ -309,6 +362,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if mcp_session_manager:
         try:
+            logger.info("Shutting down MCP session...")
             await mcp_session_manager.__aexit__(None, None, None)
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
@@ -453,8 +507,21 @@ async def stream_agent_response(message: str, conversation_id: str) -> AsyncGene
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
-    return {"message": "OVNK Benchmark MCP Client is running"}
+    """Root endpoint with server status"""
+    status = {
+        "message": "OVNK Benchmark MCP Client is running",
+        "mcp_server_status": "disconnected"
+    }
+    
+    if mcp_session_manager and mcp_session_manager.session:
+        try:
+            # Quick health check
+            await mcp_session_manager.session.list_tools()
+            status["mcp_server_status"] = "connected"
+        except:
+            status["mcp_server_status"] = "disconnected"
+    
+    return status
 
 @app.get("/api/health")
 async def health_check():
