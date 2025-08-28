@@ -166,15 +166,16 @@ class MCPClientManager:
         try:
             logger.info(f"Connecting to MCP server at: {self.server_url}")
 
-            # Create streamable HTTP client session
-            async with streamablehttp_client(self.server_url) as (read, write):
-                async with ClientSession(read, write) as session:
-                    # Initialize MCP tool executor
-                    mcp_client = MCPToolExecutor(session)
-                    await mcp_client.initialize()
-                    
-                    logger.info("MCP client connected successfully")
-                    return session
+            # Connect to the server using Streamable HTTP
+            async with streamablehttp_client(self.server_url) as (
+                    read_stream,
+                    write_stream,
+                    get_session_id,
+            ):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize the connection
+                    self.session=session
+                    await self.session.initialize()
 
             # Get streams from context manager with debugging
             context_result = await self.client_context.__aenter__()
