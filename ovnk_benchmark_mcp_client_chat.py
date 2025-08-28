@@ -55,10 +55,8 @@ class MCPTool(BaseTool):
     mcp_client: 'MCPClient'
     
     def __init__(self, name: str, description: str, mcp_client: 'MCPClient'):
-        super().__init__()
-        self.name = name
-        self.description = description
-        self.mcp_client = mcp_client
+        # Initialize BaseTool (pydantic model) with fields
+        super().__init__(name=name, description=description, mcp_client=mcp_client)
     
     def _run(self, **kwargs) -> str:
         """Synchronous run - not used"""
@@ -107,10 +105,7 @@ class MCPClient:
                    
                     #print("Available tools:")
                     for tool in tools_result.tools:
-                        print("#*"*35)
-                        print(tool.name)
-                        print(tool.description)
-                        print(tool.inputSchema)
+ 
                         # Handle schema that may be a dict or a Pydantic model
                         input_schema = {}
                         try:
@@ -178,7 +173,7 @@ class MCPClient:
                             logger.info(f"Session ID: in call_tool {get_session_id()}")
                         logger.info(f"Calling tool {tool_name} with params {params}")
 
-                        request_data = {"params": params or {}}
+                        request_data = params or {}
                         result = await session.call_tool(tool_name, request_data)
                         json_data = json.loads(result.content[0].text)
                         return json_data
