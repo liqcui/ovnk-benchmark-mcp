@@ -192,6 +192,8 @@ class MCPClient:
             # Try a simple tool call to verify functionality
             try:
                 health_result = await self.call_tool("get_mcp_health_status", {})
+                print("--"*35)
+                print("health_result is ", health_result)
                 return {
                     "status": "healthy",
                     "mcp_connection": "ok",
