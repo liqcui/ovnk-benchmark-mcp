@@ -118,11 +118,21 @@ class MCPClient:
                         logger.info(f"Loaded {len(self.available_tools)} MCP tools")
                         return True
 
-            try:
-                return await _open_and_init(primary_url)
-            except Exception as e_primary:
-                logger.warning(f"Primary MCP URL failed ({primary_url}): {e_primary}. Trying fallback {fallback_url}")
-                return await _open_and_init(fallback_url)
+            last_error = None
+            # Retry with small backoff across both URLs
+            for attempt in range(1, 4):
+                for url in (primary_url, fallback_url):
+                    try:
+                        logger.info(f"Connecting to MCP server (attempt {attempt}) at {url}")
+                        return await _open_and_init(url)
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(f"MCP connect attempt {attempt} failed for {url}: {repr(e)}")
+                await asyncio.sleep(0.5 * attempt)
+            # Exhausted retries
+            if last_error:
+                raise last_error
+            return False
                     
         except Exception as e:
             logger.error(f"Failed to connect to MCP server: {e}")
@@ -164,11 +174,18 @@ class MCPClient:
                         json_data = json.loads(result.content[0].text)
                         return json_data
 
-            try:
-                return await _open_and_call(primary_url)
-            except Exception as e_primary:
-                logger.warning(f"Primary MCP URL failed in call_tool ({primary_url}): {e_primary}. Trying fallback {fallback_url}")
-                return await _open_and_call(fallback_url)
+            last_error = None
+            for attempt in range(1, 3):
+                for url in (primary_url, fallback_url):
+                    try:
+                        logger.info(f"Calling tool via {url} (attempt {attempt})")
+                        return await _open_and_call(url)
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(f"call_tool attempt {attempt} failed for {url}: {repr(e)}")
+                await asyncio.sleep(0.2 * attempt)
+            if last_error:
+                raise last_error
                     
         except Exception as e:
             logger.error(f"Error calling tool {tool_name}: {e}")
