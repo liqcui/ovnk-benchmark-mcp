@@ -149,35 +149,111 @@ class MCPToolWrapper:
             logger.error(error_msg)
             return {"error": error_msg}
 
+class MCPClientManager:
+    """Manages MCP client connection lifecycle"""
+    
+    def __init__(self):
+        self.session = None
+        self.client_context = None
+        self.server_url = None
+    
+    async def connect(self, server_url: str):
+        """Connect to MCP server"""
+        self.server_url = server_url
+        
+        try:
+            logger.info(f"Connecting to MCP server at: {server_url}")
+            
+            # Create client context
+            self.client_context = streamablehttp_client(server_url)
+            
+            # Get read/write streams
+            read, write = await self.client_context.__aenter__()
+            
+            # Create and initialize session
+            self.session = ClientSession(read, write)
+            await self.session.initialize()
+            
+            logger.info("MCP session initialized successfully")
+            return self.session
+            
+        except Exception as e:
+            logger.error(f"Failed to connect to MCP server: {e}")
+            await self.cleanup()
+            raise
+    
+    async def cleanup(self):
+        """Clean up connection resources"""
+        try:
+            if self.session:
+                # Don't close session here as it's managed by the context
+                self.session = None
+            
+            if self.client_context:
+                await self.client_context.__aexit__(None, None, None)
+                self.client_context = None
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
+# Global MCP client manager
+mcp_client_manager = None
+
 async def initialize_mcp_session():
     """Initialize MCP session with the server"""
-    global mcp_session
+    global mcp_session, mcp_client_manager
     
-    # Get MCP server URL
-    mcp_server_url = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
+    # Get MCP server URL - try without /mcp suffix first
+    base_url = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
     
-    # Add /mcp suffix if not present (this is likely the correct endpoint based on your logs)
-    if not mcp_server_url.endswith('/mcp'):
-        mcp_server_url = f"{mcp_server_url}/mcp"
+    # Try different URL patterns
+    possible_urls = [
+        base_url,  # Try base URL first
+        f"{base_url}/mcp",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ]
     
-    try:
-        logger.info(f"Initializing MCP session at: {mcp_server_url}")
-        
-        # Use the streamablehttp_client properly
-        async with streamablehttp_client(mcp_server_url) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                mcp_session = session
-                logger.info("MCP session connected successfully")
-                
-                # Keep session alive by storing it globally
-                # Note: In production, you'd want a more robust session management
-                return session
-                
-    except Exception as e:
-        logger.error(f"Failed to connect to MCP server at {mcp_server_url}: {e}")
-        logger.error("Please ensure your MCP server is running and accessible")
-        raise Exception(f"MCP server not available at {mcp_server_url}")
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_urls = []
+    for url in possible_urls:
+        if url not in seen:
+            seen.add(url)
+            unique_urls.append(url)
+    
+    last_error = None
+    
+    for server_url in unique_urls:
+        try:
+            logger.info(f"Attempting to connect to: {server_url}")
+            
+            # Create new client manager for this attempt
+            mcp_client_manager = MCPClientManager()
+            session = await mcp_client_manager.connect(server_url)
+            
+            # Test the connection by listing tools
+            await session.list_tools()
+            
+            # If we get here, connection is successful
+            mcp_session = session
+            logger.info(f"Successfully connected to MCP server at: {server_url}")
+            return session
+            
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Failed to connect to {server_url}: {e}")
+            if mcp_client_manager:
+                await mcp_client_manager.cleanup()
+                mcp_client_manager = None
+            continue
+    
+    # If we get here, none of the URLs worked
+    error_msg = f"Could not connect to MCP server at any URL. Last error: {last_error}"
+    logger.error(error_msg)
+    logger.error("Please ensure your MCP server is running and accessible")
+    logger.error("Check the server logs for more details")
+    raise Exception(error_msg)
 
 async def get_mcp_tools() -> List[MCPToolWrapper]:
     """Retrieve available tools from MCP server"""
@@ -305,14 +381,16 @@ When users ask about performance, start with general cluster info and health che
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan management"""
-    global mcp_session
+    global mcp_session, mcp_client_manager
     
     # Startup
     try:
         logger.info("Starting MCP Client initialization...")
         
-        # Wait for MCP server and establish permanent connection
-        max_retries = 10
+        # Wait for MCP server and establish connection
+        max_retries = 5  # Reduced retries since we try multiple URLs
+        retry_delay = 3
+        
         for i in range(max_retries):
             try:
                 await initialize_mcp_session()
@@ -321,15 +399,25 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 if i < max_retries - 1:
                     logger.info(f"Retrying MCP connection... attempt {i+1}/{max_retries}")
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff
                 else:
                     logger.error(f"Failed to connect to MCP server after {max_retries} attempts")
                     logger.error("Please check that your MCP server is running")
+                    logger.error("The server should be accessible at one of these URLs:")
+                    logger.error("  - http://localhost:8000")
+                    logger.error("  - http://localhost:8000/mcp")
+                    logger.error("You can also set MCP_SERVER_URL environment variable")
                     raise Exception("MCP server not available")
         
         # Initialize agent
-        await initialize_agent()
-        logger.info("MCP Client initialized successfully")
+        try:
+            await initialize_agent()
+            logger.info("MCP Client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize agent: {e}")
+            # Don't raise here, as we might still want the server to run for diagnostics
+            logger.warning("Server will start but chat functionality may be limited")
         
     except Exception as e:
         logger.error(f"Startup failed: {e}")
@@ -339,6 +427,11 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down MCP Client...")
+    if mcp_client_manager:
+        try:
+            await mcp_client_manager.cleanup()
+        except Exception as e:
+            logger.error(f"Error during MCP cleanup: {e}")
 
 # Create FastAPI app
 app = FastAPI(
@@ -600,6 +693,96 @@ async def list_tools():
         return {"tools": tools_info}
     except Exception as e:
         return {"tools": [], "error": str(e)}
+
+@app.get("/api/debug/connection")
+async def debug_connection():
+    """Debug MCP connection status"""
+    debug_info = {
+        "mcp_session_status": "not_initialized",
+        "tools_count": 0,
+        "server_url": os.getenv("MCP_SERVER_URL", "http://localhost:8000"),
+        "client_manager_status": "not_initialized"
+    }
+    
+    if mcp_client_manager:
+        debug_info["client_manager_status"] = "initialized"
+        debug_info["server_url_used"] = mcp_client_manager.server_url
+        
+        if mcp_session:
+            try:
+                tools = await mcp_session.list_tools()
+                debug_info["mcp_session_status"] = "connected"
+                debug_info["tools_count"] = len(tools.tools) if tools else 0
+                debug_info["tools_list"] = [tool.name for tool in tools.tools] if tools else []
+            except Exception as e:
+                debug_info["mcp_session_status"] = "error"
+                debug_info["error"] = str(e)
+        else:
+            debug_info["mcp_session_status"] = "session_none"
+    
+    return debug_info
+
+@app.get("/api/debug/test_connection")
+async def test_connection():
+    """Test MCP server connectivity"""
+    test_urls = [
+        "http://localhost:8000",
+        "http://localhost:8000/mcp", 
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8000/mcp"
+    ]
+    
+    results = {}
+    
+    for url in test_urls:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Try a simple GET request first
+                try:
+                    response = await client.get(url)
+                    results[url] = {
+                        "status": "reachable",
+                        "http_status": response.status_code,
+                        "headers": dict(response.headers)
+                    }
+                except httpx.HTTPStatusError as e:
+                    results[url] = {
+                        "status": "http_error", 
+                        "http_status": e.response.status_code,
+                        "error": str(e)
+                    }
+        except Exception as e:
+            results[url] = {
+                "status": "unreachable",
+                "error": str(e)
+            }
+    
+    return results
+
+@app.post("/api/debug/reconnect")
+async def force_reconnect():
+    """Force MCP reconnection"""
+    global mcp_session, mcp_client_manager
+    
+    try:
+        # Clean up existing connection
+        if mcp_client_manager:
+            await mcp_client_manager.cleanup()
+            mcp_client_manager = None
+        mcp_session = None
+        
+        # Attempt reconnection
+        await initialize_mcp_session()
+        
+        # Re-initialize agent if needed
+        if not agent_executor:
+            await initialize_agent()
+        
+        return {"status": "success", "message": "Reconnected successfully"}
+        
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 # Mount static files (if you want to serve the HTML directly)
 if os.path.exists("static"):
