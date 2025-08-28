@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, AsyncGenerator
 import aiohttp
-
+import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -106,7 +106,11 @@ class MCPClient:
                     tools_result = await session.list_tools()
                    
                     #print("Available tools:")
-                    for tool in tools_result.tools: 
+                    for tool in tools_result.tools:
+                        print("#*"*35)
+                        print(tool.name)
+                        print(tool.description)
+                        print(tool.inputSchema)                        
                         self.available_tools.append({
                                 "name": tool.name,
                                 "description": tool.description,
@@ -128,6 +132,7 @@ class MCPClient:
 
                     
         except Exception as e:
+            traceback.print_exc()
             logger.error(f"Failed to connect to MCP server: {e}")
             return False
     
