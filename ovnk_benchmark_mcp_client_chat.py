@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -30,6 +31,9 @@ from langgraph.prebuilt import create_react_agent
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+# Reduce noisy httpx/httpcore info logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # Global variables
 mcp_session_manager = None
@@ -99,11 +103,26 @@ class MCPSessionManager:
         """Test if the MCP server is reachable"""
         import httpx
         try:
+            parsed = urlparse(self.server_url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            candidates = [
+                ("HEAD", base_url, None),
+                ("GET", base_url, None),
+                ("GET", f"{base_url}/api/health", None),
+            ]
+            # Avoid probing explicit MCP paths to prevent 406s from strict servers
+            
             async with httpx.AsyncClient() as client:
-                # Try a simple GET request to check if server is running
-                response = await client.get(self.server_url, timeout=5.0)
-                logger.info(f"Server response status: {response.status_code}")
-                return True
+                for method, url, headers in candidates:
+                    try:
+                        resp = await client.request(method, url, headers=headers, timeout=5.0)
+                        logger.info(f"Server probe {method} {url} -> {resp.status_code}")
+                        # Any HTTP response means the server is reachable (including 406/404)
+                        return True
+                    except Exception as probe_err:
+                        logger.debug(f"Probe failed {method} {url}: {probe_err}")
+                        continue
+            return False
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
             return False
@@ -498,7 +517,7 @@ async def stream_agent_response(message: str, conversation_id: str) -> AsyncGene
             
             # Handle tool calls and other events
             elif "tools" in event:
-                yield "data: " + json.dumps({'type': 'message', 'content': '🔧 Executing analysis tools...\n\n'}) + "\n\n"
+                yield "data: " + json.dumps({'type': 'message', 'content': 'ðŸ"§ Executing analysis tools...\n\n'}) + "\n\n"
             
     except Exception as e:
         error_msg = f"Error: {str(e)}"
@@ -608,8 +627,9 @@ if os.path.exists("static"):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        app,
+        "ovnk_benchmark_mcp_client_chat:app",
         host="0.0.0.0",
         port=8080,
+        reload=True,
         log_level="info"
     )
