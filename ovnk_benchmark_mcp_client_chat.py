@@ -18,13 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from urllib.parse import urlparse
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
@@ -36,53 +36,39 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # Global variables
-mcp_session_manager = None
+mcp_session = None
 agent_executor = None
 memory = None
+mcp_tools_cache = []
 
 class MCPSessionManager:
     """Manages the MCP client session lifecycle"""
     
     def __init__(self, server_url: str):
         self.server_url = server_url
-        self.client_context = None
         self.session = None
+        self.client_context = None
     
-    async def __aenter__(self):
-        """Enter the session context"""
+    async def initialize(self):
+        """Initialize the MCP session"""
         try:
-            logger.info(f"Attempting to connect to MCP server at: {self.server_url}")
+            logger.info(f"Connecting to MCP server at: {self.server_url}")
             
-            # Create the streamable HTTP client
+            # Use the streamablehttp_client context manager properly
             self.client_context = streamablehttp_client(self.server_url)
+            read, write = await self.client_context.__aenter__()
             
-            # Enter the client context - this might return various formats
-            client_result = await self.client_context.__aenter__()
-            
-            # Handle different return formats from streamablehttp_client
-            if isinstance(client_result, (tuple, list)):
-                # Assume it's (read, write) streams
-                read, write = client_result[:2]
-                self.session = ClientSession(read, write)
-            else:
-                # Assume it's already a session or has session-like interface
-                self.session = client_result
-            
-            # Initialize the session
+            # Create and initialize session
+            self.session = ClientSession(read, write)
             await self.session.initialize()
             
-            logger.info("MCP session manager initialized successfully")
+            logger.info("MCP session initialized successfully")
             return self.session
             
         except Exception as e:
-            logger.error(f"Error initializing MCP session manager: {e}")
-            logger.error(f"Make sure MCP server is running at {self.server_url}")
+            logger.error(f"Error initializing MCP session: {e}")
             await self.cleanup()
             raise
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Exit the session context"""
-        await self.cleanup()
     
     async def cleanup(self):
         """Clean up resources"""
@@ -99,70 +85,64 @@ class MCPSessionManager:
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
 
-    async def test_connection(self):
-        """Test if the MCP server is reachable"""
-        import httpx
-        try:
-            parsed = urlparse(self.server_url)
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
-            candidates = [
-                ("HEAD", base_url, None),
-                ("GET", base_url, None),
-                ("GET", f"{base_url}/api/health", None),
-            ]
-            # Avoid probing explicit MCP paths to prevent 406s from strict servers
-            
-            async with httpx.AsyncClient() as client:
-                for method, url, headers in candidates:
-                    try:
-                        resp = await client.request(method, url, headers=headers, timeout=5.0)
-                        logger.info(f"Server probe {method} {url} -> {resp.status_code}")
-                        # Any HTTP response means the server is reachable (including 406/404)
-                        return True
-                    except Exception as probe_err:
-                        logger.debug(f"Probe failed {method} {url}: {probe_err}")
-                        continue
-            return False
-        except Exception as e:
-            logger.error(f"Connection test failed: {e}")
-            return False
-
 class ChatRequest(BaseModel):
     message: str
     conversation_id: str
 
-class MCPTool:
-    """MCP Tool wrapper for LangGraph"""
+class MCPToolWrapper:
+    """Enhanced MCP Tool wrapper with automatic parameter handling"""
     
-    def __init__(self, name: str, description: str, parameters: Dict[str, Any]):
-        self.name = name
-        self.description = description
-        self.parameters = parameters
+    def __init__(self, tool_info):
+        self.name = tool_info.name
+        self.description = tool_info.description
+        self.input_schema = tool_info.inputSchema or {}
+        self.properties = self.input_schema.get("properties", {})
+        self.required = self.input_schema.get("required", [])
+    
+    def get_parameter_info(self):
+        """Extract parameter information for LangChain tool creation"""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "properties": self.properties,
+            "required": self.required
+        }
     
     async def invoke(self, **kwargs) -> Dict[str, Any]:
-        """Invoke the MCP tool"""
+        """Invoke the MCP tool with proper parameter handling"""
         try:
-            if not mcp_session_manager or not mcp_session_manager.session:
+            if not mcp_session:
                 raise Exception("MCP session not initialized")
             
-            # Call the MCP tool using the session
-            result = await mcp_session_manager.session.call_tool(self.name, kwargs)
-            logger.info(f"Tool {self.name} executed successfully")
+            # Filter kwargs to match expected parameters
+            filtered_kwargs = {}
+            for key, value in kwargs.items():
+                if key in self.properties or key in self.required:
+                    filtered_kwargs[key] = value
+            
+            logger.info(f"Calling MCP tool {self.name} with parameters: {list(filtered_kwargs.keys())}")
+            
+            # Call the MCP tool
+            result = await mcp_session.call_tool(self.name, filtered_kwargs)
             
             # Handle different result types
             if hasattr(result, 'content'):
-                # If result has content attribute, extract it
                 content = result.content
                 if isinstance(content, list):
                     # Handle multiple content items
-                    return {"result": [item.text if hasattr(item, 'text') else str(item) for item in content]}
+                    content_texts = []
+                    for item in content:
+                        if hasattr(item, 'text'):
+                            content_texts.append(item.text)
+                        else:
+                            content_texts.append(str(item))
+                    return {"result": "\n".join(content_texts)}
                 elif hasattr(content, 'text'):
                     return {"result": content.text}
                 else:
                     return {"result": str(content)}
             else:
-                # Direct result
-                return {"result": result}
+                return {"result": str(result)}
                 
         except Exception as e:
             error_msg = f"Error calling tool {self.name}: {str(e)}"
@@ -171,71 +151,51 @@ class MCPTool:
 
 async def initialize_mcp_session():
     """Initialize MCP session with the server"""
-    global mcp_session_manager
+    global mcp_session
     
-    # Try different common MCP server URLs
-    possible_urls = [
-        # "http://localhost:8000",
-        "http://localhost:8000/mcp",
-        # "http://localhost:8000/api/mcp",
-        # "http://127.0.0.1:8000",
-        "http://127.0.0.1:8000/mcp"
-    ]
+    # Get MCP server URL
+    mcp_server_url = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
     
-    # Also check environment variables for custom URL
-    custom_url = os.getenv("MCP_SERVER_URL")
-    if custom_url:
-        possible_urls.insert(0, custom_url)
+    # Add /mcp suffix if not present (this is likely the correct endpoint based on your logs)
+    if not mcp_server_url.endswith('/mcp'):
+        mcp_server_url = f"{mcp_server_url}/mcp"
     
-    for server_url in possible_urls:
-        try:
-            logger.info(f"Trying MCP server at: {server_url}")
-            
-            # Create and test connection first
-            mcp_session_manager = MCPSessionManager(server_url)
-            
-            # Test basic connectivity before attempting MCP connection
-            if await mcp_session_manager.test_connection():
-                logger.info(f"Basic connectivity confirmed for {server_url}")
-                
-                # Try to establish MCP session
-                await mcp_session_manager.__aenter__()
-                logger.info(f"MCP session initialized successfully at {server_url}")
-                return
-            else:
-                logger.warning(f"No response from server at {server_url}")
-                
-        except Exception as e:
-            logger.warning(f"Failed to connect to {server_url}: {e}")
-            if mcp_session_manager:
-                await mcp_session_manager.cleanup()
-                mcp_session_manager = None
-            continue
-    
-    # If we get here, none of the URLs worked
-    error_msg = f"Could not connect to MCP server at any of these URLs: {possible_urls}"
-    logger.error(error_msg)
-    logger.error("Please ensure your MCP server is running and accessible")
-    raise Exception(error_msg)
-
-async def get_mcp_tools() -> List[MCPTool]:
-    """Retrieve available tools from MCP server"""
     try:
-        if not mcp_session_manager or not mcp_session_manager.session:
+        logger.info(f"Initializing MCP session at: {mcp_server_url}")
+        
+        # Use the streamablehttp_client properly
+        async with streamablehttp_client(mcp_server_url) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                mcp_session = session
+                logger.info("MCP session connected successfully")
+                
+                # Keep session alive by storing it globally
+                # Note: In production, you'd want a more robust session management
+                return session
+                
+    except Exception as e:
+        logger.error(f"Failed to connect to MCP server at {mcp_server_url}: {e}")
+        logger.error("Please ensure your MCP server is running and accessible")
+        raise Exception(f"MCP server not available at {mcp_server_url}")
+
+async def get_mcp_tools() -> List[MCPToolWrapper]:
+    """Retrieve available tools from MCP server"""
+    global mcp_tools_cache
+    
+    try:
+        if not mcp_session:
             raise Exception("MCP session not initialized")
         
         # List available tools
-        tools_response = await mcp_session_manager.session.list_tools()
+        tools_response = await mcp_session.list_tools()
         tools = []
         
         for tool_info in tools_response.tools:
-            tool = MCPTool(
-                name=tool_info.name,
-                description=tool_info.description,
-                parameters=tool_info.inputSchema.get("properties", {}) if tool_info.inputSchema else {}
-            )
+            tool = MCPToolWrapper(tool_info)
             tools.append(tool)
                 
+        mcp_tools_cache = tools
         logger.info(f"Retrieved {len(tools)} tools from MCP server")
         return tools
         
@@ -243,24 +203,20 @@ async def get_mcp_tools() -> List[MCPTool]:
         logger.error(f"Error getting MCP tools: {e}")
         return []
 
-def create_langchain_tools(mcp_tools: List[MCPTool]):
-    """Convert MCP tools to LangChain tools"""
-    from langchain_core.tools import tool
-    
+def create_langchain_tools(mcp_tools: List[MCPToolWrapper]):
+    """Convert MCP tools to LangChain tools with proper parameter handling"""
     langchain_tools = []
     
     for mcp_tool in mcp_tools:
+        # Create a closure to capture the current mcp_tool
+        def make_tool_function(tool_wrapper):
+            @tool(name=tool_wrapper.name, description=tool_wrapper.description)
+            async def tool_func(**kwargs):
+                return await tool_wrapper.invoke(**kwargs)
+            return tool_func
         
-        @tool(name=mcp_tool.name, description=mcp_tool.description)
-        async def tool_func(*args, **kwargs):
-            # Find the corresponding MCP tool
-            tool_name = tool_func.name
-            mcp_t = next((t for t in mcp_tools if t.name == tool_name), None)
-            if mcp_t:
-                return await mcp_t.invoke(**kwargs)
-            return {"error": f"Tool {tool_name} not found"}
-        
-        langchain_tools.append(tool_func)
+        langchain_tool = make_tool_function(mcp_tool)
+        langchain_tools.append(langchain_tool)
     
     return langchain_tools
 
@@ -269,25 +225,25 @@ async def initialize_agent():
     global agent_executor, memory
     
     try:
-    
         # Initialize OpenAI LLM
         load_dotenv()
         api_key = os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("BASE_URL")    
 
-        llm = ChatOpenAI(
+        if base_url:
+            llm = ChatOpenAI(
                 model="gemini-1.5-flash",
                 base_url=base_url,
                 api_key=api_key,
                 temperature=0.1,
                 streaming=True         
             )
-
-        # llm = ChatOpenAI(
-        #     model="gpt-4o-mini",
-        #     temperature=0.1,
-        #     streaming=True
-        # )
+        else:
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0.1,
+                streaming=True
+            )
         
         # Get MCP tools and convert to LangChain format
         mcp_tools = await get_mcp_tools()
@@ -299,30 +255,37 @@ async def initialize_agent():
         # Initialize memory
         memory = MemorySaver()
         
-        # Create system message
-        system_message = """You are an expert OpenShift OVN-Kubernetes performance analyst. You have access to comprehensive monitoring tools for analyzing cluster performance, network policies, and resource utilization.
+        # Create enhanced system message
+        system_message = """You are an expert OpenShift OVN-Kubernetes performance analyst with access to comprehensive monitoring tools. 
 
-Your capabilities include:
-- Cluster health assessment and general information
-- Node resource usage analysis
-- API server performance monitoring  
-- OVN-Kubernetes pod metrics analysis
-- Open vSwitch (OVS) performance monitoring
-- Multus CNI metrics analysis
-- Synchronization duration analysis
-- Comprehensive performance analysis with recommendations
+Your available tools include:
+- get_openshift_general_info: Get cluster configuration and status
+- get_cluster_node_usage: Analyze node resource utilization  
+- query_kube_api_metrics: Monitor API server performance
+- query_ovnk_pods_metrics: Analyze OVN-K pod resource usage
+- query_ovnk_containers_metrics: Deep-dive container analysis
+- query_ovnk_ovs_metrics: Monitor Open vSwitch performance
+- query_multus_metrics: Analyze Multus CNI performance
+- query_ovnk_sync_duration_seconds_metrics: Monitor sync performance
+- analyze_pods_performance: Comprehensive pod analysis
+- analyze_ovs_performance: OVS performance analysis
+- analyze_sync_duration_performance: Sync duration analysis
+- analyze_multus_performance: Multus performance analysis
+- analyze_unified_performance: Cross-component analysis
+- get_performance_health_check: Quick health assessment
+- store_performance_data: Store metrics for historical analysis
+- get_performance_history: Retrieve historical data
 
 Guidelines:
-1. Always provide context about what metrics you're analyzing
-2. Interpret results and explain their significance
-3. Provide actionable recommendations when performance issues are found
-4. Use appropriate time durations based on the analysis type
-5. For health checks, use shorter durations (5m-15m)
-6. For trend analysis, use longer durations (1h-1d)
-7. When presenting data, explain what normal vs concerning values look like
-8. Always format responses clearly with proper structure
+1. For quick health checks, use shorter durations (5m-15m)
+2. For detailed analysis, use longer durations (1h-1d)
+3. Always explain the significance of metrics and provide context
+4. Use appropriate tools based on the specific analysis needed
+5. Provide actionable recommendations for performance issues
+6. Format responses clearly with proper structure
+7. When calling tools, the parameters will be automatically matched to the tool's schema
 
-When calling tools, automatically determine appropriate parameters based on the user's request and the tool descriptions."""
+When users ask about performance, start with general cluster info and health checks, then dive deeper into specific components as needed."""
         
         # Create the agent
         agent_executor = create_react_agent(
@@ -332,27 +295,24 @@ When calling tools, automatically determine appropriate parameters based on the 
             system_message=system_message
         )
         
-        logger.info("Agent initialized successfully")
+        logger.info("Agent initialized successfully with MCP tools")
         
     except Exception as e:
         logger.error(f"Error initializing agent: {e}")
         raise
 
+# Updated lifespan management to handle session properly
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan management"""
-    global mcp_session_manager
+    global mcp_session
     
     # Startup
     try:
         logger.info("Starting MCP Client initialization...")
         
-        # Check if MCP_SERVER_URL is set in environment
-        mcp_url = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
-        logger.info(f"MCP_SERVER_URL environment variable: {mcp_url}")
-        
-        # Wait for MCP server to be ready and initialize session
-        max_retries = 10  # Reduced retries since we try multiple URLs
+        # Wait for MCP server and establish permanent connection
+        max_retries = 10
         for i in range(max_retries):
             try:
                 await initialize_mcp_session()
@@ -361,11 +321,10 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 if i < max_retries - 1:
                     logger.info(f"Retrying MCP connection... attempt {i+1}/{max_retries}")
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(5)
                 else:
                     logger.error(f"Failed to connect to MCP server after {max_retries} attempts")
                     logger.error("Please check that your MCP server is running")
-                    logger.error("You can set MCP_SERVER_URL environment variable to specify the server URL")
                     raise Exception("MCP server not available")
         
         # Initialize agent
@@ -379,12 +338,7 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    if mcp_session_manager:
-        try:
-            logger.info("Shutting down MCP session...")
-            await mcp_session_manager.__aexit__(None, None, None)
-        except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+    logger.info("Shutting down MCP Client...")
 
 # Create FastAPI app
 app = FastAPI(
@@ -517,7 +471,7 @@ async def stream_agent_response(message: str, conversation_id: str) -> AsyncGene
             
             # Handle tool calls and other events
             elif "tools" in event:
-                yield "data: " + json.dumps({'type': 'message', 'content': 'ðŸ"§ Executing analysis tools...\n\n'}) + "\n\n"
+                yield "data: " + json.dumps({'type': 'message', 'content': '🔧 Executing analysis tools...\n\n'}) + "\n\n"
             
     except Exception as e:
         error_msg = f"Error: {str(e)}"
@@ -532,10 +486,10 @@ async def root():
         "mcp_server_status": "disconnected"
     }
     
-    if mcp_session_manager and mcp_session_manager.session:
+    if mcp_session:
         try:
             # Quick health check
-            await mcp_session_manager.session.list_tools()
+            await mcp_session.list_tools()
             status["mcp_server_status"] = "connected"
         except:
             status["mcp_server_status"] = "disconnected"
@@ -546,12 +500,16 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     try:
-        if mcp_session_manager and mcp_session_manager.session:
+        if mcp_session:
             # Check if session is still active
             try:
                 # Try to list tools as a health check
-                await mcp_session_manager.session.list_tools()
-                return {"status": "healthy", "mcp_server": "connected"}
+                tools = await mcp_session.list_tools()
+                return {
+                    "status": "healthy", 
+                    "mcp_server": "connected",
+                    "tools_count": len(tools.tools) if tools else 0
+                }
             except Exception as e:
                 logger.error(f"MCP session health check failed: {e}")
                 return {"status": "unhealthy", "mcp_server": "disconnected", "error": str(e)}
@@ -585,15 +543,18 @@ async def chat_stream(request: ChatRequest):
 async def tools_health_check():
     """Quick health check using MCP tools"""
     try:
-        if not mcp_session_manager or not mcp_session_manager.session:
+        if not mcp_session:
             return {"overall_status": "error", "error": "MCP session not initialized"}
         
-        # Create a temporary MCPTool instance for health check
-        health_tool = MCPTool(
-            name="get_performance_health_check",
-            description="Performance health check tool",
-            parameters={"duration": "string"}
-        )
+        # Find the health check tool
+        health_tool = None
+        for tool in mcp_tools_cache:
+            if tool.name == "get_performance_health_check":
+                health_tool = tool
+                break
+        
+        if not health_tool:
+            return {"overall_status": "error", "error": "Health check tool not available"}
         
         # Call the health check tool
         result = await health_tool.invoke(duration="5m")
@@ -619,6 +580,26 @@ async def tools_health_check():
     except Exception as e:
         logger.error(f"Health check error: {e}")
         return {"overall_status": "error", "error": str(e)}
+
+@app.get("/api/tools")
+async def list_tools():
+    """List available MCP tools"""
+    try:
+        if not mcp_tools_cache:
+            return {"tools": [], "error": "No tools loaded"}
+        
+        tools_info = []
+        for tool in mcp_tools_cache:
+            tools_info.append({
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.properties,
+                "required": tool.required
+            })
+        
+        return {"tools": tools_info}
+    except Exception as e:
+        return {"tools": [], "error": str(e)}
 
 # Mount static files (if you want to serve the HTML directly)
 if os.path.exists("static"):
