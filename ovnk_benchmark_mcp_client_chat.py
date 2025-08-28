@@ -156,10 +156,10 @@ async def initialize_mcp_session():
     
     # Try different common MCP server URLs
     possible_urls = [
-        "http://localhost:8000",
+        # "http://localhost:8000",
         "http://localhost:8000/mcp",
-        "http://localhost:8000/api/mcp",
-        "http://127.0.0.1:8000",
+        # "http://localhost:8000/api/mcp",
+        # "http://127.0.0.1:8000",
         "http://127.0.0.1:8000/mcp"
     ]
     
