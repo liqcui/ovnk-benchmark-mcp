@@ -32,10 +32,65 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global variables
-mcp_session: Optional[ClientSession] = None
-mcp_client_context = None
+mcp_session_manager = None
 agent_executor = None
 memory = None
+
+class MCPSessionManager:
+    """Manages the MCP client session lifecycle"""
+    
+    def __init__(self, server_url: str):
+        self.server_url = server_url
+        self.client_context = None
+        self.session = None
+    
+    async def __aenter__(self):
+        """Enter the session context"""
+        try:
+            # Create the streamable HTTP client
+            self.client_context = streamablehttp_client(self.server_url)
+            
+            # Enter the client context - this might return various formats
+            client_result = await self.client_context.__aenter__()
+            
+            # Handle different return formats from streamablehttp_client
+            if isinstance(client_result, (tuple, list)):
+                # Assume it's (read, write) streams
+                read, write = client_result[:2]
+                self.session = ClientSession(read, write)
+            else:
+                # Assume it's already a session or has session-like interface
+                self.session = client_result
+            
+            # Initialize the session
+            await self.session.initialize()
+            
+            logger.info("MCP session manager initialized successfully")
+            return self.session
+            
+        except Exception as e:
+            logger.error(f"Error initializing MCP session manager: {e}")
+            await self.cleanup()
+            raise
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit the session context"""
+        await self.cleanup()
+    
+    async def cleanup(self):
+        """Clean up resources"""
+        try:
+            if self.session:
+                if hasattr(self.session, 'close'):
+                    await self.session.close()
+                self.session = None
+            
+            if self.client_context:
+                await self.client_context.__aexit__(None, None, None)
+                self.client_context = None
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 class ChatRequest(BaseModel):
     message: str
@@ -52,11 +107,11 @@ class MCPTool:
     async def invoke(self, **kwargs) -> Dict[str, Any]:
         """Invoke the MCP tool"""
         try:
-            if not mcp_session:
+            if not mcp_session_manager or not mcp_session_manager.session:
                 raise Exception("MCP session not initialized")
             
             # Call the MCP tool using the session
-            result = await mcp_session.call_tool(self.name, kwargs)
+            result = await mcp_session_manager.session.call_tool(self.name, kwargs)
             logger.info(f"Tool {self.name} executed successfully")
             
             # Handle different result types
@@ -81,33 +136,32 @@ class MCPTool:
 
 async def initialize_mcp_session():
     """Initialize MCP session with the server"""
-    global mcp_session, mcp_client_context
+    global mcp_session_manager
     
     try:
         MCP_SERVER_URL = "http://localhost:8000"
         
-        # Create and store the streamable HTTP client context
-        mcp_client_context = streamablehttp_client(MCP_SERVER_URL)
-        read, write = await mcp_client_context.__aenter__()
-        
-        # Create session with the read/write streams
-        mcp_session = ClientSession(read, write)
-        await mcp_session.initialize()
+        # Create and initialize the session manager
+        mcp_session_manager = MCPSessionManager(MCP_SERVER_URL)
+        await mcp_session_manager.__aenter__()
         
         logger.info("MCP session initialized successfully")
         
     except Exception as e:
         logger.error(f"Error initializing MCP session: {e}")
+        if mcp_session_manager:
+            await mcp_session_manager.cleanup()
+            mcp_session_manager = None
         raise
 
 async def get_mcp_tools() -> List[MCPTool]:
     """Retrieve available tools from MCP server"""
     try:
-        if not mcp_session:
+        if not mcp_session_manager or not mcp_session_manager.session:
             raise Exception("MCP session not initialized")
         
         # List available tools
-        tools_response = await mcp_session.list_tools()
+        tools_response = await mcp_session_manager.session.list_tools()
         tools = []
         
         for tool_info in tools_response.tools:
@@ -223,7 +277,7 @@ When calling tools, automatically determine appropriate parameters based on the 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan management"""
-    global mcp_session, mcp_client_context
+    global mcp_session_manager
     
     # Startup
     try:
@@ -253,13 +307,11 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    try:
-        if mcp_session:
-            await mcp_session.close()
-        if mcp_client_context:
-            await mcp_client_context.__aexit__(None, None, None)
-    except Exception as e:
-        logger.error(f"Error during shutdown: {e}")
+    if mcp_session_manager:
+        try:
+            await mcp_session_manager.__aexit__(None, None, None)
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
 
 # Create FastAPI app
 app = FastAPI(
@@ -408,11 +460,11 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     try:
-        if mcp_session:
+        if mcp_session_manager and mcp_session_manager.session:
             # Check if session is still active
             try:
                 # Try to list tools as a health check
-                await mcp_session.list_tools()
+                await mcp_session_manager.session.list_tools()
                 return {"status": "healthy", "mcp_server": "connected"}
             except Exception as e:
                 logger.error(f"MCP session health check failed: {e}")
@@ -447,7 +499,7 @@ async def chat_stream(request: ChatRequest):
 async def tools_health_check():
     """Quick health check using MCP tools"""
     try:
-        if not mcp_session:
+        if not mcp_session_manager or not mcp_session_manager.session:
             return {"overall_status": "error", "error": "MCP session not initialized"}
         
         # Create a temporary MCPTool instance for health check
