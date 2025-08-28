@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from mcp.client.streamable_http import streamablehttp_client
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 # Global variables
 mcp_session: Optional[ClientSession] = None
+mcp_read = None
+mcp_write = None
 agent_executor = None
 memory = None
 
@@ -78,17 +80,21 @@ class MCPTool:
             logger.error(error_msg)
             return {"error": error_msg}
 
-async def initialize_mcp_session() -> ClientSession:
+async def initialize_mcp_session():
     """Initialize MCP session with the server"""
+    global mcp_session, mcp_read, mcp_write
+    
     try:
-        # For HTTP streamable connection
-        session = await streamable_http_client("http://localhost:8000")
+        MCP_SERVER_URL = "http://localhost:8000"
+        
+        # Create streamable HTTP client connection
+        mcp_read, mcp_write = await streamablehttp_client(MCP_SERVER_URL).__aenter__()
+        mcp_session = await ClientSession(mcp_read, mcp_write).__aenter__()
         
         # Initialize the session
-        await session.initialize()
+        await mcp_session.initialize()
         
         logger.info("MCP session initialized successfully")
-        return session
         
     except Exception as e:
         logger.error(f"Error initializing MCP session: {e}")
@@ -217,7 +223,7 @@ When calling tools, automatically determine appropriate parameters based on the 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan management"""
-    global mcp_session
+    global mcp_session, mcp_read, mcp_write
     
     # Startup
     try:
@@ -225,7 +231,7 @@ async def lifespan(app: FastAPI):
         max_retries = 30
         for i in range(max_retries):
             try:
-                mcp_session = await initialize_mcp_session()
+                await initialize_mcp_session()
                 logger.info("MCP server is ready")
                 break
             except Exception as e:
@@ -249,9 +255,16 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if mcp_session:
         try:
-            await mcp_session.close()
+            await mcp_session.__aexit__(None, None, None)
         except Exception as e:
             logger.error(f"Error closing MCP session: {e}")
+    
+    if mcp_read and mcp_write:
+        try:
+            # Close the streamable client connection
+            await streamablehttp_client("http://localhost:8000").__aexit__(None, None, None)
+        except Exception as e:
+            logger.error(f"Error closing streamable client: {e}")
 
 # Create FastAPI app
 app = FastAPI(

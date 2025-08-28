@@ -31,13 +31,13 @@ from langchain_openai import ChatOpenAI
         # MCP imports
 try:
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client
+    from mcp.client.streamable_http import streamablehttp_client
     MCP_AVAILABLE = True
 except ImportError:
     logger.warning("MCP not available, using mock implementation")
     MCP_AVAILABLE = False
     ClientSession = None
-    streamable_http_client = None
+    streamablehttp_client = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -253,7 +253,7 @@ async def create_mcp_connection():
     
     try:
         # Create streamable HTTP client session
-        async with streamable_http_client(MCP_SERVER_URL) as (read, write):
+        async with streamablehttp_client(MCP_SERVER_URL) as (read, write):
             async with ClientSession(read, write) as session:
                 # Initialize MCP tool executor
                 mcp_client = MCPToolExecutor(session)
