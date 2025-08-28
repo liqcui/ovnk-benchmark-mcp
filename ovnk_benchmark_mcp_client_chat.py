@@ -29,11 +29,12 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)  # Changed to DEBUG for troubleshooting
 logger = logging.getLogger(__name__)
 # Reduce noisy httpx/httpcore info logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("mcp").setLevel(logging.DEBUG)  # Enable MCP debug logs
 
 # Global variables
 mcp_session = None
@@ -167,10 +168,44 @@ class MCPClientManager:
             # Create client context
             self.client_context = streamablehttp_client(server_url)
             
-            # Get read/write streams
-            read, write = await self.client_context.__aenter__()
+            # Get streams from context manager with debugging
+            context_result = await self.client_context.__aenter__()
+            logger.debug(f"Context result type: {type(context_result)}")
+            logger.debug(f"Context result: {context_result}")
             
-            # Create and initialize session
+            # Handle different return formats
+            if isinstance(context_result, tuple):
+                logger.debug(f"Tuple length: {len(context_result)}")
+                if len(context_result) == 2:
+                    read, write = context_result
+                elif len(context_result) == 3:
+                    # Some implementations might return (read, write, metadata)
+                    read, write, _ = context_result
+                else:
+                    # Fallback for unexpected tuple length
+                    logger.warning(f"Unexpected tuple length {len(context_result)}, using first two values")
+                    read, write = context_result[0], context_result[1]
+            elif hasattr(context_result, '__iter__') and not isinstance(context_result, str):
+                # Handle other iterables
+                items = list(context_result)
+                logger.debug(f"Iterable with {len(items)} items")
+                if len(items) >= 2:
+                    read, write = items[0], items[1]
+                else:
+                    raise ValueError(f"Not enough values to unpack from iterable: {len(items)}")
+            else:
+                # If it's not a tuple or iterable, it might be a session object directly
+                if hasattr(context_result, 'initialize'):
+                    logger.info("Got session object directly")
+                    self.session = context_result
+                    await self.session.initialize()
+                    logger.info("MCP session initialized successfully")
+                    return self.session
+                else:
+                    raise ValueError(f"Unexpected return type from streamablehttp_client: {type(context_result)}")
+            
+            # Create and initialize session with read/write streams
+            logger.debug(f"Creating ClientSession with read: {type(read)}, write: {type(write)}")
             self.session = ClientSession(read, write)
             await self.session.initialize()
             
@@ -179,6 +214,9 @@ class MCPClientManager:
             
         except Exception as e:
             logger.error(f"Failed to connect to MCP server: {e}")
+            logger.error(f"Exception type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             await self.cleanup()
             raise
     
@@ -203,15 +241,17 @@ async def initialize_mcp_session():
     """Initialize MCP session with the server"""
     global mcp_session, mcp_client_manager
     
-    # Get MCP server URL - try without /mcp suffix first
+    # Get MCP server URL - try different patterns
     base_url = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
     
-    # Try different URL patterns
+    # Try different URL patterns based on your server setup
     possible_urls = [
         base_url,  # Try base URL first
-        f"{base_url}/mcp",
+        f"{base_url}/mcp",  # Your logs show /mcp endpoint exists
         "http://localhost:8000",
-        "http://127.0.0.1:8000"
+        "http://localhost:8000/mcp",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8000/mcp"
     ]
     
     # Remove duplicates while preserving order
@@ -228,18 +268,57 @@ async def initialize_mcp_session():
         try:
             logger.info(f"Attempting to connect to: {server_url}")
             
-            # Create new client manager for this attempt
-            mcp_client_manager = MCPClientManager()
-            session = await mcp_client_manager.connect(server_url)
-            
-            # Test the connection by listing tools
-            await session.list_tools()
-            
-            # If we get here, connection is successful
-            mcp_session = session
-            logger.info(f"Successfully connected to MCP server at: {server_url}")
-            return session
-            
+            # Method 1: Try with MCPClientManager
+            try:
+                mcp_client_manager = MCPClientManager()
+                session = await mcp_client_manager.connect(server_url)
+                
+                # Test the connection by listing tools
+                await session.list_tools()
+                
+                # If we get here, connection is successful
+                mcp_session = session
+                logger.info(f"Successfully connected to MCP server at: {server_url}")
+                return session
+            except Exception as e1:
+                logger.debug(f"MCPClientManager failed: {e1}")
+                
+                # Method 2: Try direct connection approach
+                try:
+                    logger.info(f"Trying direct connection approach to: {server_url}")
+                    async with streamablehttp_client(server_url) as client_result:
+                        # Handle different return patterns
+                        if isinstance(client_result, tuple):
+                            if len(client_result) == 2:
+                                read, write = client_result
+                            else:
+                                # Take first two elements
+                                read, write = client_result[0], client_result[1]
+                        else:
+                            # Assume it's a session-like object
+                            if hasattr(client_result, 'call_tool'):
+                                mcp_session = client_result
+                                await mcp_session.list_tools()  # Test connection
+                                logger.info(f"Direct connection successful to: {server_url}")
+                                return client_result
+                            else:
+                                raise ValueError("Unexpected client result type")
+                        
+                        # Create session with streams
+                        session = ClientSession(read, write)
+                        await session.initialize()
+                        
+                        # Test the connection
+                        await session.list_tools()
+                        
+                        mcp_session = session
+                        logger.info(f"Direct connection successful to: {server_url}")
+                        return session
+                        
+                except Exception as e2:
+                    logger.debug(f"Direct connection failed: {e2}")
+                    raise e1  # Raise the original error
+                
         except Exception as e:
             last_error = e
             logger.warning(f"Failed to connect to {server_url}: {e}")
@@ -253,6 +332,7 @@ async def initialize_mcp_session():
     logger.error(error_msg)
     logger.error("Please ensure your MCP server is running and accessible")
     logger.error("Check the server logs for more details")
+    logger.error("Tried URLs: " + ", ".join(unique_urls))
     raise Exception(error_msg)
 
 async def get_mcp_tools() -> List[MCPToolWrapper]:
