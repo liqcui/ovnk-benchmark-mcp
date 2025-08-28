@@ -517,32 +517,32 @@
             <div class="quick-actions">
                 <h3>Quick Actions</h3>
                 <button class="action-button" onclick="sendQuickMessage('Perform a comprehensive health check')">
-                    Health Check
+                    🔍 Health Check
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('What is the current cluster status?')">
-                    Cluster Overview
+                    🏛️ Cluster Overview
                 </button>
                 <button class="action-button"
                     onclick="sendQuickMessage('Show me node information with resource utilization')">
-                    Cluster Node Usage
+                    🖥️ Cluster Node Usage
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Check API server performance metrics')">
-                    API Performance
+                    ⚡ API Performance
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
-                    OVN-K Deep Dive
+                    📀 OVN-K Deep Dive
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Analyze OVS performance metrics')">
-                    OVS Analysis
+                    🌐 OVS Analysis
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Check Multus CNI performance')">
-                    Multus Analysis
+                    🎯 Multus Analysis
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Analyze sync duration performance')">
-                    Sync Duration
+                    ⏱️ Sync Duration
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Run unified performance analysis')">
-                    Full Performance Report
+                    📈 Full Performance Report
                 </button>
             </div>
 
@@ -670,6 +670,8 @@
                 const message = customMessage || this.messageInput.value.trim();
                 if (!message || this.isTyping) return;
 
+                console.log(message, "in sendMessage");
+
                 // Clear input if not using custom message
                 if (!customMessage) {
                     this.messageInput.value = '';
@@ -682,7 +684,7 @@
                 this.showTyping(true);
 
                 try {
-                    const response = await fetch('http://localhost:8080/chat/stream', {
+                    const response = await fetch('/chat/stream', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -700,7 +702,7 @@
                 } catch (error) {
                     this.showTyping(false);
                     this.addMessage(
-                        `Connection Error: ${error.message}<br><em>Make sure the MCP client is running on port 8080</em>`,
+                        `Connection Error: ${error.message}<br><em>Make sure the MCP client is running</em>`,
                         'error'
                     );
                 }
@@ -818,7 +820,7 @@
                 this.loadingOverlay.style.display = 'flex';
 
                 try {
-                    const response = await fetch('http://localhost:8080/api/health');
+                    const response = await fetch('/api/health');
                     const health = await response.json();
 
                     if (health.status === 'healthy') {
@@ -842,7 +844,7 @@
 
             async checkClusterHealth() {
                 try {
-                    const clusterResponse = await fetch('http://localhost:8080/api/tools/get_performance_health_check', {
+                    const clusterResponse = await fetch('/api/tools/get_performance_health_check', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({})
