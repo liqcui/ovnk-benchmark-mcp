@@ -48,7 +48,6 @@ class MCPSessionManager:
     def __init__(self, server_url: str):
         self.server_url = server_url
         self.session = None
-        self.client_context = None
     
     async def initialize(self):
         """Initialize the MCP session"""
@@ -85,7 +84,6 @@ class MCPSessionManager:
             
             if self.client_context:
                 await self.client_context.__aexit__(None, None, None)
-                self.client_context = None
                 
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
@@ -159,7 +157,6 @@ class MCPClientManager:
     
     def __init__(self):
         self.session = None
-        self.client_context = None
         self.server_url = None
     
     async def connect(self, server_url: str):
@@ -167,10 +164,10 @@ class MCPClientManager:
         self.server_url = server_url
         
         try:
-            logger.info(f"Connecting to MCP server at: {server_url}")
+            logger.info(f"Connecting to MCP server at: {self.server_url}")
 
             # Create streamable HTTP client session
-            async with streamablehttp_client(server_url) as (read, write):
+            async with streamablehttp_client(self.server_url) as (read, write):
                 async with ClientSession(read, write) as session:
                     # Initialize MCP tool executor
                     mcp_client = MCPToolExecutor(session)
@@ -240,7 +237,6 @@ class MCPClientManager:
             
             if self.client_context:
                 await self.client_context.__aexit__(None, None, None)
-                self.client_context = None
                 
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
