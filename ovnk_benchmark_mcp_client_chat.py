@@ -7,6 +7,7 @@ Provides AI-powered chat interface for interacting with MCP tools
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, AsyncGenerator
@@ -29,6 +30,7 @@ from langchain.memory import ConversationBufferMemory
 from langgraph.prebuilt import create_react_agent
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -87,8 +89,7 @@ class MCPClient:
             
             # Test connection using streamable HTTP
             async with streamablehttp_client(
-                url,
-                headers={"accept": "application/json"}
+                url
             ) as (
                 read_stream,
                 write_stream,
@@ -217,7 +218,7 @@ class ChatBot:
         api_key = os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("BASE_URL")    
 
-        llm = ChatOpenAI(
+        self.llm = ChatOpenAI(
                 model="gemini-1.5-flash",
                 base_url=base_url,
                 api_key=api_key,
