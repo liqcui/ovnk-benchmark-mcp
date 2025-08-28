@@ -85,39 +85,44 @@ class MCPClient:
     async def connect(self):
         """Connect to MCP server and initialize tools"""
         try:
-            url = f"{self.mcp_server_url}/mcp"
-            
-            # Test connection using streamable HTTP
-            async with streamablehttp_client(
-                url
-            ) as (
-                read_stream,
-                write_stream,
-                get_session_id,
-            ):
-                async with ClientSession(read_stream, write_stream) as session:
-                    # Initialize the connection
-                    self.session = session
-                    await self.session.initialize()
-                    session_id = get_session_id()
-                    logger.info(f"Successfully connected to MCP server. Session ID: {session_id}")
-                    
-                    # Get available tools
-                    tools_result = await session.list_tools()
-                    self.available_tools = [
-                        {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "input_schema": tool.inputSchema.model_dump() if tool.inputSchema else {}
-                        }
-                        for tool in tools_result.tools
-                    ]
-                    
-                    # Create LangChain tool wrappers
-                    self._create_langchain_tools()
-                    
-                    logger.info(f"Loaded {len(self.available_tools)} MCP tools")
-                    return True
+            primary_url = f"{self.mcp_server_url}/mcp"
+            fallback_url = self.mcp_server_url
+
+            async def _open_and_init(url: str) -> bool:
+                async with streamablehttp_client(url) as connection:
+                    # Support both 2- and 3-tuple variants
+                    if isinstance(connection, tuple) and len(connection) == 3:
+                        read_stream, write_stream, get_session_id = connection
+                    else:
+                        read_stream, write_stream = connection
+                        get_session_id = None
+
+                    async with ClientSession(read_stream, write_stream) as session:
+                        self.session = session
+                        await self.session.initialize()
+                        if get_session_id:
+                            logger.info(f"Successfully connected to MCP server. Session ID: {get_session_id()}")
+                        else:
+                            logger.info("Successfully connected to MCP server.")
+
+                        tools_result = await session.list_tools()
+                        self.available_tools = [
+                            {
+                                "name": tool.name,
+                                "description": tool.description,
+                                "input_schema": tool.inputSchema.model_dump() if tool.inputSchema else {}
+                            }
+                            for tool in tools_result.tools
+                        ]
+                        self._create_langchain_tools()
+                        logger.info(f"Loaded {len(self.available_tools)} MCP tools")
+                        return True
+
+            try:
+                return await _open_and_init(primary_url)
+            except Exception as e_primary:
+                logger.warning(f"Primary MCP URL failed ({primary_url}): {e_primary}. Trying fallback {fallback_url}")
+                return await _open_and_init(fallback_url)
                     
         except Exception as e:
             logger.error(f"Failed to connect to MCP server: {e}")
@@ -137,35 +142,33 @@ class MCPClient:
     async def call_tool(self, tool_name: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Call an MCP tool with parameters"""
         try:
-            url = f"{self.mcp_server_url}/mcp"
-            
-            # Connect to the server using Streamable HTTP
-            async with streamablehttp_client(
-                url,
-                # headers={"accept": "application/json"}
-            ) as (
-                read_stream,
-                write_stream,
-                get_session_id,
-            ):
-                async with ClientSession(read_stream, write_stream) as session:
-                    # Initialize the connection
-                    await session.initialize()
-                    # Get session id once connection established
-                    session_id = get_session_id()
-                    logger.info(f"Session ID: in call_tool {session_id}")
-                    
-                    logger.info(f"Calling tool {tool_name} with params {params}")
-                    
-                    # Make a request to the server using HTTP
-                    request_data = {
-                        "params": params or {}
-                    }
-                    logger.info(f"Calling tool {tool_name} with params {request_data}")
-                    result = await session.call_tool(tool_name, request_data)
-                    
-                    json_data = json.loads(result.content[0].text)
-                    return json_data
+            primary_url = f"{self.mcp_server_url}/mcp"
+            fallback_url = self.mcp_server_url
+
+            async def _open_and_call(url: str) -> Dict[str, Any]:
+                async with streamablehttp_client(url) as connection:
+                    if isinstance(connection, tuple) and len(connection) == 3:
+                        read_stream, write_stream, get_session_id = connection
+                    else:
+                        read_stream, write_stream = connection
+                        get_session_id = None
+
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        if get_session_id:
+                            logger.info(f"Session ID: in call_tool {get_session_id()}")
+                        logger.info(f"Calling tool {tool_name} with params {params}")
+
+                        request_data = {"params": params or {}}
+                        result = await session.call_tool(tool_name, request_data)
+                        json_data = json.loads(result.content[0].text)
+                        return json_data
+
+            try:
+                return await _open_and_call(primary_url)
+            except Exception as e_primary:
+                logger.warning(f"Primary MCP URL failed in call_tool ({primary_url}): {e_primary}. Trying fallback {fallback_url}")
+                return await _open_and_call(fallback_url)
                     
         except Exception as e:
             logger.error(f"Error calling tool {tool_name}: {e}")
