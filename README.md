@@ -4,6 +4,61 @@ A comprehensive benchmarking and performance monitoring solution for OpenShift c
 
 ## Architecture Overview
 
+## Architecture Topology
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           OpenShift Cluster                                      │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐          │
+│  │   Kubernetes     │    │   Prometheus     │    │  OVN-Kubernetes  │          │
+│  │      API         │    │    Metrics       │    │    Components    │          │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘          │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ KUBECONFIG + SA Token
+                                    │
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           MCP Server Application                                  │
+│                                                                                   │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐          │
+│  │   Authentication │    │   Data Collection│    │   Performance    │          │
+│  │     Module       │    │      Tools       │    │    Analysis      │          │
+│  │                  │    │                  │    │                  │          │
+│  │  • Auth Manager  │    │  • Cluster Info  │    │  • Bottleneck    │          │
+│  │  • Token Mgmt    │    │  • Prometheus    │    │    Detection     │          │
+│  │                  │    │    Queries       │    │  • Trend Analysis│          │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘          │
+│                                    │                                             │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐          │
+│  │   Data Storage   │    │   ETL Processing │    │   Report Gen.    │          │
+│  │                  │    │                  │    │                  │          │
+│  │  • DuckDB        │    │  • JSON to Table │    │  • Excel Reports │          │
+│  │  • Time Series   │    │  • Data Transform│    │  • PDF Summary   │          │
+│  │    Storage       │    │  • Aggregation   │    │  • HTML Dashboard│          │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘          │
+│                                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │                        AI Agents (LangGraph)                                 ││
+│  │                                                                               ││
+│  │  ┌──────────────────┐              ┌──────────────────┐                     ││
+│  │  │  Performance     │              │   Report         │                     ││
+│  │  │  Data Agent      │              │   Generation     │                     ││
+│  │  │                  │              │   Agent          │                     ││
+│  │  │ • Collect Metrics│              │ • Analyze Data   │                     ││
+│  │  │ • Store in DB    │              │ • Compare History│                     ││
+│  │  │ • Real-time Mon. │              │ • Generate Report│                     ││
+│  │  └──────────────────┘              └──────────────────┘                     ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ MCP Protocol (StreamableHTTP)
+                                    │
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              MCP Client Chat/API                                │
+│                         (Claude/LLM Interface)                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
 ```mermaid
 graph TB
     subgraph "OpenShift Cluster"
@@ -12,6 +67,11 @@ graph TB
         KAPI[Kubernetes API]
         OVNK[OVN-Kubernetes Pods]
         MULTUS[Multus CNI]
+    end
+    
+    subgraph "MCP Client Layer"
+        CLIENT_API[MCP Client API<br/>REST/WebSocket Interface]
+        CLIENT_CHAT[MCP Client Chat<br/>with LLM Integration]
     end
     
     subgraph "MCP Server Layer"
@@ -32,21 +92,34 @@ graph TB
         PDF[PDF Reports]
     end
     
+    %% OpenShift to Server connections
     OCP --> AUTH
     PROM --> TOOLS
     KAPI --> TOOLS
+    
+    %% Client to Server connections
+    CLIENT_API --> MCP
+    CLIENT_CHAT --> MCP
+    CLIENT_CHAT --> LLM
+    
+    %% Server internal connections
     AUTH --> MCP
     TOOLS --> MCP
     
+    %% Agent connections
     AGENT1 --> MCP
     AGENT2 --> MCP
     AGENT1 --> LLM
     AGENT2 --> LLM
     
+    %% Storage connections
     MCP --> DUCK
     AGENT2 --> EXCEL
     AGENT2 --> PDF
     
+    %% Styling
+    style CLIENT_API fill:#fff3e0
+    style CLIENT_CHAT fill:#fff3e0
     style MCP fill:#e1f5fe
     style AGENT1 fill:#f3e5f5
     style AGENT2 fill:#f3e5f5
