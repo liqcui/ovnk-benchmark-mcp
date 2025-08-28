@@ -115,17 +115,23 @@ class MCPClientManager:
         self.client_context = None
     
     async def connect(self, server_url: str):
-        """Connect to MCP server with proper error handling"""
+        """Connect to MCP server with improved timeout handling"""
         self.server_url = server_url
         
         try:
             logger.info(f"Connecting to MCP server at: {server_url}")
             
-            # Use the streamablehttp_client properly
+            # Use the streamablehttp_client with shorter timeout
             self.client_context = streamablehttp_client(server_url)
             
-            # Enter the context and get streams
-            streams = await self.client_context.__aenter__()
+            # Enter the context with timeout
+            try:
+                streams = await asyncio.wait_for(
+                    self.client_context.__aenter__(), 
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                raise Exception("Connection to MCP server timed out")
             
             # Handle different return formats from streamablehttp_client
             if isinstance(streams, tuple) and len(streams) >= 2:
@@ -133,19 +139,39 @@ class MCPClientManager:
             else:
                 raise ValueError(f"Unexpected return from streamablehttp_client: {type(streams)}")
             
-            # Create and initialize session
+            # Create session
             self.session = ClientSession(read_stream, write_stream)
             
-            # Initialize with timeout and error handling
-            try:
-                await asyncio.wait_for(self.session.initialize(), timeout=10.0)
-                logger.info("MCP session initialized successfully")
-                return self.session
-            except asyncio.TimeoutError:
-                raise Exception("MCP session initialization timed out")
-            except Exception as e:
-                logger.error(f"MCP session initialization failed: {e}")
-                raise
+            # Initialize with shorter timeout and retry logic
+            max_init_attempts = 3
+            init_timeout = 3.0
+            
+            for attempt in range(max_init_attempts):
+                try:
+                    logger.debug(f"Initializing MCP session (attempt {attempt + 1}/{max_init_attempts})")
+                    await asyncio.wait_for(self.session.initialize(), timeout=init_timeout)
+                    logger.info("MCP session initialized successfully")
+                    return self.session
+                    
+                except asyncio.TimeoutError:
+                    if attempt < max_init_attempts - 1:
+                        logger.debug(f"Session init timeout, retrying... ({attempt + 1}/{max_init_attempts})")
+                        await asyncio.sleep(0.5)  # Brief pause before retry
+                        init_timeout += 1.0  # Increase timeout for next attempt
+                    else:
+                        raise Exception(f"MCP session initialization timed out after {max_init_attempts} attempts")
+                        
+                except Exception as e:
+                    logger.error(f"MCP session initialization failed on attempt {attempt + 1}: {e}")
+                    if attempt < max_init_attempts - 1:
+                        await asyncio.sleep(0.5)
+                        # Try to recreate the session
+                        try:
+                            self.session = ClientSession(read_stream, write_stream)
+                        except Exception as recreate_error:
+                            logger.debug(f"Failed to recreate session: {recreate_error}")
+                    else:
+                        raise Exception(f"MCP session initialization failed: {e}")
                 
         except Exception as e:
             logger.error(f"Failed to connect to MCP server: {e}")
@@ -169,19 +195,48 @@ class MCPClientManager:
 # Global MCP client manager
 mcp_client_manager = None
 
-async def test_server_connectivity(url: str) -> bool:
-    """Test if the server is reachable"""
+async def test_server_connectivity(url: str) -> Dict[str, Any]:
+    """Test if the server is reachable and check for MCP support"""
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:
             response = await client.get(url)
-            return response.status_code in [200, 404]  # 404 is OK, means server is up
+            
+            # Check for MCP-related headers or content
+            headers = response.headers
+            content = response.text.lower() if hasattr(response, 'text') else ""
+            
+            result = {
+                "reachable": True,
+                "status_code": response.status_code,
+                "likely_mcp": False,
+                "server_type": "unknown"
+            }
+            
+            # Check for signs this might be an MCP server
+            if any(keyword in content for keyword in ["mcp", "model context protocol", "tools", "resources"]):
+                result["likely_mcp"] = True
+                result["server_type"] = "possible_mcp"
+            elif "application/json" in headers.get("content-type", ""):
+                result["likely_mcp"] = True
+                result["server_type"] = "json_api"
+            elif response.status_code in [200, 404, 405]:
+                result["likely_mcp"] = True  # Server is up, might support MCP
+                result["server_type"] = "http_server"
+            
+            return result
+            
     except Exception as e:
         logger.debug(f"Server {url} not reachable: {e}")
-        return False
+        return {
+            "reachable": False,
+            "error": str(e),
+            "likely_mcp": False,
+            "server_type": "unreachable"
+        }
 
 async def initialize_mcp_session():
-    """Initialize MCP session with the server"""
+    """Initialize MCP session with improved server detection and timeout handling"""
     global mcp_session, mcp_client_manager
     
     # Get MCP server URL
@@ -193,7 +248,7 @@ async def initialize_mcp_session():
         base_url,
         "http://localhost:8000/mcp",
         "http://localhost:8000",
-        "http://127.0.0.1:8000/mcp",
+        "http://127.0.0.1:8000/mcp", 
         "http://127.0.0.1:8000"
     ]
     
@@ -205,57 +260,101 @@ async def initialize_mcp_session():
             seen.add(url)
             unique_urls.append(url)
     
-    # First, test basic connectivity
-    logger.info("Testing server connectivity...")
-    reachable_urls = []
+    # Test connectivity and assess MCP likelihood
+    logger.info("Testing server connectivity and MCP compatibility...")
+    candidate_servers = []
+    
     for url in unique_urls:
         base_server = url.replace('/mcp', '')  # Test base server first
-        if await test_server_connectivity(base_server):
-            reachable_urls.append(url)
-            logger.info(f"Server reachable at: {base_server}")
+        connectivity_info = await test_server_connectivity(base_server)
+        
+        if connectivity_info["reachable"]:
+            logger.info(f"✅ Server reachable: {base_server} (status: {connectivity_info['status_code']}, type: {connectivity_info['server_type']})")
+            candidate_servers.append((url, connectivity_info))
         else:
-            logger.debug(f"Server not reachable at: {base_server}")
+            logger.debug(f"❌ Server unreachable: {base_server}")
     
-    if not reachable_urls:
-        logger.error("No MCP servers are reachable. Please ensure your MCP server is running.")
-        logger.error("Tried base URLs: " + ", ".join(set(url.replace('/mcp', '') for url in unique_urls)))
-        raise Exception("No MCP servers reachable")
+    if not candidate_servers:
+        error_msg = "No servers are reachable. Please ensure your MCP server is running."
+        logger.error(error_msg)
+        logger.error("Checked URLs: " + ", ".join(set(url.replace('/mcp', '') for url in unique_urls)))
+        logger.error("Start your MCP server with: python your_mcp_server.py")
+        raise Exception(error_msg)
+    
+    # Sort by likelihood of being MCP server
+    candidate_servers.sort(key=lambda x: (x[1]["likely_mcp"], x[1]["status_code"] == 200), reverse=True)
     
     last_error = None
     
-    for server_url in reachable_urls:
+    for server_url, connectivity_info in candidate_servers:
         try:
-            logger.info(f"Attempting MCP connection to: {server_url}")
+            logger.info(f"🔄 Attempting MCP connection to: {server_url}")
+            logger.debug(f"Server info: {connectivity_info}")
             
             # Clean up any existing connection
             if mcp_client_manager:
                 await mcp_client_manager.cleanup()
             
             mcp_client_manager = MCPClientManager()
-            session = await mcp_client_manager.connect(server_url)
             
-            # Test the connection by listing tools
-            tools_response = await session.list_tools()
-            logger.info(f"Successfully connected! Found {len(tools_response.tools)} tools")
+            # Try connection with overall timeout
+            try:
+                session = await asyncio.wait_for(
+                    mcp_client_manager.connect(server_url),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                raise Exception("Overall connection process timed out")
             
-            mcp_session = session
-            return session
+            # Test the session by listing tools with timeout
+            logger.debug("Testing MCP session by listing tools...")
+            try:
+                tools_response = await asyncio.wait_for(
+                    session.list_tools(),
+                    timeout=5.0
+                )
+                tools_count = len(tools_response.tools) if tools_response else 0
+                logger.info(f"✅ MCP connection successful! Found {tools_count} tools")
+                
+                # Log available tools for debugging
+                if tools_response and tools_response.tools:
+                    tool_names = [tool.name for tool in tools_response.tools]
+                    logger.info(f"Available tools: {', '.join(tool_names)}")
+                
+                mcp_session = session
+                return session
+                
+            except asyncio.TimeoutError:
+                raise Exception("Tool listing timed out - server may not be fully MCP compatible")
                 
         except Exception as e:
             last_error = e
-            logger.warning(f"Failed to connect to {server_url}: {e}")
+            error_type = "timeout" if "timeout" in str(e).lower() else "protocol"
+            logger.warning(f"❌ Failed to connect to {server_url} ({error_type}): {e}")
+            
             if mcp_client_manager:
                 await mcp_client_manager.cleanup()
                 mcp_client_manager = None
+            
+            # Add delay before trying next server
+            await asyncio.sleep(0.5)
             continue
     
     # If we get here, none of the URLs worked
-    error_msg = f"Could not establish MCP connection. Last error: {last_error}"
+    error_msg = f"Could not establish MCP connection to any server. Last error: {last_error}"
     logger.error(error_msg)
-    logger.error("Please check:")
-    logger.error("1. MCP server is running and accessible")
-    logger.error("2. Server supports the MCP protocol")
-    logger.error("3. No firewall blocking the connection")
+    logger.error("")
+    logger.error("🔧 Troubleshooting suggestions:")
+    logger.error("1. Verify your MCP server is running and listening on the expected port")
+    logger.error("2. Check if the server implements the MCP protocol correctly")
+    logger.error("3. Try connecting with a simple MCP client to test the server")
+    logger.error("4. Check server logs for any error messages")
+    logger.error("5. Verify no firewall is blocking the connection")
+    logger.error("")
+    logger.error(f"Reachable servers found: {len(candidate_servers)}")
+    for url, info in candidate_servers:
+        logger.error(f"  - {url}: {info['server_type']} (HTTP {info.get('status_code', 'unknown')})")
+    
     raise Exception(error_msg)
 
 async def get_mcp_tools() -> List[MCPToolWrapper]:
@@ -382,47 +481,63 @@ When users ask about performance, start with general cluster info and health che
         logger.error(f"Error initializing agent: {e}")
         raise
 
-# Updated lifespan management with better error handling
+# Updated lifespan management - always allow server to start
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan management"""
-    global mcp_session, mcp_client_manager
+    """FastAPI lifespan management - graceful startup even if MCP fails"""
+    global mcp_session, mcp_client_manager, agent_executor
     
-    # Startup
+    # Startup - never fail, always let the server start
+    logger.info("Starting OVNK Benchmark MCP Client on port 8080...")
+    
     try:
-        logger.info("Starting MCP Client initialization...")
+        logger.info("Attempting MCP server connection...")
         
-        # Wait for MCP server and establish connection
-        max_retries = 3
-        retry_delay = 2
+        # Try to connect to MCP server with limited retries
+        max_retries = 2
+        retry_delay = 1
         
+        mcp_connected = False
         for i in range(max_retries):
             try:
                 await initialize_mcp_session()
-                logger.info("MCP server connection established")
+                logger.info("✅ MCP server connection established successfully")
+                mcp_connected = True
                 break
             except Exception as e:
+                logger.warning(f"❌ MCP connection attempt {i+1}/{max_retries} failed: {e}")
                 if i < max_retries - 1:
-                    logger.info(f"Retrying MCP connection... attempt {i+1}/{max_retries}")
                     await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 2, 10)
-                else:
-                    logger.error(f"Failed to connect to MCP server after {max_retries} attempts")
-                    logger.error("Please ensure your MCP server is running and accessible")
-                    raise Exception("MCP server not available")
         
-        # Initialize agent
-        try:
-            await initialize_agent()
-            logger.info("MCP Client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize agent: {e}")
-            logger.warning("Server will start but chat functionality may be limited")
+        if not mcp_connected:
+            logger.warning("⚠️  MCP server connection failed - starting in standalone mode")
+            logger.info("Server will be available for debugging and manual connection attempts")
+        
+        # Try to initialize agent if MCP connected
+        if mcp_connected:
+            try:
+                await initialize_agent()
+                logger.info("✅ Agent initialized successfully with MCP tools")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize agent: {e}")
+                logger.warning("Chat functionality will be limited")
+                agent_executor = None
+        else:
+            logger.info("Skipping agent initialization (no MCP connection)")
+            agent_executor = None
         
     except Exception as e:
-        logger.error(f"Startup failed: {e}")
-        # Don't raise here to allow server to start for debugging
-        logger.warning("Server starting in debug mode")
+        logger.error(f"Startup error: {e}")
+        logger.warning("⚠️  Starting server in debug mode")
+    
+    # Server is ready
+    logger.info("🚀 Server starting on http://0.0.0.0:8080")
+    logger.info("Available endpoints:")
+    logger.info("  - GET  /                     - Server status")
+    logger.info("  - GET  /api/health          - Health check")  
+    logger.info("  - GET  /api/debug/connection - Debug MCP connection")
+    logger.info("  - POST /api/debug/reconnect  - Retry MCP connection")
+    logger.info("  - GET  /api/tools           - List available tools")
     
     yield
     
@@ -574,21 +689,62 @@ async def stream_agent_response(message: str, conversation_id: str) -> AsyncGene
 
 @app.get("/")
 async def root():
-    """Root endpoint with server status"""
-    status = {
-        "message": "OVNK Benchmark MCP Client is running",
-        "mcp_server_status": "disconnected"
-    }
-    
-    if mcp_session:
-        try:
-            # Quick health check
-            await mcp_session.list_tools()
-            status["mcp_server_status"] = "connected"
-        except:
-            status["mcp_server_status"] = "disconnected"
-    
-    return status
+    """Root endpoint with comprehensive server status"""
+    try:
+        # Check MCP connection status
+        mcp_status = "disconnected"
+        tools_count = 0
+        
+        if mcp_session:
+            try:
+                tools = await mcp_session.list_tools()
+                mcp_status = "connected"
+                tools_count = len(tools.tools) if tools else 0
+            except:
+                mcp_status = "error"
+        
+        # Check agent status
+        agent_status = "initialized" if agent_executor else "not_initialized"
+        
+        status = {
+            "message": "🚀 OVNK Benchmark MCP Client is running",
+            "server": {
+                "status": "running",
+                "port": 8080,
+                "host": "0.0.0.0"
+            },
+            "mcp_server": {
+                "status": mcp_status,
+                "tools_count": tools_count,
+                "server_url": os.getenv("MCP_SERVER_URL", "http://localhost:8000")
+            },
+            "agent": {
+                "status": agent_status,
+                "chat_available": agent_status == "initialized" and mcp_status == "connected"
+            },
+            "endpoints": {
+                "health": "/api/health",
+                "debug_connection": "/api/debug/connection", 
+                "test_connection": "/api/debug/test_connection",
+                "reconnect": "/api/debug/reconnect",
+                "tools": "/api/tools",
+                "chat_stream": "/chat/stream"
+            },
+            "instructions": {
+                "if_mcp_disconnected": "Use /api/debug/reconnect to retry connection",
+                "test_connectivity": "Use /api/debug/test_connection to test server reachability",
+                "view_tools": "Use /api/tools to see available MCP tools"
+            }
+        }
+        
+        return status
+        
+    except Exception as e:
+        return {
+            "message": "🚀 OVNK Benchmark MCP Client is running",
+            "server": {"status": "running", "port": 8080},
+            "error": str(e)
+        }
 
 @app.get("/api/health")
 async def health_check():
@@ -616,8 +772,35 @@ async def health_check():
 async def chat_stream(request: ChatRequest):
     """Stream chat responses"""
     try:
+        # Check if agent is available
         if not agent_executor:
-            raise HTTPException(status_code=503, detail="Agent not initialized")
+            # Return helpful error message
+            error_response = {
+                "type": "error",
+                "content": "❌ Chat functionality is not available. This can happen when:\n\n" +
+                         "1. MCP server is not connected\n" +
+                         "2. Agent initialization failed\n" +
+                         "3. No MCP tools are available\n\n" +
+                         "📋 Troubleshooting steps:\n" +
+                         "• Check server status at /api/health\n" +
+                         "• Test MCP connection at /api/debug/connection\n" +
+                         "• Try reconnecting at /api/debug/reconnect\n" +
+                         "• Ensure your MCP server is running and accessible\n\n" +
+                         f"🔧 MCP Server URL: {os.getenv('MCP_SERVER_URL', 'http://localhost:8000')}"
+            }
+            
+            async def error_stream():
+                yield f"data: {json.dumps(error_response)}\n\n"
+            
+            return StreamingResponse(
+                error_stream(),
+                media_type="text/plain",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive", 
+                    "Content-Type": "text/event-stream",
+                }
+            )
         
         return StreamingResponse(
             stream_agent_response(request.message, request.conversation_id),
@@ -725,7 +908,7 @@ async def debug_connection():
 
 @app.get("/api/debug/test_connection")
 async def test_connection():
-    """Test MCP server connectivity"""
+    """Test MCP server connectivity with detailed analysis"""
     test_urls = [
         "http://localhost:8000",
         "http://localhost:8000/mcp", 
@@ -737,29 +920,75 @@ async def test_connection():
     
     for url in test_urls:
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                # Try a simple GET request first
+            # Use our enhanced connectivity test
+            connectivity_info = await test_server_connectivity(url)
+            results[url] = connectivity_info
+            
+            # Add MCP-specific testing
+            if connectivity_info["reachable"]:
                 try:
-                    response = await client.get(url)
-                    results[url] = {
-                        "status": "reachable",
-                        "http_status": response.status_code,
-                        "headers": dict(response.headers)
-                    }
-                except httpx.HTTPStatusError as e:
-                    results[url] = {
-                        "status": "http_error", 
-                        "http_status": e.response.status_code,
-                        "error": str(e)
-                    }
+                    # Try to make a simple MCP connection test
+                    test_manager = MCPClientManager()
+                    start_time = asyncio.get_event_loop().time()
+                    
+                    try:
+                        session = await asyncio.wait_for(
+                            test_manager.connect(url + ("/mcp" if not url.endswith("/mcp") else "")),
+                            timeout=3.0
+                        )
+                        connection_time = asyncio.get_event_loop().time() - start_time
+                        
+                        # Try to list tools
+                        tools = await asyncio.wait_for(session.list_tools(), timeout=2.0)
+                        total_time = asyncio.get_event_loop().time() - start_time
+                        
+                        results[url].update({
+                            "mcp_compatible": True,
+                            "connection_time_seconds": round(connection_time, 2),
+                            "total_time_seconds": round(total_time, 2),
+                            "tools_count": len(tools.tools) if tools else 0
+                        })
+                        
+                        await test_manager.cleanup()
+                        
+                    except asyncio.TimeoutError:
+                        results[url].update({
+                            "mcp_compatible": False,
+                            "mcp_error": "MCP connection or initialization timed out"
+                        })
+                        await test_manager.cleanup()
+                        
+                except Exception as mcp_error:
+                    results[url].update({
+                        "mcp_compatible": False,
+                        "mcp_error": str(mcp_error)
+                    })
+                    
         except Exception as e:
             results[url] = {
-                "status": "unreachable",
-                "error": str(e)
+                "reachable": False,
+                "error": str(e),
+                "likely_mcp": False
             }
     
-    return results
+    # Add summary
+    summary = {
+        "reachable_servers": sum(1 for r in results.values() if r.get("reachable", False)),
+        "mcp_compatible_servers": sum(1 for r in results.values() if r.get("mcp_compatible", False)),
+        "recommended_action": "none"
+    }
+    
+    if summary["mcp_compatible_servers"] > 0:
+        summary["recommended_action"] = "try_reconnect"
+    elif summary["reachable_servers"] > 0:
+        summary["recommended_action"] = "check_mcp_server_implementation"
+    else:
+        summary["recommended_action"] = "start_mcp_server"
+    
+    return {
+        "test_results": results,
+        "summary": summary
+    }
 
 @app.post("/api/debug/reconnect")
 async def force_reconnect():
@@ -791,10 +1020,32 @@ if os.path.exists("static"):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "ovnk_benchmark_mcp_client_chat:app",
-        host="0.0.0.0",
-        port=8080,
-        reload=True,
-        log_level="info"
-    )
+    
+    # Ensure the server always starts
+    logger.info("🚀 Starting OVNK Benchmark MCP Client...")
+    logger.info("Server will be available at: http://localhost:8080")
+    
+    try:
+        uvicorn.run(
+            "ovnk_benchmark_mcp_client_chat:app",
+            host="0.0.0.0",
+            port=8080,
+            reload=True,
+            log_level="info"
+        )
+    except Exception as e:
+        logger.error(f"Failed to start server: {e}")
+        logger.info("Trying to start without reload...")
+        try:
+            uvicorn.run(
+                app,
+                host="0.0.0.0", 
+                port=8080,
+                log_level="info"
+            )
+        except Exception as e2:
+            logger.error(f"Failed to start server even without reload: {e2}")
+            logger.error("Please check if port 8080 is already in use:")
+            logger.error("  netstat -tlnp | grep :8080")
+            logger.error("  lsof -i :8080")
+            raise
