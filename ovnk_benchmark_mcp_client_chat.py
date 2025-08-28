@@ -33,8 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Global variables
 mcp_session: Optional[ClientSession] = None
-mcp_read = None
-mcp_write = None
+mcp_client_context = None
 agent_executor = None
 memory = None
 
@@ -82,16 +81,17 @@ class MCPTool:
 
 async def initialize_mcp_session():
     """Initialize MCP session with the server"""
-    global mcp_session, mcp_read, mcp_write
+    global mcp_session, mcp_client_context
     
     try:
         MCP_SERVER_URL = "http://localhost:8000"
         
-        # Create streamable HTTP client connection
-        mcp_read, mcp_write = await streamablehttp_client(MCP_SERVER_URL).__aenter__()
-        mcp_session = await ClientSession(mcp_read, mcp_write).__aenter__()
+        # Create and store the streamable HTTP client context
+        mcp_client_context = streamablehttp_client(MCP_SERVER_URL)
+        read, write = await mcp_client_context.__aenter__()
         
-        # Initialize the session
+        # Create session with the read/write streams
+        mcp_session = ClientSession(read, write)
         await mcp_session.initialize()
         
         logger.info("MCP session initialized successfully")
@@ -223,7 +223,7 @@ When calling tools, automatically determine appropriate parameters based on the 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan management"""
-    global mcp_session, mcp_read, mcp_write
+    global mcp_session, mcp_client_context
     
     # Startup
     try:
@@ -253,18 +253,13 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    if mcp_session:
-        try:
-            await mcp_session.__aexit__(None, None, None)
-        except Exception as e:
-            logger.error(f"Error closing MCP session: {e}")
-    
-    if mcp_read and mcp_write:
-        try:
-            # Close the streamable client connection
-            await streamablehttp_client("http://localhost:8000").__aexit__(None, None, None)
-        except Exception as e:
-            logger.error(f"Error closing streamable client: {e}")
+    try:
+        if mcp_session:
+            await mcp_session.close()
+        if mcp_client_context:
+            await mcp_client_context.__aexit__(None, None, None)
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
 
 # Create FastAPI app
 app = FastAPI(
