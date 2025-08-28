@@ -104,21 +104,22 @@ class MCPClient:
                     session_id = get_session_id()
                     print("Session ID: in call_tool", session_id)
                     tools_result = await session.list_tools()
-                    # available_tools=[]
-                    # #print("Available tools:")
-                    # for tool in tools_result.tools: 
-                    #     available_tools.append({
-                    #             "name": tool.name,
-                    #             "description": tool.description,
-                    #         })
-                    self.available_tools = [
-                        {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "input_schema": tool.inputSchema.model_dump() if tool.inputSchema else {}
-                        }
-                        for tool in tools_result.tools
-                    ]
+                   
+                    #print("Available tools:")
+                    for tool in tools_result.tools: 
+                        self.available_tools.append({
+                                "name": tool.name,
+                                "description": tool.description,
+                                "input_schema": tool.inputSchema.model_dump() if tool.inputSchema else {}
+                            })
+                    # self.available_tools = [
+                    #     {
+                    #         "name": tool.name,
+                    #         "description": tool.description,
+                    #         "input_schema": tool.inputSchema.model_dump() if tool.inputSchema else {}
+                    #     }
+                    #     for tool in tools_result.tools
+                    # ]
                     print("#*"*35)
                     print(self.available_tools)
                     self._create_langchain_tools()
