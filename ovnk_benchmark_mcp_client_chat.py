@@ -101,11 +101,11 @@ class MCPClient:
                     await session.initialize()
  
                     # Get session id once connection established
-                    session_id = get_session_id() 
-                    print("#*"*35)
+                    session_id = get_session_id()
                     print("Session ID: in call_tool", session_id)
-
                     tools_result = await session.list_tools()
+                    print("#*"*35)
+                    print("tools_result is ", tools_result)
                     self.available_tools = [
                         {
                             "name": tool.name,
