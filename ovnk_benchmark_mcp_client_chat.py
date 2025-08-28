@@ -85,54 +85,39 @@ class MCPClient:
     async def connect(self):
         """Connect to MCP server and initialize tools"""
         try:
-            primary_url = f"{self.mcp_server_url}/mcp"
-            fallback_url = self.mcp_server_url
+            url = f"{self.mcp_server_url}/mcp"
 
-            async def _open_and_init(url: str) -> bool:
-                async with streamablehttp_client(url) as connection:
-                    # Support both 2- and 3-tuple variants
-                    if isinstance(connection, tuple) and len(connection) == 3:
-                        read_stream, write_stream, get_session_id = connection
-                    else:
-                        read_stream, write_stream = connection
-                        get_session_id = None
+            # Connect to the server using Streamable HTTP
+            async with streamablehttp_client(
+                url,
+                # headers={"accept": "application/json"}
+                ) as (
+                    read_stream,
+                    write_stream,
+                    get_session_id,
+            ):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize the connection
+                    await session.initialize()
+ 
+                    # Get session id once connection established
+                    session_id = get_session_id() 
+                    print("#*"*35)
+                    print("Session ID: in call_tool", session_id)
 
-                    async with ClientSession(read_stream, write_stream) as session:
-                        self.session = session
-                        await self.session.initialize()
-                        if get_session_id:
-                            logger.info(f"Successfully connected to MCP server. Session ID: {get_session_id()}")
-                        else:
-                            logger.info("Successfully connected to MCP server.")
+                    tools_result = await session.list_tools()
+                    self.available_tools = [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "input_schema": tool.inputSchema.model_dump() if tool.inputSchema else {}
+                        }
+                        for tool in tools_result.tools
+                    ]
+                    self._create_langchain_tools()
+                    logger.info(f"Loaded {len(self.available_tools)} MCP tools")
+                    return True
 
-                        tools_result = await session.list_tools()
-                        self.available_tools = [
-                            {
-                                "name": tool.name,
-                                "description": tool.description,
-                                "input_schema": tool.inputSchema.model_dump() if tool.inputSchema else {}
-                            }
-                            for tool in tools_result.tools
-                        ]
-                        self._create_langchain_tools()
-                        logger.info(f"Loaded {len(self.available_tools)} MCP tools")
-                        return True
-
-            last_error = None
-            # Retry with small backoff across both URLs
-            for attempt in range(1, 4):
-                for url in (primary_url, fallback_url):
-                    try:
-                        logger.info(f"Connecting to MCP server (attempt {attempt}) at {url}")
-                        return await _open_and_init(url)
-                    except Exception as e:
-                        last_error = e
-                        logger.warning(f"MCP connect attempt {attempt} failed for {url}: {repr(e)}")
-                await asyncio.sleep(0.5 * attempt)
-            # Exhausted retries
-            if last_error:
-                raise last_error
-            return False
                     
         except Exception as e:
             logger.error(f"Failed to connect to MCP server: {e}")
@@ -153,7 +138,6 @@ class MCPClient:
         """Call an MCP tool with parameters"""
         try:
             primary_url = f"{self.mcp_server_url}/mcp"
-            fallback_url = self.mcp_server_url
 
             async def _open_and_call(url: str) -> Dict[str, Any]:
                 async with streamablehttp_client(url) as connection:
@@ -176,7 +160,7 @@ class MCPClient:
 
             last_error = None
             for attempt in range(1, 3):
-                for url in (primary_url, fallback_url):
+                for url in (primary_url):
                     try:
                         logger.info(f"Calling tool via {url} (attempt {attempt})")
                         return await _open_and_call(url)
