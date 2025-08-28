@@ -54,14 +54,18 @@ class MCPSessionManager:
         """Initialize the MCP session"""
         try:
             logger.info(f"Connecting to MCP server at: {self.server_url}")
-            
-            # Use the streamablehttp_client context manager properly
-            self.client_context = streamablehttp_client(self.server_url)
-            read, write = await self.client_context.__aenter__()
-            
-            # Create and initialize session
-            self.session = ClientSession(read, write)
-            await self.session.initialize()
+
+            url = f"{self.mcp_server_url}/mcp"
+            # Connect to the server using Streamable HTTP
+            self.client_context = async with streamablehttp_client(url) as (
+                    read_stream,
+                    write_stream,
+                    get_session_id,
+            ):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize the connection
+                    self.session=session
+                    await self.session.initialize()
             
             logger.info("MCP session initialized successfully")
             return self.session
@@ -164,10 +168,17 @@ class MCPClientManager:
         
         try:
             logger.info(f"Connecting to MCP server at: {server_url}")
-            
-            # Create client context
-            self.client_context = streamablehttp_client(server_url)
-            
+
+            # Create streamable HTTP client session
+            self.client_context = async with streamablehttp_client(server_url) as (read, write):
+                async with ClientSession(read, write) as session:
+                    # Initialize MCP tool executor
+                    mcp_client = MCPToolExecutor(session)
+                    await mcp_client.initialize()
+                    
+                    logger.info("MCP client connected successfully")
+                    return session
+
             # Get streams from context manager with debugging
             context_result = await self.client_context.__aenter__()
             logger.debug(f"Context result type: {type(context_result)}")
