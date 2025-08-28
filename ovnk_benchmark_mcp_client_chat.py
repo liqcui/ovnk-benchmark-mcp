@@ -498,7 +498,7 @@ async def stream_agent_response(message: str, conversation_id: str) -> AsyncGene
             
             # Handle tool calls and other events
             elif "tools" in event:
-                yield "data: " + json.dumps({'type': 'message', 'content': 'ðŸ"§ Executing analysis tools...\n\n'}) + "\n\n"
+                yield "data: " + json.dumps({'type': 'message', 'content': '🔧 Executing analysis tools...\n\n'}) + "\n\n"
             
     except Exception as e:
         error_msg = f"Error: {str(e)}"
@@ -608,9 +608,8 @@ if os.path.exists("static"):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "ovnk_benchmark_mcp_client_chat:app",
+        app,
         host="0.0.0.0",
-        port=8001,
-        reload=True,
+        port=8080,
         log_level="info"
     )
