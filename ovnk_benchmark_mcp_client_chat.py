@@ -136,7 +136,7 @@ class MCPClient:
                     #     }
                     #     for tool in tools_result.tools
                     # ]
-                    print("#*"*35)
+                    print("--"*35)
                     print(self.available_tools)
                     self._create_langchain_tools()
                     logger.info(f"Loaded {len(self.available_tools)} MCP tools")
