@@ -1,0 +1,81 @@
+# metrics.yml - OVN Kubernetes Container Metrics Configuration
+# This file defines the Prometheus queries for collecting OVN container metrics
+# If this file is not found or empty, hardcoded PromQL queries will be used
+
+metrics:
+  # CPU Usage Metrics
+  - query: 'rate(container_cpu_usage_seconds_total{pod=~"ovnkube-master.*|ovnkube-node.*", container!="POD", container!=""}[5m]) * 100'
+    metricName: CONTAINER_CPU_USAGE_PERCENT
+    unit: percentage
+    description: "Container CPU usage percentage over 5 minutes"
+
+  # Memory Usage Metrics  
+  - query: 'container_memory_rss{pod=~"ovnkube-master.*|ovnkube-node.*", container!="POD", container!=""}'
+    metricName: CONTAINER_MEMORY_RSS_BYTES
+    unit: bytes
+    description: "Container memory RSS usage"
+
+  - query: 'container_memory_working_set_bytes{pod=~"ovnkube-master.*|ovnkube-node.*", container!="POD", container!=""}'
+    metricName: CONTAINER_MEMORY_WORKING_SET_BYTES
+    unit: bytes
+    description: "Container memory working set"
+
+  # OVN Database Size Metrics (as specified in requirements)
+  - query: 'ovn_db_db_size_bytes{db_name=~"OVN_Northbound"}'
+    metricName: NBDB_DB_SIZE_BYTES
+    unit: bytes
+    description: "OVN Northbound database size"
+
+  - query: 'ovn_db_db_size_bytes{db_name=~"OVN_Southbound"}'
+    metricName: SBDB_DB_SIZE_BYTES
+    unit: bytes
+    description: "OVN Southbound database size"
+
+  # OVN Container-Specific Memory Metrics (as specified in requirements)
+  - query: 'sum by(pod) (container_memory_rss{pod=~"ovnkube-master.*|ovnkube-node.*", container=~"nbdb"})'
+    metricName: OVN_DB_DB_MEMROY_SIZE_BYTES
+    unit: bytes
+    description: "NBDB container memory usage"
+
+  - query: 'sum by(pod) (container_memory_rss{pod=~"ovnkube-master.*|ovnkube-node.*", container=~"sbdb"})'
+    metricName: OVN_DB_DB_MEMROY_SIZE_BYTES
+    unit: bytes
+    description: "SBDB container memory usage"
+
+  - query: 'sum by(pod) (container_memory_rss{pod=~"ovnkube-master.*|ovnkube-node.*", container=~"northd"})'
+    metricName: OVN_DB_DB_MEMROY_SIZE_BYTES
+    unit: bytes
+    description: "Northd container memory usage"
+
+  - query: 'sum by(pod) (container_memory_rss{pod=~"ovnkube-master.*|ovnkube-node.*", container=~"ovnkube-controller"})'
+    metricName: OVN_KUBE_CONTROLLER_MEMROY_SIZE_BYTES
+    unit: bytes
+    description: "OVN Kube controller memory usage"
+
+  - query: 'sum by(pod) (container_memory_rss{pod=~"ovnkube-master.*|ovnkube-node.*", container=~"ovn-controller"})'
+    metricName: OVN_CONTROLLER_MEMROY_SIZE_BYTES
+    unit: bytes
+    description: "OVN controller memory usage"
+
+  # Additional Custom Metrics (examples)
+  # - query: 'ovn_nb_logical_switch_ports'
+  #   metricName: OVN_NB_LOGICAL_SWITCH_PORTS
+  #   unit: count
+  #   description: "Number of logical switch ports in NB database"
+
+  # - query: 'ovn_sb_datapath_binding'
+  #   metricName: OVN_SB_DATAPATH_BINDING
+  #   unit: count
+  #   description: "Number of datapath bindings in SB database"
+
+  # - query: 'rate(container_network_receive_bytes_total{pod=~"ovnkube.*"}[5m])'
+  #   metricName: OVN_CONTAINER_NETWORK_RX_BYTES_RATE
+  #   unit: bytes_per_second
+  #   description: "Container network receive rate"
+
+# Configuration notes:
+# - All queries should target OVN-related pods using pod=~"ovnkube-master.*|ovnkube-node.*"
+# - Use meaningful metricName values that will be used in the analysis
+# - Specify appropriate units: bytes, percentage, count, bytes_per_second, etc.
+# - Include helpful descriptions for documentation
+# - Comment out unused metrics or add custom ones as needed

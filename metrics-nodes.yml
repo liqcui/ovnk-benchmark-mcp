@@ -1,0 +1,13 @@
+
+# Node CPU and Memory Metrics
+- query: '(1 - rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100'
+  metricName: node_cpu_usage
+  unit: percent
+
+- query: '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100'
+  metricName: node_memory_usage
+  unit: percent
+  
+- query: 'node_memory_MemTotal_bytes'
+  metricName: total_node_memory
+  unit: "bytes"

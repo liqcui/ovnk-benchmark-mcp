@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenShift OVN-K Benchmark MCP - AI Chat Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #333;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+        }
+
+        .sidebar {
+            width: 300px;
+            background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #ddd;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.1);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar-header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .sidebar-header p {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .quick-actions {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .quick-actions h3 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            opacity: 0.9;
+        }
+
+        .action-button {
+            width: 100%;
+            padding: 14px;
+            margin-bottom: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .action-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .status-panel {
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.1);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+
+        .status-dot.connected {
+            background: #2ecc71;
+        }
+
+        .status-dot.disconnected {
+            background: #e74c3c;
+        }
+
+        .status-dot.checking {
+            background: #f39c12;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            padding: 20px 30px;
+            background: white;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h2 {
+            color: #2c3e50;
+            font-size: 24px;
+            font-weight: 300;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #7f8c8d;
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 15px 20px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.5;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+
+        .message.ai {
+            background: #f8f9fa;
+            color: #2c3e50;
+            align-self: flex-start;
+            border: 1px solid #e9ecef;
+        }
+
+        .message.system {
+            background: #fff3cd;
+            color: #856404;
+            align-self: center;
+            font-size: 12px;
+            padding: 8px 12px;
+            border-radius: 12px;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            align-self: center;
+            border: 1px solid #f5c6cb;
+        }
+
+        .typing-indicator {
+            display: none;
+            align-self: flex-start;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 18px;
+            padding: 15px 20px;
+            margin-bottom: 15px;
+        }
+
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #95a5a6;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .typing-dot:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes bounce {
+
+            0%,
+            80%,
+            100% {
+                transform: scale(0);
+            }
+
+            40% {
+                transform: scale(1);
+            }
+        }
+
+        .input-container {
+            padding: 20px 30px;
+            background: white;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .message-input {
+            flex: 1;
+            min-height: 40px;
+            max-height: 120px;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 20px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: none;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+
+        .message-input:focus {
+            border-color: #3498db;
+        }
+
+        .send-button:hover:not(:disabled) {
+            transform: scale(1.05);
+        }
+
+        .send-button:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .tables-container {
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            display: none;
+        }
+
+        .table-wrapper {
+            margin: 20px;
+        }
+
+        .table-wrapper h4 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        th,
+        td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .welcome-message {
+            text-align: center;
+            padding: 40px 20px;
+            color: #7f8c8d;
+        }
+
+        .welcome-message h3 {
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+
+        .welcome-message p {
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: center;
+        }
+
+        .suggestion {
+            padding: 8px 12px;
+            background: #ecf0f1;
+            border: 1px solid #bdc3c7;
+            border-radius: 16px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .suggestion:hover {
+            background: #3498db;
+            color: white;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: auto;
+                flex-direction: row;
+                padding: 10px;
+            }
+
+            .sidebar-header {
+                flex: 1;
+            }
+
+            .quick-actions {
+                display: none;
+            }
+
+            .status-panel {
+                padding: 10px;
+            }
+
+            .messages {
+                padding: 15px;
+            }
+
+            .input-container {
+                padding: 15px;
+            }
+
+            .message {
+                max-width: 95%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <div class="container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>OCP OVN-K Benchmark</h1>
+                <p>AI-Powered Performance Analysis</p>
+            </div>
+
+            <div class="quick-actions">
+                <h3>Quick Actions</h3>
+                <button class="action-button" onclick="sendQuickMessage('Perform a comprehensive health check')">
+                    🔍 Health Check
+                </button>
+                <button class="action-button" onclick="sendQuickMessage('What is the current cluster status?')">
+                    🏛️ Cluster Overview
+                </button>
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me node information with resource utilization')">
+                    🖥️ Cluster Node Usage
+                </button>
+                <button class="action-button" onclick="sendQuickMessage('Check API server performance metrics')">
+                    ⚡ API Performance
+                </button>
+                <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
+                    📀 OVN-K Deep Dive
+                </button>
+                <button class="action-button" onclick="sendQuickMessage('Analyze OVS performance metrics')">
+                    🌐 OVS Analysis
+                </button>
+                <button class="action-button" onclick="sendQuickMessage('Check Multus CNI performance')">
+                    🎯 Multus Analysis
+                </button>
+                <button class="action-button" onclick="sendQuickMessage('Analyze sync duration performance')">
+                    ⏱️ Sync Duration
+                </button>
+                <button class="action-button" onclick="sendQuickMessage('Run unified performance analysis')">
+                    📈 Full Performance Report
+                </button>
+            </div>
+
+            <div class="status-panel">
+                <div class="status-item">
+                    <div class="status-dot checking" id="mcpStatus"></div>
+                    <span id="mcpStatusText">Connecting to MCP Client...</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-dot checking" id="clusterStatus"></div>
+                    <span id="clusterStatusText">Checking cluster...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="header">
+                <h2>AI Chat Interface</h2>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" onclick="clearChat()">Clear Chat</button>
+                    <button class="btn btn-primary" onclick="checkHealth()">Refresh Status</button>
+                </div>
+            </div>
+
+            <div class="chat-container">
+                <div class="messages" id="messages">
+                    <div class="welcome-message">
+                        <h3>Welcome to OpenShift OVN-K Benchmark AI Assistant</h3>
+                        <p>I can help you analyze your OpenShift cluster performance, check system health,
+                            and provide insights about your infrastructure using advanced AI and comprehensive
+                            monitoring tools powered by LangGraph.</p>
+
+                        <div class="suggestions">
+                            <span class="suggestion" onclick="sendQuickMessage('Show cluster information')">Cluster
+                                Info</span>
+                            <span class="suggestion"
+                                onclick="sendQuickMessage('List all nodes with their specifications')">Node Specs</span>
+                            <span class="suggestion" onclick="sendQuickMessage('Check API server latency')">API
+                                Latency</span>
+                            <span class="suggestion"
+                                onclick="sendQuickMessage('Generate a performance report')">Performance Report</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="typing-indicator" id="typingIndicator">
+                    <div class="typing-dots">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                </div>
+
+                <div class="input-container">
+                    <textarea class="message-input" id="messageInput"
+                        placeholder="Ask about cluster performance, node status, API metrics, or request comprehensive analysis reports..."
+                        rows="1"></textarea>
+                    <button class="send-button" id="sendButton" onclick="sendMessage()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tables-container" id="tablesContainer">
+        <div id="tables"></div>
+    </div>
+
+    <script>
+        // Global application state
+        class ChatApplication {
+            constructor() {
+                this.conversationId = 'web-' + Math.random().toString(36).substr(2, 9);
+                this.isConnected = false;
+                this.isTyping = false;
+
+                // Initialize DOM elements
+                this.initializeElements();
+                this.setupEventListeners();
+                this.checkHealth();
+            }
+
+            initializeElements() {
+                this.messagesContainer = document.getElementById('messages');
+                this.messageInput = document.getElementById('messageInput');
+                this.sendButton = document.getElementById('sendButton');
+                this.typingIndicator = document.getElementById('typingIndicator');
+                this.tablesContainer = document.getElementById('tablesContainer');
+                this.tablesDiv = document.getElementById('tables');
+                this.loadingOverlay = document.getElementById('loadingOverlay');
+
+                // Status elements
+                this.mcpStatus = document.getElementById('mcpStatus');
+                this.mcpStatusText = document.getElementById('mcpStatusText');
+                this.clusterStatus = document.getElementById('clusterStatus');
+                this.clusterStatusText = document.getElementById('clusterStatusText');
+
+                // Initial button state
+                this.sendButton.disabled = true;
+            }
+
+            setupEventListeners() {
+                // Enter key to send message
+                this.messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                // Auto-resize textarea and enable/disable send button
+                this.messageInput.addEventListener('input', (e) => {
+                    e.target.style.height = 'auto';
+                    e.target.style.height = (e.target.scrollHeight) + 'px';
+                    this.sendButton.disabled = !e.target.value.trim() || this.isTyping;
+                });
+            }
+
+            async sendMessage(customMessage = null) {
+                const message = customMessage || this.messageInput.value.trim();
+                if (!message || this.isTyping) return;
+
+                // Clear input if not using custom message
+                if (!customMessage) {
+                    this.messageInput.value = '';
+                    this.messageInput.style.height = 'auto';
+                    this.sendButton.disabled = true;
+                }
+
+                // Add user message
+                this.addMessage(message, 'user');
+                this.showTyping(true);
+
+                try {
+                    const response = await fetch('http://localhost:8001/chat/stream', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message: message,
+                            conversation_id: this.conversationId
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    await this.handleStreamResponse(response);
+
+                } catch (error) {
+                    this.showTyping(false);
+                    this.addMessage(
+                        `⚠️ Connection Error: ${error.message}<br><em>Make sure the MCP client is running on port 8001</em>`,
+                        'error'
+                    );
+                }
+            }
+
+            async handleStreamResponse(response) {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let aiMessageDiv = null;
+
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop(); // Keep incomplete line in buffer
+
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+
+                                    if (data.type === 'message') {
+                                        if (!aiMessageDiv) {
+                                            this.showTyping(false);
+                                            aiMessageDiv = this.addMessage('', 'ai');
+                                        }
+
+                                        // Convert markdown-style formatting to HTML
+                                        let content = data.content;
+                                        content = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                                        content = content.replace(/\*(.*?)\*/g, '<em>$1</em>');
+                                        content = content.replace(/\n/g, '<br>');
+
+                                        aiMessageDiv.innerHTML += content;
+                                        this.scrollToBottom();
+
+                                    } else if (data.type === 'table') {
+                                        this.displayTable(data.content, data.metadata);
+
+                                    } else if (data.type === 'error') {
+                                        this.showTyping(false);
+                                        this.addMessage('⚠️ ' + data.content, 'error');
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing SSE data:', e);
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    this.showTyping(false);
+                }
+            }
+
+            addMessage(content, type) {
+                // Remove welcome message if it exists
+                const welcomeMessage = this.messagesContainer.querySelector('.welcome-message');
+                if (welcomeMessage) {
+                    welcomeMessage.remove();
+                }
+
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type}`;
+                messageDiv.innerHTML = content;
+
+                this.messagesContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+
+                return messageDiv;
+            }
+
+            showTyping(show) {
+                this.isTyping = show;
+                this.sendButton.disabled = show || !this.messageInput.value.trim();
+
+                if (show) {
+                    this.typingIndicator.style.display = 'block';
+                    this.scrollToBottom();
+                } else {
+                    this.typingIndicator.style.display = 'none';
+                }
+            }
+
+            displayTable(tableHtml, metadata) {
+                this.tablesDiv.innerHTML += `
+                    <div class="table-wrapper">
+                        <h4>${metadata?.title || 'Data Table'}</h4>
+                        ${tableHtml}
+                    </div>
+                `;
+                this.tablesContainer.style.display = 'block';
+                this.scrollToBottom();
+            }
+
+            scrollToBottom() {
+                this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+            }
+
+            clearChat() {
+                this.messagesContainer.innerHTML = `
+                    <div class="welcome-message">
+                        <h3>Chat Cleared</h3>
+                        <p>How can I help you with your OpenShift cluster today?</p>
+                    </div>
+                `;
+                this.tablesContainer.style.display = 'none';
+                this.tablesDiv.innerHTML = '';
+            }
+
+            async checkHealth() {
+                this.loadingOverlay.style.display = 'flex';
+
+                try {
+                    const response = await fetch('http://localhost:8001/api/health');
+                    const health = await response.json();
+
+                    if (health.status === 'healthy') {
+                        this.updateMCPStatus('connected', 'MCP Client Connected');
+                        this.updateClusterStatus('connected', 'Agent Ready');
+                        this.isConnected = true;
+                    } else {
+                        this.updateMCPStatus('disconnected', 'MCP Client Disconnected');
+                        this.updateClusterStatus('disconnected', 'Agent Not Available');
+                        this.isConnected = false;
+                    }
+
+                } catch (error) {
+                    this.updateMCPStatus('disconnected', 'Connection Failed');
+                    this.updateClusterStatus('disconnected', 'Agent Unknown');
+                    this.isConnected = false;
+                } finally {
+                    this.loadingOverlay.style.display = 'none';
+                }
+            }
+
+            updateMCPStatus(status, text) {
+                this.mcpStatus.className = `status-dot ${status}`;
+                this.mcpStatusText.textContent = text;
+            }
+
+            updateClusterStatus(status, text) {
+                this.clusterStatus.className = `status-dot ${status}`;
+                this.clusterStatusText.textContent = text;
+            }
+        }
+
+        // Initialize application when DOM is loaded
+        let chatApp;
+
+        document.addEventListener('DOMContentLoaded', function () {
+            chatApp = new ChatApplication();
+
+            // Periodic health check
+            setInterval(() => chatApp.checkHealth(), 30000);
+        });
+
+        // Global functions for button onclick handlers
+        function sendMessage(customMessage) {
+            chatApp?.sendMessage(customMessage);
+        }
+
+        function sendQuickMessage(message) {
+            chatApp?.sendMessage(message);
+        }
+
+        function clearChat() {
+            chatApp?.clearChat();
+        }
+
+        function checkHealth() {
+            chatApp?.checkHealth();
+        }
+    </script>
+</body>
+
+</html>

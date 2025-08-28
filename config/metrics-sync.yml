@@ -1,0 +1,34 @@
+# OVN-Kubernetes Sync Duration Metrics Configuration
+# This file defines the Prometheus queries used to collect sync duration metrics
+
+metrics:
+  - query: topk(10, ovnkube_controller_ready_duration_seconds)
+    metricName: ovnkube_controller_ready_duration_seconds
+    unit: seconds
+    description: "Time taken for ovnkube-controller to become ready"
+    component: controller
+    
+  - query: topk(10, ovnkube_node_ready_duration_seconds)
+    metricName: ovnkube_node_ready_duration_seconds
+    unit: seconds
+    description: "Time taken for ovnkube-node to become ready"
+    component: node
+    
+  - query: ovnkube_controller_sync_duration_seconds{namespace="openshift-ovn-kubernetes"}
+    metricName: ovnkube_controller_sync_duration_seconds
+    unit: seconds
+    description: "Duration of controller sync operations"
+    component: controller
+    
+  # Additional metrics can be added here
+  - query: histogram_quantile(0.95, rate(ovnkube_controller_sync_duration_seconds_bucket[5m]))
+    metricName: ovnkube_controller_sync_duration_p95
+    unit: seconds
+    description: "95th percentile of controller sync duration over 5 minutes"
+    component: controller
+    
+  - query: histogram_quantile(0.95, rate(ovnkube_node_sync_duration_seconds_bucket[5m]))
+    metricName: ovnkube_node_sync_duration_p95
+    unit: seconds
+    description: "95th percentile of node sync duration over 5 minutes"
+    component: node

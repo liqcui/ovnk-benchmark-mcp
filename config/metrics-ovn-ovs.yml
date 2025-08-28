@@ -1,0 +1,266 @@
+# OVS Metrics Configuration
+# File: metrics.yaml
+# This file defines PromQL queries and metadata for OVS monitoring
+
+apiVersion: v1
+kind: metrics-config
+metadata:
+  name: ovs-metrics
+  description: "OVS Container and Process Metrics for OpenShift/Kubernetes"
+  version: "1.0.0"
+
+# OVS Container and Process Metrics
+metrics:
+  # CPU Usage Metrics
+  - query: sum by(node) (irate(container_cpu_usage_seconds_total{id=~"/system.slice/ovs-vswitchd.service"}[5m])*100)
+    metricName: ovs-vswitchd-cpu-usage
+    unit: percent
+    description: "OVS vswitchd CPU usage percentage per node"
+    category: cpu
+    threshold:
+      warning: 70
+      critical: 85
+
+  - query: sum(irate(container_cpu_usage_seconds_total{id=~"/system.slice/ovsdb-server.service"}[2m]) * 100) by (node)
+    metricName: ovsdb-server-cpu-usage
+    unit: percent
+    description: "OVSDB server CPU usage percentage per node"
+    category: cpu
+    threshold:
+      warning: 50
+      critical: 75
+
+  # Memory Usage Metrics
+  - query: ovs_db_process_resident_memory_bytes
+    metricName: OVS_DB_MEMORY_SIZE_BYTES
+    unit: bytes
+    description: "OVS database process resident memory size"
+    category: memory
+    threshold:
+      warning_mb: 500
+      critical_mb: 1000
+
+  - query: ovs_vswitchd_process_resident_memory_bytes
+    metricName: OVS_VSWITCH_MEMORY_SIZE_BYTES
+    unit: bytes
+    description: "OVS vswitchd process resident memory size"
+    category: memory
+    threshold:
+      warning_mb: 500
+      critical_mb: 1000
+
+  # Flow Table Metrics
+  - query: ovs_vswitchd_dp_flows_total
+    metricName: OVS_DATAPATH_FLOWS_TOTAL
+    unit: flows
+    description: "Total number of datapath flows in OVS"
+    category: flows
+    threshold:
+      warning: 5000
+      critical: 20000
+
+  - query: ovs_vswitchd_bridge_flows_total{bridge="br-int"}
+    metricName: OVS_BRIDGE_FLOWS_BR_INT
+    unit: flows
+    description: "Total flows in br-int bridge"
+    category: flows
+    threshold:
+      warning: 10000
+      critical: 50000
+
+  - query: ovs_vswitchd_bridge_flows_total{bridge="br-ex"}
+    metricName: OVS_BRIDGE_FLOWS_BR_EX
+    unit: flows
+    description: "Total flows in br-ex bridge"
+    category: flows
+    threshold:
+      warning: 1000
+      critical: 5000
+
+  # Connection and Stream Metrics
+  - query: sum(ovs_vswitchd_stream_open)
+    metricName: OVS_STREAM_CONNECTIONS_OPEN
+    unit: count
+    description: "Total number of open OVS stream connections"
+    category: connections
+
+  - query: sum(ovs_vswitchd_rconn_overflow)
+    metricName: OVS_RCONN_OVERFLOW_TOTAL
+    unit: count
+    description: "Total number of OVS remote connection overflows"
+    category: connections
+    threshold:
+      warning: 100
+      critical: 1000
+
+  - query: sum(ovs_vswitchd_rconn_discarded)
+    metricName: OVS_RCONN_DISCARDED_TOTAL
+    unit: count
+    description: "Total number of OVS remote connections discarded"
+    category: connections
+    threshold:
+      warning: 50
+      critical: 500
+
+  # Additional OVS Performance Metrics
+  - query: ovs_vswitchd_megaflow_cache_hits_total
+    metricName: OVS_MEGAFLOW_CACHE_HITS
+    unit: count
+    description: "Total megaflow cache hits"
+    category: performance
+
+  - query: ovs_vswitchd_megaflow_cache_misses_total
+    metricName: OVS_MEGAFLOW_CACHE_MISSES
+    unit: count
+    description: "Total megaflow cache misses"
+    category: performance
+
+  - query: rate(ovs_vswitchd_datapath_packets_total[5m])
+    metricName: OVS_DATAPATH_PACKET_RATE
+    unit: packets_per_second
+    description: "OVS datapath packet processing rate"
+    category: performance
+
+  - query: rate(ovs_vswitchd_datapath_errors_total[5m])
+    metricName: OVS_DATAPATH_ERROR_RATE
+    unit: errors_per_second
+    description: "OVS datapath error rate"
+    category: performance
+    threshold:
+      warning: 10
+      critical: 100
+
+  # Network Interface Metrics (for OVS interfaces)
+  - query: rate(container_network_receive_bytes_total{interface=~"ovs.*"}[5m])
+    metricName: OVS_INTERFACE_RX_BYTES_RATE
+    unit: bytes_per_second
+    description: "OVS interface receive bytes rate"
+    category: network
+
+  - query: rate(container_network_transmit_bytes_total{interface=~"ovs.*"}[5m])
+    metricName: OVS_INTERFACE_TX_BYTES_RATE
+    unit: bytes_per_second
+    description: "OVS interface transmit bytes rate"
+    category: network
+
+  - query: rate(container_network_receive_packets_dropped_total{interface=~"ovs.*"}[5m])
+    metricName: OVS_INTERFACE_RX_DROPPED_RATE
+    unit: packets_per_second
+    description: "OVS interface receive packets dropped rate"
+    category: network
+    threshold:
+      warning: 10
+      critical: 100
+
+# Global Configuration
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  query_timeout: 30s
+
+# Analysis Configuration
+analysis:
+  enabled: true
+  cpu_thresholds:
+    warning_percent: 70
+    critical_percent: 85
+  
+  memory_thresholds:
+    warning_mb: 500
+    critical_mb: 1000
+  
+  flow_thresholds:
+    datapath_warning: 5000
+    datapath_critical: 20000
+    bridge_warning: 10000
+    bridge_critical: 50000
+  
+  connection_thresholds:
+    overflow_warning: 100
+    overflow_critical: 1000
+    discarded_warning: 50
+    discarded_critical: 500
+
+# Alerting Rules (can be used with Prometheus AlertManager)
+alerting_rules:
+  - alert: OVSHighCPUUsage
+    expr: ovs_vswitchd_cpu_usage > 85
+    for: 5m
+    labels:
+      severity: critical
+      component: ovs-vswitchd
+    annotations:
+      summary: "OVS vswitchd high CPU usage"
+      description: "OVS vswitchd CPU usage is {{ $value }}% on {{ $labels.node }}"
+
+  - alert: OVSHighMemoryUsage
+    expr: ovs_db_process_resident_memory_bytes > 1073741824  # 1GB
+    for: 5m
+    labels:
+      severity: critical
+      component: ovsdb
+    annotations:
+      summary: "OVSDB high memory usage"
+      description: "OVSDB memory usage is {{ $value | humanize }} on {{ $labels.instance }}"
+
+  - alert: OVSHighFlowCount
+    expr: ovs_vswitchd_dp_flows_total > 20000
+    for: 2m
+    labels:
+      severity: warning
+      component: ovs-datapath
+    annotations:
+      summary: "OVS high datapath flow count"
+      description: "OVS datapath has {{ $value }} flows on {{ $labels.instance }}"
+
+  - alert: OVSConnectionOverflow
+    expr: increase(ovs_vswitchd_rconn_overflow[5m]) > 100
+    for: 1m
+    labels:
+      severity: critical
+      component: ovs-connections
+    annotations:
+      summary: "OVS connection overflow detected"
+      description: "OVS connection overflow count increased by {{ $value }} in 5 minutes"
+
+# Dashboard Configuration (for Grafana integration)
+dashboards:
+  - name: "OVS Performance Overview"
+    panels:
+      - title: "CPU Usage"
+        type: graph
+        metrics:
+          - ovs-vswitchd-cpu-usage
+          - ovsdb-server-cpu-usage
+      
+      - title: "Memory Usage"
+        type: graph
+        metrics:
+          - OVS_DB_MEMORY_SIZE_BYTES
+          - OVS_VSWITCH_MEMORY_SIZE_BYTES
+      
+      - title: "Flow Counts"
+        type: stat
+        metrics:
+          - OVS_DATAPATH_FLOWS_TOTAL
+          - OVS_BRIDGE_FLOWS_BR_INT
+          - OVS_BRIDGE_FLOWS_BR_EX
+      
+      - title: "Connection Health"
+        type: graph
+        metrics:
+          - OVS_STREAM_CONNECTIONS_OPEN
+          - OVS_RCONN_OVERFLOW_TOTAL
+          - OVS_RCONN_DISCARDED_TOTAL
+
+# Export Configuration
+export:
+  formats:
+    - json
+    - yaml
+    - prometheus
+  
+  retention:
+    metrics: 30d
+    analysis: 7d
+    alerts: 90d

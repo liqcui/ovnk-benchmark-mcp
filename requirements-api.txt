@@ -1,0 +1,39 @@
+# Core FastAPI and async dependencies
+asyncio>=3.4.1
+fastapi>=0.115.7
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# MCP Server dependencies
+fastmcp>=1.12.4
+
+# LangGraph and LangChain for advanced workflows
+langgraph>=0.3.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+
+# Data validation and serialization
+pydantic>=2.5.0
+pydantic-core>=2.14.0
+
+# HTTP and async client libraries
+httpx>=0.25.0
+aiohttp>=3.9.0
+
+# Time and timezone handling
+python-dateutil>=2.8.0
+pytz>=2023.3
+
+# JSON and data processing
+orjson>=3.9.0
+ujson>=5.8.0
+
+# Logging and configuration
+python-dotenv>=1.0.0
+structlog>=23.2.0
+
+# Development and testing dependencies (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-httpx>=0.27.0
+httpx>=0.25.0

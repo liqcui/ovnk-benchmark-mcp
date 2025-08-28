@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocp-benchmark-mcp"
+version = "1.0.0"
+description = "OpenShift OVN-Kubernetes Benchmark MCP Server"
+authors = [
+    {name = "OCP Benchmark Team", email = "team@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    "fastmcp>=1.12.4",
+    "fastapi>=0.115.7",
+    "uvicorn>=0.30.0",
+    "asyncio>=3.4.1",
+    "langgraph>=0.3.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "kubernetes>=30.0.0",
+    "prometheus-client>=0.20.0",
+    "requests>=2.32.0",
+    "pydantic>=2.10.0",
+    "duckdb>=1.1.0",
+    "pandas>=2.2.0",
+    "openpyxl>=3.1.0",
+    "pyyaml>=6.0.2",
+    "aiohttp>=3.10.0",
+    "python-dateutil>=2.9.0",
+    "reportlab>=4.2.0",
+    "matplotlib>=3.9.0",
+    "seaborn>=0.13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "black>=24.0.0",
+    "flake8>=7.0.0",
+    "mypy>=1.11.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
