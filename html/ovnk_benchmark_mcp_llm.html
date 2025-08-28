@@ -682,7 +682,7 @@
                 this.showTyping(true);
 
                 try {
-                    const response = await fetch('http://localhost:8001/chat/stream', {
+                    const response = await fetch('http://localhost:8080/chat/stream', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -700,7 +700,7 @@
                 } catch (error) {
                     this.showTyping(false);
                     this.addMessage(
-                        `Connection Error: ${error.message}<br><em>Make sure the MCP client is running on port 8001</em>`,
+                        `Connection Error: ${error.message}<br><em>Make sure the MCP client is running on port 8080</em>`,
                         'error'
                     );
                 }
@@ -818,7 +818,7 @@
                 this.loadingOverlay.style.display = 'flex';
 
                 try {
-                    const response = await fetch('http://localhost:8001/api/health');
+                    const response = await fetch('http://localhost:8080/api/health');
                     const health = await response.json();
 
                     if (health.status === 'healthy') {
@@ -842,7 +842,7 @@
 
             async checkClusterHealth() {
                 try {
-                    const clusterResponse = await fetch('http://localhost:8001/api/tools/get_performance_health_check', {
+                    const clusterResponse = await fetch('http://localhost:8080/api/tools/get_performance_health_check', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({})
