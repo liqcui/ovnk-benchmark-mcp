@@ -110,12 +110,24 @@ class MCPClient:
                         print("#*"*35)
                         print(tool.name)
                         print(tool.description)
-                        print(tool.inputSchema)                        
+                        print(tool.inputSchema)
+                        # Handle schema that may be a dict or a Pydantic model
+                        input_schema = {}
+                        try:
+                            if tool.inputSchema:
+                                if isinstance(tool.inputSchema, dict):
+                                    input_schema = tool.inputSchema
+                                elif hasattr(tool.inputSchema, "model_dump"):
+                                    input_schema = tool.inputSchema.model_dump()
+                                elif hasattr(tool.inputSchema, "dict"):
+                                    input_schema = tool.inputSchema.dict()
+                        except Exception:
+                            input_schema = {}
                         self.available_tools.append({
-                                "name": tool.name,
-                                "description": tool.description,
-                                "input_schema": tool.inputSchema.model_dump() if tool.inputSchema else {}
-                            })
+                            "name": tool.name,
+                            "description": tool.description,
+                            "input_schema": input_schema
+                        })
                     # self.available_tools = [
                     #     {
                     #         "name": tool.name,
@@ -173,14 +185,13 @@ class MCPClient:
 
             last_error = None
             for attempt in range(1, 3):
-                for url in (primary_url):
-                    try:
-                        logger.info(f"Calling tool via {url} (attempt {attempt})")
-                        return await _open_and_call(url)
-                    except Exception as e:
-                        last_error = e
-                        logger.warning(f"call_tool attempt {attempt} failed for {url}: {repr(e)}")
-                await asyncio.sleep(0.2 * attempt)
+                try:
+                    logger.info(f"Calling tool via {primary_url} (attempt {attempt})")
+                    return await _open_and_call(primary_url)
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"call_tool attempt {attempt} failed for {primary_url}: {repr(e)}")
+                    await asyncio.sleep(0.2 * attempt)
             if last_error:
                 raise last_error
                     
