@@ -216,38 +216,50 @@ class OpenShiftAuth:
                     self.prometheus_token = f.read().strip()
                 return
             
-            # Try to create a service account token
+            # Try to create a service account token (if API/model available)
             try:
                 # Create or get monitoring service account
                 sa_name = "ovnk-benchmark-monitor"
                 namespace = "default"
-                
+
                 try:
                     v1.read_namespaced_service_account(name=sa_name, namespace=namespace)
                 except ApiException as e:
                     if e.status == 404:
-                        # Create service account
                         sa_body = client.V1ServiceAccount(
                             metadata=client.V1ObjectMeta(name=sa_name)
                         )
                         v1.create_namespaced_service_account(namespace=namespace, body=sa_body)
-                
-                # Create token request (Kubernetes 1.24+)
-                auth_v1 = client.AuthenticationV1Api(self.kube_client)
-                token_request = client.V1TokenRequest(
-                    spec=client.V1TokenRequestSpec(
-                        expiration_seconds=3600  # 1 hour
+
+                # Create token request (Kubernetes 1.24+) when model/method exist
+                if hasattr(client, "V1TokenRequest") and hasattr(client, "V1TokenRequestSpec"):
+                    auth_v1 = client.AuthenticationV1Api(self.kube_client)
+                    token_request = client.V1TokenRequest(
+                        spec=client.V1TokenRequestSpec(expiration_seconds=3600)
                     )
-                )
-                
-                token_response = auth_v1.create_service_account_token(
-                    name=sa_name,
-                    namespace=namespace,
-                    body=token_request
-                )
-                
-                self.prometheus_token = token_response.status.token
-                
+                    token_response = auth_v1.create_service_account_token(
+                        name=sa_name,
+                        namespace=namespace,
+                        body=token_request
+                    )
+                    self.prometheus_token = token_response.status.token
+                elif hasattr(client, "models") and hasattr(client.models, "V1TokenRequest"):
+                    # Some client versions expose models under client.models
+                    auth_v1 = client.AuthenticationV1Api(self.kube_client)
+                    token_request = client.models.V1TokenRequest(
+                        spec=client.models.V1TokenRequestSpec(expiration_seconds=3600)
+                    )
+                    token_response = auth_v1.create_service_account_token(
+                        name=sa_name,
+                        namespace=namespace,
+                        body=token_request
+                    )
+                    self.prometheus_token = token_response.status.token
+                else:
+                    # TokenRequest model not available in this client version
+                    print("TokenRequest API not available in this kubernetes client; skipping token creation")
+                    self.prometheus_token = None
+
             except Exception as e:
                 print(f"Could not create service account token: {e}")
                 self.prometheus_token = None
