@@ -57,7 +57,7 @@ class MCPSessionManager:
 
             url = f"{self.mcp_server_url}/mcp"
             # Connect to the server using Streamable HTTP
-            self.client_context = async with streamablehttp_client(url) as (
+            async with streamablehttp_client(url) as (
                     read_stream,
                     write_stream,
                     get_session_id,
@@ -170,7 +170,7 @@ class MCPClientManager:
             logger.info(f"Connecting to MCP server at: {server_url}")
 
             # Create streamable HTTP client session
-            self.client_context = async with streamablehttp_client(server_url) as (read, write):
+            async with streamablehttp_client(server_url) as (read, write):
                 async with ClientSession(read, write) as session:
                     # Initialize MCP tool executor
                     mcp_client = MCPToolExecutor(session)
