@@ -297,14 +297,14 @@ class PrometheusBaseQuery:
         Returns:
             True if connection successful, False otherwise
         """
-        try:
-            result = await self.query_instant('up')
-            print(f"Prometheus test_connection result: {result}")
-            logger.info(f"Prometheus test_connection result: {result}")
-            # return isinstance(result, dict) and 'result' in result
-            return result
-        except Exception:
-            return False
+        # try:
+        result = await self.query_instant('up')
+        print(f"Prometheus test_connection result: {result}")
+        logger.info(f"Prometheus test_connection result: {result}")
+        # return isinstance(result, dict) and 'result' in result
+        return result
+        # except Exception:
+        #     return False
 
     async def get_metrics_metadata(self, metric_name: Optional[str] = None) -> Dict[str, Any]:
         """

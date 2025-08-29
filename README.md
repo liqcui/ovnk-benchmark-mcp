@@ -396,6 +396,7 @@ curl http://localhost:8000/health
 Enable debug logging:
 ```bash
 export LOG_LEVEL=DEBUG
+export OVNK_LOG_LEVEL=DEBUG
 ./ovnk_benchmark_mcp_command.sh server
 ```
 
