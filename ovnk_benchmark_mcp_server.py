@@ -41,9 +41,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Reduce noise from MCP server logs
+# Allow overriding log level via env
+_server_log_level = os.environ.get("OVNK_LOG_LEVEL", "INFO").upper()
+try:
+    root_level = getattr(logging, _server_log_level, logging.INFO)
+except Exception:
+    root_level = logging.INFO
+logging.getLogger().setLevel(root_level)
+logger.setLevel(root_level)
+
+# Ensure submodule logs are visible in server output
+_sub_loggers = [
+    "tools.ovnk_benchmark_prometheus_basequery",
+    "ocauth.ovnk_benchmark_auth",
+]
+for lname in _sub_loggers:
+    l = logging.getLogger(lname)
+    l.setLevel(root_level)
+    l.propagate = True
+
+# Reduce noise from overly chatty libs
 logging.getLogger("mcp.server.streamable_http").setLevel(logging.WARNING)
 logging.getLogger("anyio").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+logger.debug(f"Logging configured. Root level={root_level}, OVNK_LOG_LEVEL={_server_log_level}")
 
 from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
