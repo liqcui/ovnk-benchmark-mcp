@@ -226,7 +226,7 @@ ocp-benchmark-mcp/
 ├── analysis/
 │   └── ovnk_benchmark_performance_analysis.py # Performance analysis
 ├── elt/
-│   └── ovnk_benchmark_performance_elt.py      # Data processing
+│   └── ovnk_benchmark_elt_duckdb.py      # Data processing
 ├── storage/
 │   └── ovnk_benchmark_prometheus_ovnk.py      # DuckDB storage
 └── exports/                                    # Generated reports

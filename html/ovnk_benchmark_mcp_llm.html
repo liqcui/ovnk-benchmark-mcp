@@ -516,30 +516,35 @@
 
             <div class="quick-actions">
                 <h3>Quick Actions</h3>
-                <button class="action-button" onclick="sendQuickMessage('Perform a comprehensive health check')">
-                    🔍 Health Check
-                </button>
                 <button class="action-button" onclick="sendQuickMessage('Tell me the cluster genernal information?')">
                     🏛️ Cluster Overview
+                </button>
+                <button class="action-button"
+                    onclick="sendQuickMessage('Perform a comprehensive cluster health check')">
+                    🔍 Cluster Health Check
                 </button>
                 <button class="action-button"
                     onclick="sendQuickMessage('Show me node information with resource utilization')">
                     ️ Cluster Node Usage
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check API server performance metrics')">
-                    ⚡ API Performance
-                </button>
                 <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
-                    📀 OVN-K Deep Dive
+                    🌐 OVN-K Pods Usage
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Analyze OVS performance metrics')">
                     🌐 OVS Analysis
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Check Multus CNI performance')">
-                    🎯 Multus Analysis
+                    🌐 Multus Analysis
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Analyze sync duration performance')">
-                    ⏱️ Sync Duration
+                    🌐 Sync Duration
+                </button>
+                <button class="action-button" onclick="sendQuickMessage('Check API server performance metrics')">
+                    ⚡ API Performance
+                </button>
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me OVN-K components comprehensive analysis')">
+                    📀 OVN-K Deep Dive
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Run unified performance analysis')">
                     📈 Full Performance Report
