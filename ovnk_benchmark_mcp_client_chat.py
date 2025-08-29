@@ -336,7 +336,7 @@ class MCPClient:
                 # Extract health information based on tool type
                 overall_health = "unknown"
                 if tool_used == "get_mcp_health_status":
-                    overall_health = health_result.get("overall_cluster_health", "unknown")
+                    overall_health = health_result.get("status", "unknown")
                 elif tool_used == "get_cluster_info":
                     # Infer health from cluster info
                     if "nodes" in health_result or "cluster_version" in health_result:
