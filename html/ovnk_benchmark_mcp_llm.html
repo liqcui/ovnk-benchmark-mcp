@@ -893,11 +893,8 @@
 
                     console.log('Overall status:', overallStatus);
 
-                    if (overallStatus === 'EXCELLENT' || overallStatus === 'excellent' ||
-                        overallStatus === 'GOOD' || overallStatus === 'good') {
+                    if (overallStatus === 'healthy') {
                         this.updateClusterStatus('connected', `Cluster ${overallStatus.toUpperCase()}`);
-                    } else if (overallStatus === 'MODERATE' || overallStatus === 'moderate') {
-                        this.updateClusterStatus('checking', 'Cluster MODERATE');
                     } else if (overallStatus === 'unknown') {
                         this.updateClusterStatus('checking', 'Cluster Status Unknown');
                     } else {
