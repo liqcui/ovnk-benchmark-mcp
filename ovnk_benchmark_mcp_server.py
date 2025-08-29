@@ -24,6 +24,14 @@ warnings.filterwarnings(
     message=r"HTTPResponse\.getheaders\(\) is deprecated"
 )
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S UTC'
+)
+logger = logging.getLogger(__name__)
+
 from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
 from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
