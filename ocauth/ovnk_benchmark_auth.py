@@ -11,6 +11,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 import aiohttp
 import asyncio
+import logging
 
 
 class OpenShiftAuth:
@@ -281,14 +282,28 @@ class OpenShiftAuth:
             # Disable SSL verification to allow self-signed certificate chains
             connector = aiohttp.TCPConnector(ssl=False)
             async with aiohttp.ClientSession(connector=connector) as session:
+                logging.getLogger(__name__).debug(
+                    f"Testing Prometheus connection url={self.prometheus_url}/api/v1/query headers_keys={list(headers.keys())} ssl_verification=False"
+                )
                 async with session.get(
                     f"{self.prometheus_url}/api/v1/query",
                     params={'query': 'up'},
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
+                    logging.getLogger(__name__).debug(
+                        f"Prometheus test response status={response.status}"
+                    )
                     if response.status == 200:
-                        data = await response.json()
+                        text = await response.text()
+                        logging.getLogger(__name__).debug(
+                            f"Prometheus test response body_snippet={text[:500]}"
+                        )
+                        try:
+                            data = json.loads(text)
+                        except Exception:
+                            logging.getLogger(__name__).warning("Prometheus test: failed to parse JSON, returning False")
+                            return False
                         return data.get('status') == 'success'
                     return False
                     

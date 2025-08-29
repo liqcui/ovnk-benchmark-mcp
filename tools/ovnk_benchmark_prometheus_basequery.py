@@ -12,6 +12,7 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import json
 import logging
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -20,6 +21,11 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S UTC'
 )
 logger = logging.getLogger(__name__)
+_env_level = os.environ.get("OVNK_PROM_LOG_LEVEL", "INFO").upper()
+try:
+    logger.setLevel(getattr(logging, _env_level, logging.INFO))
+except Exception:
+    logger.setLevel(logging.INFO)
 
 class PrometheusQueryError(Exception):
     """Custom exception for Prometheus query errors"""
@@ -34,6 +40,7 @@ class PrometheusBaseQuery:
         self.token = token
         self.session: Optional[aiohttp.ClientSession] = None
         self.timeout = aiohttp.ClientTimeout(total=30)
+        logger.debug(f"Initialized PrometheusBaseQuery with URL={self.prometheus_url}")
     
     async def __aenter__(self):
         """Async context manager entry"""
@@ -57,6 +64,8 @@ class PrometheusBaseQuery:
                 timeout=self.timeout,
                 connector=aiohttp.TCPConnector(ssl=False)
             )
+            masked_headers = {k: (v[:10] + '...' if k.lower() == 'authorization' and isinstance(v, str) else v) for k, v in headers.items()}
+            logger.debug(f"Created aiohttp session for Prometheus with ssl=False, headers_keys={list(headers.keys())}, headers_masked={masked_headers}")
     
     async def close(self) -> None:
         """Close the aiohttp session"""
@@ -83,12 +92,17 @@ class PrometheusBaseQuery:
         url = f"{self.prometheus_url}/api/v1/query"
         
         try:
+            logger.debug(f"query_instant GET {url} params={params}")
             async with self.session.get(url, params=params) as response:
+                logger.debug(f"query_instant response status={response.status}")
                 if response.status != 200:
                     error_text = await response.text()
+                    logger.debug(f"query_instant non-200 body_snippet={error_text[:500]}")
                     raise PrometheusQueryError(f"Query failed with status {response.status}: {error_text}")
                 
-                data = await response.json()
+                text = await response.text()
+                logger.debug(f"query_instant response body_snippet={text[:500]}")
+                data = json.loads(text)
                 
                 if data.get('status') != 'success':
                     error_msg = data.get('error', 'Unknown error')
@@ -99,6 +113,7 @@ class PrometheusBaseQuery:
         except aiohttp.ClientError as e:
             raise PrometheusQueryError(f"HTTP client error: {str(e)}")
         except json.JSONDecodeError as e:
+            logger.debug(f"query_instant JSON decode failed: {repr(e)}")
             raise PrometheusQueryError(f"Failed to decode JSON response: {str(e)}")
     
     async def query_range(self, query: str, start: str, end: str, step: str = '15s') -> Dict[str, Any]:
@@ -126,12 +141,17 @@ class PrometheusBaseQuery:
         url = f"{self.prometheus_url}/api/v1/query_range"
         
         try:
+            logger.debug(f"query_range GET {url} params={params}")
             async with self.session.get(url, params=params) as response:
+                logger.debug(f"query_range response status={response.status}")
                 if response.status != 200:
                     error_text = await response.text()
+                    logger.debug(f"query_range non-200 body_snippet={error_text[:500]}")
                     raise PrometheusQueryError(f"Range query failed with status {response.status}: {error_text}")
                 
-                data = await response.json()
+                text = await response.text()
+                logger.debug(f"query_range response body_snippet={text[:500]}")
+                data = json.loads(text)
                 
                 if data.get('status') != 'success':
                     error_msg = data.get('error', 'Unknown error')
@@ -142,6 +162,7 @@ class PrometheusBaseQuery:
         except aiohttp.ClientError as e:
             raise PrometheusQueryError(f"HTTP client error: {str(e)}")
         except json.JSONDecodeError as e:
+            logger.debug(f"query_range JSON decode failed: {repr(e)}")
             raise PrometheusQueryError(f"Failed to decode JSON response: {str(e)}")
     
     async def query_multiple_instant(self, queries: Dict[str, str], time: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
@@ -303,11 +324,14 @@ class PrometheusBaseQuery:
             params['metric'] = metric_name
         
         try:
+            logger.debug(f"get_metrics_metadata GET {url} params={params}")
             async with self.session.get(url, params=params) as response:
                 if response.status != 200:
                     return {}
                 
-                data = await response.json()
+                text = await response.text()
+                logger.debug(f"get_metrics_metadata response status={response.status} body_snippet={text[:500]}")
+                data = json.loads(text)
                 return data.get('data', {})
                 
         except Exception:
