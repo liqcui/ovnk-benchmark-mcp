@@ -289,28 +289,10 @@ class PrometheusBaseQuery:
         """
         try:
             result = await self.query_instant('up')
-            print(f"Prometheus test_connection result: {result}")
-            logger.info(f"Prometheus test_connection result: {result}")
             return isinstance(result, dict) and 'result' in result
         except Exception as e:
             logger.error(f"Prometheus test_connection error: {e}")
             return False
-
-    async def test_connection(self) -> Any:
-        """
-        Test connection to Prometheus
-        
-        Returns:
-            True if connection successful, False otherwise
-        """
-        # try:
-        result = await self.query_instant('up')
-        print(f"Prometheus test_connection result: {result}")
-        logger.info(f"Prometheus test_connection result: {result}")
-        # return isinstance(result, dict) and 'result' in result
-        return result
-        # except Exception:
-        #     return False
 
     async def get_metrics_metadata(self, metric_name: Optional[str] = None) -> Dict[str, Any]:
         """
