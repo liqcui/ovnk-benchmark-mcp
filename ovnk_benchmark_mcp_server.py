@@ -8,6 +8,7 @@ Updated with comprehensive analysis tools based on unified performance analyzer
 import asyncio
 import os
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
@@ -200,9 +201,11 @@ async def get_mcp_health_status(request: HealthCheckRequest) -> Dict[str, Any]:
             # Prefer lightweight 'up' query via PrometheusBaseQuery
             if prometheus_client:
                 prometheus_ok = await prometheus_client.test_connection()
+                logger.info(f"Prometheus connectivity: {prometheus_ok}")
             # Fallback to auth method if needed
             if not prometheus_ok and auth_manager:
                 prometheus_ok = await auth_manager.test_prometheus_connection()
+                logger.info(f"auth_manager.test_prometheus_connection: {prometheus_ok}")
         except Exception as e:
             prometheus_error = str(e)
             prometheus_ok = False
@@ -219,6 +222,36 @@ async def get_mcp_health_status(request: HealthCheckRequest) -> Dict[str, Any]:
 
         status = "healthy" if prometheus_ok and kubeapi_ok else ("degraded" if prometheus_ok or kubeapi_ok else "unhealthy")
 
+        # {
+        #     "status": "healthy",
+        #     "timestamp": "2025-08-29T05:59:48.416710+00:00",
+        #     "details": {
+        #         "status": "healthy",
+        #         "prometheus_connection": "ok",
+        #         "tools_available": 51,
+        #         "overall_cluster_health": "unknown",
+        #         "tool_used": "get_mcp_health_status",
+        #         "last_check": "2025-08-29T05:59:48.416710+00:00",
+        #         "health_details": {
+        #             "status": "degraded",
+        #             "timestamp": "2025-08-29T05:59:48.404831+00:00",
+        #             "mcp_server": {
+        #                 "running": true,
+        #                 "transport": "streamable-http"
+        #             },
+        #             "prometheus": {
+        #                 "connected": false,
+        #                 "url": "https://prometheus-k8s-openshift-monitoring.apps.liqcui-oc4mcp.qe.devcluster.openshift.com",
+        #                 "error": null
+        #             },
+        #             "kubeapi": {
+        #                 "connected": true,
+        #                 "node_count": 2,
+        #                 "error": null
+        #             }
+        #         }
+        #     }
+        # }
         return {
             "status": status,
             "timestamp": datetime.now(timezone.utc).isoformat(),
