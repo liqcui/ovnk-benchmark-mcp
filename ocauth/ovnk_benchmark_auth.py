@@ -197,6 +197,51 @@ class OpenShiftAuth:
             print(f"Could not get OpenShift route: {e}")
             return None
     
+    def _create_token_request_object(self, expiration_seconds: int = 3600):
+        """Create a TokenRequest object using dynamic approach"""
+        # Try multiple ways to create the TokenRequest object
+        
+        # Method 1: Direct class access
+        try:
+            return client.V1TokenRequest(
+                spec=client.V1TokenRequestSpec(expiration_seconds=expiration_seconds)
+            )
+        except (AttributeError, NameError):
+            pass
+        
+        # Method 2: Via client.models
+        try:
+            return client.models.V1TokenRequest(
+                spec=client.models.V1TokenRequestSpec(expiration_seconds=expiration_seconds)
+            )
+        except (AttributeError, NameError):
+            pass
+        
+        # Method 3: Via authentication_v1 models
+        try:
+            from kubernetes.client.models import V1TokenRequest, V1TokenRequestSpec
+            return V1TokenRequest(
+                spec=V1TokenRequestSpec(expiration_seconds=expiration_seconds)
+            )
+        except ImportError:
+            pass
+        
+        # Method 4: Dynamic object creation (fallback)
+        try:
+            # Create the objects dynamically using dict-like structure
+            token_request = {
+                'apiVersion': 'authentication.k8s.io/v1',
+                'kind': 'TokenRequest',
+                'spec': {
+                    'expirationSeconds': expiration_seconds
+                }
+            }
+            return token_request
+        except Exception:
+            pass
+        
+        return None
+    
     async def _get_prometheus_token(self) -> None:
         """Get service account token for Prometheus access"""
         try:
@@ -217,7 +262,7 @@ class OpenShiftAuth:
                     self.prometheus_token = f.read().strip()
                 return
             
-            # Try to create a service account token (if API/model available)
+            # Try to create a service account token using multiple approaches
             try:
                 # Create or get monitoring service account
                 sa_name = "ovnk-benchmark-monitor"
@@ -232,42 +277,136 @@ class OpenShiftAuth:
                         )
                         v1.create_namespaced_service_account(namespace=namespace, body=sa_body)
 
-                # Create token request (Kubernetes 1.24+) when model/method exist
-                if hasattr(client, "V1TokenRequest") and hasattr(client, "V1TokenRequestSpec"):
+                # Try to create token request with multiple approaches
+                token_request = self._create_token_request_object(3600)
+                
+                if token_request is None:
+                    print("⚠️  TokenRequest API not available in this kubernetes client version")
+                    # Fallback: try to find existing secrets
+                    await self._get_token_from_secrets(sa_name, namespace, v1)
+                    return
+                
+                # Create the token request
+                try:
                     auth_v1 = client.AuthenticationV1Api(self.kube_client)
-                    token_request = client.V1TokenRequest(
-                        spec=client.V1TokenRequestSpec(expiration_seconds=3600)
-                    )
-                    token_response = auth_v1.create_service_account_token(
-                        name=sa_name,
-                        namespace=namespace,
-                        body=token_request
-                    )
-                    self.prometheus_token = token_response.status.token
-                elif hasattr(client, "models") and hasattr(client.models, "V1TokenRequest"):
-                    # Some client versions expose models under client.models
-                    auth_v1 = client.AuthenticationV1Api(self.kube_client)
-                    token_request = client.models.V1TokenRequest(
-                        spec=client.models.V1TokenRequestSpec(expiration_seconds=3600)
-                    )
-                    token_response = auth_v1.create_service_account_token(
-                        name=sa_name,
-                        namespace=namespace,
-                        body=token_request
-                    )
-                    self.prometheus_token = token_response.status.token
-                else:
-                    # TokenRequest model not available in this client version
-                    print("TokenRequest API not available in this kubernetes client; skipping token creation")
-                    self.prometheus_token = None
+                    
+                    if isinstance(token_request, dict):
+                        # Handle dynamic object creation
+                        import urllib3
+                        import yaml
+                        
+                        # Convert to proper API call
+                        response = self.kube_client.call_api(
+                            resource_path=f'/api/v1/namespaces/{namespace}/serviceaccounts/{sa_name}/token',
+                            method='POST',
+                            body=token_request,
+                            header_params={'Content-Type': 'application/json'},
+                            response_type='object'
+                        )
+                        if response and len(response) > 0:
+                            token_data = response[0]
+                            if hasattr(token_data, 'status') and hasattr(token_data.status, 'token'):
+                                self.prometheus_token = token_data.status.token
+                            elif isinstance(token_data, dict) and 'status' in token_data:
+                                self.prometheus_token = token_data['status'].get('token')
+                    else:
+                        # Use standard API
+                        token_response = auth_v1.create_service_account_token(
+                            name=sa_name,
+                            namespace=namespace,
+                            body=token_request
+                        )
+                        self.prometheus_token = token_response.status.token
+                        
+                except Exception as e:
+                    print(f"Failed to create token via TokenRequest API: {e}")
+                    # Fallback to secret-based approach
+                    await self._get_token_from_secrets(sa_name, namespace, v1)
 
             except Exception as e:
-                print(f"Could not create service account token: {e}")
+                print(f"Could not create service account or token: {e}")
                 self.prometheus_token = None
             
         except Exception as e:
             print(f"⚠️  Warning: Could not get Prometheus token: {e}")
             self.prometheus_token = None
+    
+    async def _get_token_from_secrets(self, sa_name: str, namespace: str, v1_api) -> None:
+        """Fallback method: get token from service account secrets (older K8s versions)"""
+        try:
+            # Get service account
+            service_account = v1_api.read_namespaced_service_account(name=sa_name, namespace=namespace)
+            
+            # Look for token secrets
+            if hasattr(service_account, 'secrets') and service_account.secrets:
+                for secret_ref in service_account.secrets:
+                    try:
+                        secret = v1_api.read_namespaced_secret(
+                            name=secret_ref.name,
+                            namespace=namespace
+                        )
+                        
+                        if secret.type == 'kubernetes.io/service-account-token':
+                            token_data = secret.data.get('token')
+                            if token_data:
+                                self.prometheus_token = base64.b64decode(token_data).decode('utf-8')
+                                print("✅ Retrieved token from service account secret")
+                                return
+                    except Exception as e:
+                        print(f"Could not read secret {secret_ref.name}: {e}")
+                        continue
+            
+            # If no existing secrets, try to create a token secret (pre-1.24 K8s)
+            await self._create_token_secret(sa_name, namespace, v1_api)
+            
+        except Exception as e:
+            print(f"Could not get token from secrets: {e}")
+    
+    async def _create_token_secret(self, sa_name: str, namespace: str, v1_api) -> None:
+        """Create a token secret for service account (pre-K8s 1.24)"""
+        try:
+            secret_name = f"{sa_name}-token"
+            
+            # Check if secret already exists
+            try:
+                existing_secret = v1_api.read_namespaced_secret(name=secret_name, namespace=namespace)
+                token_data = existing_secret.data.get('token')
+                if token_data:
+                    self.prometheus_token = base64.b64decode(token_data).decode('utf-8')
+                    print("✅ Retrieved token from existing token secret")
+                    return
+            except ApiException as e:
+                if e.status != 404:
+                    raise
+            
+            # Create token secret
+            secret_body = client.V1Secret(
+                metadata=client.V1ObjectMeta(
+                    name=secret_name,
+                    annotations={
+                        'kubernetes.io/service-account.name': sa_name
+                    }
+                ),
+                type='kubernetes.io/service-account-token'
+            )
+            
+            created_secret = v1_api.create_namespaced_secret(namespace=namespace, body=secret_body)
+            print(f"Created token secret: {created_secret.metadata.name}")
+            
+            # Wait a bit for the token to be populated
+            await asyncio.sleep(2)
+            
+            # Retrieve the token
+            secret = v1_api.read_namespaced_secret(name=secret_name, namespace=namespace)
+            token_data = secret.data.get('token')
+            if token_data:
+                self.prometheus_token = base64.b64decode(token_data).decode('utf-8')
+                print("✅ Successfully created and retrieved token from secret")
+            else:
+                print("⚠️  Token secret created but token not yet populated")
+                
+        except Exception as e:
+            print(f"Could not create token secret: {e}")
     
     async def test_prometheus_connection(self) -> bool:
         """Test connection to Prometheus"""
@@ -338,5 +477,6 @@ class OpenShiftAuth:
             'prometheus_authenticated': bool(self.prometheus_token),
             'auth_status': 'authenticated' if self.kube_client else 'not_authenticated'
         }
+
 # Global authenticator instance
-auth = OpenShiftAuth()    
+auth = OpenShiftAuth()
