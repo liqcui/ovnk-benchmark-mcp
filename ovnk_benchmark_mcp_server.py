@@ -3,6 +3,7 @@
 OpenShift OVN-Kubernetes Benchmark MCP Server
 Main server entry point using FastMCP with streamable-http transport
 Updated with comprehensive analysis tools based on unified performance analyzer
+Fixed SSE stream handling and resource management
 """
 
 import asyncio
@@ -12,6 +13,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+import signal
+import sys
 
 import fastmcp
 from fastmcp.server import FastMCP
@@ -24,8 +27,23 @@ warnings.filterwarnings(
     message=r"HTTPResponse\.getheaders\(\) is deprecated"
 )
 
-# Configure logging
+# Suppress anyio stream warnings
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="anyio.streams.memory"
+)
+
+# Configure logging with more granular control
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Reduce noise from MCP server logs
+logging.getLogger("mcp.server.streamable_http").setLevel(logging.WARNING)
+logging.getLogger("anyio").setLevel(logging.WARNING)
 
 from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
@@ -45,10 +63,13 @@ try:
     UNIFIED_ANALYZER_AVAILABLE = True
 except ImportError:
     UNIFIED_ANALYZER_AVAILABLE = False
-    print("Warning: Unified analyzer not available")
+    logger.warning("Warning: Unified analyzer not available")
 
 # Configure timezone
 os.environ['TZ'] = 'UTC'
+
+# Global shutdown event
+shutdown_event = asyncio.Event()
 
 
 class MetricsRequest(BaseModel):
@@ -167,94 +188,120 @@ unified_analyzer: Optional[UnifiedPerformanceAnalyzer] = None
 
 
 async def initialize_components():
-    """Initialize global components"""
+    """Initialize global components with proper error handling"""
     global auth_manager, config, prometheus_client, storage, unified_analyzer
     
-    config = Config()
-    auth_manager = OpenShiftAuth(config.kubeconfig_path)
-    await auth_manager.initialize()
+    try:
+        config = Config()
+        auth_manager = OpenShiftAuth(config.kubeconfig_path)
+        await auth_manager.initialize()
+        
+        prometheus_client = PrometheusBaseQuery(
+            auth_manager.prometheus_url,
+            auth_manager.prometheus_token
+        )
+        
+        storage = PrometheusStorage()
+        await storage.initialize()
+        
+        if UNIFIED_ANALYZER_AVAILABLE:
+            unified_analyzer = UnifiedPerformanceAnalyzer()
+            
+        logger.info("All components initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize components: {e}")
+        raise
+
+
+async def cleanup_resources():
+    """Clean up global resources on shutdown"""
+    global auth_manager, storage
     
-    prometheus_client = PrometheusBaseQuery(
-        auth_manager.prometheus_url,
-        auth_manager.prometheus_token
-    )
+    logger.info("Cleaning up resources...")
     
-    storage = PrometheusStorage()
-    await storage.initialize()
+    try:
+        if storage:
+            await storage.close()
+    except Exception as e:
+        logger.error(f"Error cleaning up storage: {e}")
     
-    if UNIFIED_ANALYZER_AVAILABLE:
-        unified_analyzer = UnifiedPerformanceAnalyzer()
+    try:
+        if auth_manager:
+            await auth_manager.cleanup()
+    except Exception as e:
+        logger.error(f"Error cleaning up auth manager: {e}")
+    
+    logger.info("Resource cleanup completed")
+
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    logger.info(f"Received signal {signum}, initiating shutdown...")
+    shutdown_event.set()
+
+
+# Setup signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 
 @app.tool(
     name="get_mcp_health_status",
     description="""Health check for the MCP server. Verifies MCP server is running, Prometheus connectivity, and Kubernetes API connectivity. Returns component statuses and timestamps."""
 )
 async def get_mcp_health_status(request: HealthCheckRequest) -> Dict[str, Any]:
-    """Return health status for MCP server, Prometheus, and KubeAPI"""
+    """Return health status for MCP server, Prometheus, and KubeAPI with improved error handling"""
     global auth_manager, prometheus_client
+    
     try:
         # Ensure components exist
         if not auth_manager or not prometheus_client:
-            await initialize_components()
+            try:
+                await initialize_components()
+            except Exception as init_error:
+                return {
+                    "status": "error", 
+                    "error": f"Component initialization failed: {init_error}",
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
 
-        # Test Prometheus connectivity
+        # Test Prometheus connectivity with timeout
         prometheus_ok = False
         prometheus_error: Optional[str] = None
         try:
-            # Prefer lightweight 'up' query via PrometheusBaseQuery
-            if prometheus_client:
-                prometheus_ok = await prometheus_client.test_connection()
-                logger.info(f"Prometheus connectivity: {prometheus_ok}")
-            # Fallback to auth method if needed
-            if not prometheus_ok and auth_manager:
-                prometheus_ok = await auth_manager.test_prometheus_connection()
-                logger.info(f"auth_manager.test_prometheus_connection: {prometheus_ok}")
+            # Add timeout to prevent hanging
+            prometheus_ok = await asyncio.wait_for(
+                prometheus_client.test_connection(),
+                timeout=10.0
+            )
+            logger.info(f"Prometheus connectivity: {prometheus_ok}")
+        except asyncio.TimeoutError:
+            prometheus_error = "Connection timeout after 10 seconds"
+            prometheus_ok = False
         except Exception as e:
             prometheus_error = str(e)
             prometheus_ok = False
+            logger.error(f"Prometheus connection error: {e}")
 
-        # Test Kube API connectivity
+        # Test Kube API connectivity with timeout
         kubeapi_ok = False
         kubeapi_error: Optional[str] = None
         try:
             if auth_manager:
-                kubeapi_ok = await auth_manager.test_kubeapi_connection()
+                kubeapi_ok = await asyncio.wait_for(
+                    auth_manager.test_kubeapi_connection(),
+                    timeout=10.0
+                )
+        except asyncio.TimeoutError:
+            kubeapi_error = "Connection timeout after 10 seconds"
+            kubeapi_ok = False
         except Exception as e:
             kubeapi_error = str(e)
             kubeapi_ok = False
+            logger.error(f"KubeAPI connection error: {e}")
 
         status = "healthy" if prometheus_ok and kubeapi_ok else ("degraded" if prometheus_ok or kubeapi_ok else "unhealthy")
 
-        # {
-        #     "status": "healthy",
-        #     "timestamp": "2025-08-29T05:59:48.416710+00:00",
-        #     "details": {
-        #         "status": "healthy",
-        #         "prometheus_connection": "ok",
-        #         "tools_available": 51,
-        #         "overall_cluster_health": "unknown",
-        #         "tool_used": "get_mcp_health_status",
-        #         "last_check": "2025-08-29T05:59:48.416710+00:00",
-        #         "health_details": {
-        #             "status": "degraded",
-        #             "timestamp": "2025-08-29T05:59:48.404831+00:00",
-        #             "mcp_server": {
-        #                 "running": true,
-        #                 "transport": "streamable-http"
-        #             },
-        #             "prometheus": {
-        #                 "connected": false,
-        #                 "url": "https://prometheus-k8s-openshift-monitoring.apps.liqcui-oc4mcp.qe.devcluster.openshift.com",
-        #                 "error": null
-        #             },
-        #             "kubeapi": {
-        #                 "connected": true,
-        #                 "node_count": 2,
-        #                 "error": null
-        #             }
-        #         }
-        #     }
-        # }
         return {
             "status": status,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -274,7 +321,9 @@ async def get_mcp_health_status(request: HealthCheckRequest) -> Dict[str, Any]:
             },
         }
     except Exception as e:
+        logger.error(f"Health check failed: {e}")
         return {"status": "error", "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="get_openshift_general_info",
@@ -303,10 +352,19 @@ async def get_openshift_general_info(request: GeneralInfoRequest) -> Dict[str, A
     try:
         general_info = OpenShiftGeneralInfo()
         await general_info.initialize()
-        cluster_info = await general_info.collect_cluster_info()
+        
+        # Add timeout to prevent hanging
+        cluster_info = await asyncio.wait_for(
+            general_info.collect_cluster_info(),
+            timeout=30.0
+        )
         return general_info.to_dict(cluster_info)
+    except asyncio.TimeoutError:
+        return {"error": "Timeout collecting cluster information", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error collecting general info: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="get_cluster_node_usage",
@@ -340,9 +398,17 @@ async def get_cluster_node_usage(request: MetricsRequest) -> Dict[str, Any]:
             await initialize_components()
             
         cluster_nodes_usage = NodeUsageQuery(prometheus_client)
-        cluster_info = await cluster_nodes_usage.query_node_usage(request.duration)
+        
+        # Add timeout to prevent hanging
+        cluster_info = await asyncio.wait_for(
+            cluster_nodes_usage.query_node_usage(request.duration),
+            timeout=30.0
+        )
         return cluster_info
+    except asyncio.TimeoutError:
+        return {"error": "Timeout querying node usage metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error querying node usage: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
     
 @app.tool(
@@ -376,10 +442,21 @@ async def query_kube_api_metrics(request: MetricsRequest) -> Dict[str, Any]:
     try:
         if not prometheus_client:
             await initialize_components()
+        
         kube_api_metrics = KubeAPIMetrics(prometheus_client)
-        return await kube_api_metrics.get_metrics(request.duration, request.start_time, request.end_time)
+        
+        # Add timeout to prevent hanging
+        result = await asyncio.wait_for(
+            kube_api_metrics.get_metrics(request.duration, request.start_time, request.end_time),
+            timeout=30.0
+        )
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "Timeout querying Kube API metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error querying Kube API metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="query_ovnk_pods_metrics",
@@ -417,14 +494,19 @@ async def query_ovnk_pods_metrics(request: PODsRequest) -> Dict[str, Any]:
         if not prometheus_client:
             await initialize_components()
 
-        pods_duration_summary = await collect_ovn_duration_usage(
-            prometheus_client,
-            duration=request.duration
+        # Add timeout to prevent hanging
+        pods_duration_summary = await asyncio.wait_for(
+            collect_ovn_duration_usage(prometheus_client, duration=request.duration),
+            timeout=45.0
         )
         return pods_duration_summary
     
+    except asyncio.TimeoutError:
+        return {"error": "Timeout collecting pod metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error querying pod metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="query_ovnk_containers_metrics", 
@@ -463,15 +545,25 @@ async def query_ovnk_containers_metrics(request: PODsRequest) -> Dict[str, Any]:
             await initialize_components()
         
         collector = PodsUsageCollector(prometheus_client)
-        return await collector.collect_duration_usage(
-            request.duration, 
-            request.pod_pattern, 
-            request.container_pattern, 
-            request.namespace_pattern
+        
+        # Add timeout to prevent hanging
+        result = await asyncio.wait_for(
+            collector.collect_duration_usage(
+                request.duration, 
+                request.pod_pattern, 
+                request.container_pattern, 
+                request.namespace_pattern
+            ),
+            timeout=45.0
         )
+        return result
     
+    except asyncio.TimeoutError:
+        return {"error": "Timeout collecting container metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error querying container metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="query_ovnk_ovs_metrics",
@@ -511,10 +603,19 @@ async def query_ovnk_ovs_metrics(request: PODsRequest) -> Dict[str, Any]:
             await initialize_components()
         
         collector = OVSUsageCollector(prometheus_client, auth_manager)
-        range_results = await collector.collect_all_ovs_metrics(request.duration)
+        
+        # Add timeout to prevent hanging
+        range_results = await asyncio.wait_for(
+            collector.collect_all_ovs_metrics(request.duration),
+            timeout=45.0
+        )
         return range_results
+    except asyncio.TimeoutError:
+        return {"error": "Timeout collecting OVS metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error querying OVS metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="query_multus_metrics",
@@ -553,16 +654,26 @@ async def query_multus_metrics(request: PODsRequest) -> Dict[str, Any]:
             await initialize_components()
                 
         collector = PodsUsageCollector(prometheus_client)
-        return await collector.collect_duration_usage(
-            request.duration, 
-            request.pod_pattern, 
-            request.container_pattern, 
-            request.namespace_pattern
+        
+        # Add timeout to prevent hanging
+        result = await asyncio.wait_for(
+            collector.collect_duration_usage(
+                request.duration, 
+                request.pod_pattern, 
+                request.container_pattern, 
+                request.namespace_pattern
+            ),
+            timeout=45.0
         )
+        return result
 
+    except asyncio.TimeoutError:
+        return {"error": "Timeout collecting Multus metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error querying Multus metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
     
+
 @app.tool(
     name="query_ovnk_sync_duration_seconds_metrics",
     description="""Query OVN-Kubernetes synchronization duration metrics including controller sync times, resource reconciliation durations, and performance bottlenecks. This tool is critical for identifying performance issues in OVN-K control plane operations.
@@ -594,10 +705,21 @@ async def query_ovnk_sync_duration_seconds_metrics(request: MetricsRequest) -> D
     try:
         if not prometheus_client:
             await initialize_components()
+        
         collector = OVNSyncDurationCollector(prometheus_client)
-        return await collector.collect_sync_duration_seconds_metrics(request.duration)
+        
+        # Add timeout to prevent hanging
+        result = await asyncio.wait_for(
+            collector.collect_sync_duration_seconds_metrics(request.duration),
+            timeout=30.0
+        )
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "Timeout collecting sync duration metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error querying sync duration metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="analyze_pods_performance",
@@ -640,9 +762,9 @@ async def analyze_pods_performance(request: AnalysisRequest) -> Dict[str, Any]:
         # Get metrics data if not provided
         metrics_data = request.metrics_data
         if not metrics_data:
-            metrics_data = await collect_ovn_duration_usage(
-                prometheus_client,
-                duration=request.duration
+            metrics_data = await asyncio.wait_for(
+                collect_ovn_duration_usage(prometheus_client, duration=request.duration),
+                timeout=60.0
             )
         
         # Perform analysis
@@ -673,8 +795,12 @@ async def analyze_pods_performance(request: AnalysisRequest) -> Dict[str, Any]:
             }
         }
     
+    except asyncio.TimeoutError:
+        return {"error": "Timeout during pod performance analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error analyzing pod performance: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="analyze_ovs_performance",
@@ -719,7 +845,10 @@ async def analyze_ovs_performance(request: AnalysisRequest) -> Dict[str, Any]:
         metrics_data = request.metrics_data
         if not metrics_data:
             collector = OVSUsageCollector(prometheus_client, auth_manager)
-            metrics_data = await collector.collect_all_ovs_metrics(request.duration)
+            metrics_data = await asyncio.wait_for(
+                collector.collect_all_ovs_metrics(request.duration),
+                timeout=60.0
+            )
         
         # Perform analysis
         if not unified_analyzer:
@@ -748,8 +877,12 @@ async def analyze_ovs_performance(request: AnalysisRequest) -> Dict[str, Any]:
             }
         }
     
+    except asyncio.TimeoutError:
+        return {"error": "Timeout during OVS performance analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error analyzing OVS performance: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="analyze_sync_duration_performance",
@@ -793,7 +926,10 @@ async def analyze_sync_duration_performance(request: AnalysisRequest) -> Dict[st
         metrics_data = request.metrics_data
         if not metrics_data:
             collector = OVNSyncDurationCollector(prometheus_client)
-            metrics_data = await collector.collect_sync_duration_seconds_metrics(request.duration)
+            metrics_data = await asyncio.wait_for(
+                collector.collect_sync_duration_seconds_metrics(request.duration),
+                timeout=60.0
+            )
         
         # Perform analysis
         if not unified_analyzer:
@@ -823,8 +959,12 @@ async def analyze_sync_duration_performance(request: AnalysisRequest) -> Dict[st
             }
         }
     
+    except asyncio.TimeoutError:
+        return {"error": "Timeout during sync duration analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error analyzing sync duration performance: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="analyze_multus_performance",
@@ -869,10 +1009,13 @@ async def analyze_multus_performance(request: AnalysisRequest) -> Dict[str, Any]
         if not metrics_data:
             # Use pod collector with Multus-specific patterns
             collector = PodsUsageCollector(prometheus_client)
-            metrics_data = await collector.collect_duration_usage(
-                request.duration,
-                pod_pattern="multus.*|network-metrics.*",
-                namespace_pattern="openshift-multus"
+            metrics_data = await asyncio.wait_for(
+                collector.collect_duration_usage(
+                    request.duration,
+                    pod_pattern="multus.*|network-metrics.*",
+                    namespace_pattern="openshift-multus"
+                ),
+                timeout=60.0
             )
         
         # Perform analysis
@@ -903,8 +1046,12 @@ async def analyze_multus_performance(request: AnalysisRequest) -> Dict[str, Any]
             }
         }
     
+    except asyncio.TimeoutError:
+        return {"error": "Timeout during Multus performance analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error analyzing Multus performance: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="analyze_unified_performance",
@@ -953,39 +1100,53 @@ async def analyze_unified_performance(request: AnalysisRequest) -> Dict[str, Any
         components_data = request.metrics_data or {}
         
         if not components_data:
-            print("Collecting metrics for all components...")
+            logger.info("Collecting metrics for all components...")
             
             # Collect pods metrics
             try:
-                components_data["pods"] = await collect_ovn_duration_usage(
-                    prometheus_client, duration=request.duration
+                components_data["pods"] = await asyncio.wait_for(
+                    collect_ovn_duration_usage(prometheus_client, duration=request.duration),
+                    timeout=60.0
                 )
             except Exception as e:
+                logger.error(f"Failed to collect pods metrics: {e}")
                 components_data["pods"] = {"error": str(e)}
             
             # Collect OVS metrics
             try:
                 ovs_collector = OVSUsageCollector(prometheus_client, auth_manager)
-                components_data["ovs"] = await ovs_collector.collect_all_ovs_metrics(request.duration)
+                components_data["ovs"] = await asyncio.wait_for(
+                    ovs_collector.collect_all_ovs_metrics(request.duration),
+                    timeout=60.0
+                )
             except Exception as e:
+                logger.error(f"Failed to collect OVS metrics: {e}")
                 components_data["ovs"] = {"error": str(e)}
             
             # Collect sync duration metrics
             try:
                 sync_collector = OVNSyncDurationCollector(prometheus_client)
-                components_data["sync_duration"] = await sync_collector.collect_sync_duration_seconds_metrics(request.duration)
+                components_data["sync_duration"] = await asyncio.wait_for(
+                    sync_collector.collect_sync_duration_seconds_metrics(request.duration),
+                    timeout=60.0
+                )
             except Exception as e:
+                logger.error(f"Failed to collect sync duration metrics: {e}")
                 components_data["sync_duration"] = {"error": str(e)}
             
             # Collect Multus metrics
             try:
                 multus_collector = PodsUsageCollector(prometheus_client)
-                components_data["multus"] = await multus_collector.collect_duration_usage(
-                    request.duration,
-                    pod_pattern="multus.*|network-metrics.*",
-                    namespace_pattern="openshift-multus"
+                components_data["multus"] = await asyncio.wait_for(
+                    multus_collector.collect_duration_usage(
+                        request.duration,
+                        pod_pattern="multus.*|network-metrics.*",
+                        namespace_pattern="openshift-multus"
+                    ),
+                    timeout=60.0
                 )
             except Exception as e:
+                logger.error(f"Failed to collect Multus metrics: {e}")
                 components_data["multus"] = {"error": str(e)}
         
         # Perform unified analysis
@@ -1007,6 +1168,7 @@ async def analyze_unified_performance(request: AnalysisRequest) -> Dict[str, Any
                     "cross_component_insights": unified_analyzer._generate_cross_component_insights(analysis_results)
                 }
             except Exception as e:
+                logger.error(f"Failed to save reports: {e}")
                 return {
                     "analysis_results": analysis_results,
                     "report_save_error": str(e),
@@ -1019,8 +1181,12 @@ async def analyze_unified_performance(request: AnalysisRequest) -> Dict[str, Any
             "cross_component_insights": unified_analyzer._generate_cross_component_insights(analysis_results)
         }
     
+    except asyncio.TimeoutError:
+        return {"error": "Timeout during unified performance analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error in unified performance analysis: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="get_performance_health_check",
@@ -1072,16 +1238,22 @@ async def get_performance_health_check(request: PODsRequest) -> Dict[str, Any]:
         
         # Collect minimal data for quick assessment
         try:
-            components_data["pods"] = await collect_ovn_duration_usage(
-                prometheus_client, duration=health_duration
+            components_data["pods"] = await asyncio.wait_for(
+                collect_ovn_duration_usage(prometheus_client, duration=health_duration),
+                timeout=30.0
             )
         except Exception as e:
+            logger.error(f"Failed to collect pods data for health check: {e}")
             components_data["pods"] = {"error": str(e)}
         
         try:
             ovs_collector = OVSUsageCollector(prometheus_client, auth_manager)
-            components_data["ovs"] = await ovs_collector.collect_all_ovs_metrics(health_duration)
+            components_data["ovs"] = await asyncio.wait_for(
+                ovs_collector.collect_all_ovs_metrics(health_duration),
+                timeout=30.0
+            )
         except Exception as e:
+            logger.error(f"Failed to collect OVS data for health check: {e}")
             components_data["ovs"] = {"error": str(e)}
         
         # Quick analysis
@@ -1120,8 +1292,12 @@ async def get_performance_health_check(request: PODsRequest) -> Dict[str, Any]:
             "health_check_duration": health_duration
         }
     
+    except asyncio.TimeoutError:
+        return {"error": "Timeout during health check", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error during health check: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="store_performance_data",
@@ -1149,16 +1325,27 @@ async def store_performance_data(request: PerformanceDataRequest) -> Dict[str, A
     try:
         if not storage:
             await initialize_components()
+        
         elt = PerformanceELT(storage.db_path)
         timestamp = request.timestamp or datetime.now(timezone.utc).isoformat()
-        await elt.store_performance_data(request.metrics_data, timestamp)
+        
+        # Add timeout for storage operations
+        await asyncio.wait_for(
+            elt.store_performance_data(request.metrics_data, timestamp),
+            timeout=30.0
+        )
+        
         return {
             "status": "success", 
             "message": "Performance data stored successfully",
             "timestamp": timestamp
         }
+    except asyncio.TimeoutError:
+        return {"error": "Timeout storing performance data", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error storing performance data: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.tool(
     name="get_performance_history", 
@@ -1188,24 +1375,95 @@ async def get_performance_history(days: int = 7, metric_type: Optional[str] = No
     try:
         if not storage:
             await initialize_components()
+        
         elt = PerformanceELT(storage.db_path)
-        result = await elt.get_performance_history(days, metric_type)
+        
+        # Add timeout for database operations
+        result = await asyncio.wait_for(
+            elt.get_performance_history(days, metric_type),
+            timeout=30.0
+        )
         return result
+    except asyncio.TimeoutError:
+        return {"error": "Timeout retrieving performance history", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
+        logger.error(f"Error retrieving performance history: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
 
+
+async def shutdown_handler():
+    """Handle graceful shutdown"""
+    logger.info("Shutdown handler called")
+    await cleanup_resources()
+    logger.info("Shutdown complete")
+
+
 async def main():
-    """Main entry point"""
+    """Main entry point with improved error handling and graceful shutdown"""
     try:
+        # Initialize components
         await initialize_components()
-        await app.run_async(
-            transport="streamable-http",
-            host="0.0.0.0",
-            port=8000
+        logger.info("MCP server starting...")
+        
+        # Create tasks for server and shutdown handler
+        server_task = asyncio.create_task(
+            app.run_async(
+                transport="streamable-http",
+                host="0.0.0.0",
+                port=8000
+            )
         )
+        
+        shutdown_task = asyncio.create_task(shutdown_event.wait())
+        
+        # Wait for either server completion or shutdown signal
+        done, pending = await asyncio.wait(
+            [server_task, shutdown_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        
+        # Cancel pending tasks
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        
+        # If shutdown was triggered, clean up
+        if shutdown_task in done:
+            logger.info("Shutdown signal received, cleaning up...")
+            server_task.cancel()
+            try:
+                await server_task
+            except asyncio.CancelledError:
+                pass
+            await shutdown_handler()
+        
+        # If server task completed (likely due to error), check for exceptions
+        if server_task in done:
+            try:
+                await server_task
+            except Exception as e:
+                logger.error(f"Server task failed: {e}")
+                raise
+    
+    except KeyboardInterrupt:
+        logger.info("Received KeyboardInterrupt, shutting down...")
+        await shutdown_handler()
     except Exception as e:
-        print(f"Error starting server: {e}")
+        logger.error(f"Error starting server: {e}")
+        await shutdown_handler()
         raise
+    finally:
+        logger.info("Main function exiting")
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nGracefully shutting down...")
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)
