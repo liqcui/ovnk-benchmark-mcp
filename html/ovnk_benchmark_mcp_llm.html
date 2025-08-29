@@ -894,7 +894,7 @@
                     console.log('Overall status:', overallStatus);
 
                     if (overallStatus === 'healthy') {
-                        this.updateClusterStatus('connected', `Cluster ${overallStatus.toUpperCase()}`);
+                        this.updateClusterStatus('connected', `Cluster ${overallStatus.charAt(0).toUpperCase()}${overallStatus.slice(1).toLowerCase()}`);
                     } else if (overallStatus === 'unknown') {
                         this.updateClusterStatus('checking', 'Cluster Status Unknown');
                     } else {

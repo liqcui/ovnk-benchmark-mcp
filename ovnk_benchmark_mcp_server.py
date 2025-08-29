@@ -295,7 +295,7 @@ async def get_mcp_health_status(request: HealthCheckRequest) -> Dict[str, Any]:
                 prometheus_client.test_connection(),
                 timeout=10.0
             )
-            logger.info(f"Prometheus connectivity: {prometheus_ok}")
+          
         except asyncio.TimeoutError:
             prometheus_error = "Connection timeout after 10 seconds"
             prometheus_ok = False
