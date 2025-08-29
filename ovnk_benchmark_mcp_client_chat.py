@@ -171,7 +171,7 @@ class MCPClient:
                         logger.info(f"Calling tool {tool_name} with params {params}")
 
                         request_data = {
-                            "arguments": params or {}
+                            "request": params or {}
                         }
     
                         result = await session.call_tool(tool_name, request_data)
