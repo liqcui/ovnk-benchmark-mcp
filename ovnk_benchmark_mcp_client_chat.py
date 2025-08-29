@@ -289,7 +289,6 @@ class MCPClient:
                 "last_check": datetime.now(timezone.utc).isoformat()
             }
 
-
     async def check_cluster_connectivity_health(self) -> Dict[str, Any]:
         """Check cluster health via MCP tools"""
         try:
@@ -330,9 +329,6 @@ class MCPClient:
             
             # Analyze the health result
             if health_result and tool_used:
-                print("--"*35)
-                print(f"health_result from {tool_used}:", health_result)
-                
                 # Extract health information based on tool type
                 overall_health = "unknown"
                 if tool_used == "get_mcp_health_status":
@@ -689,8 +685,6 @@ async def mcp_health_check():
 async def cluster_health_check():
     """Cluster health check endpoint"""
     health_data = await mcp_client.check_cluster_connectivity_health()
-    print("#*"*35)
-    print(health_data)
     return HealthResponse(
         status=health_data["status"],
         timestamp=health_data["last_check"],
