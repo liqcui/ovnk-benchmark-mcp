@@ -6,7 +6,7 @@ Handles authentication and service discovery for OpenShift/Kubernetes clusters
 import os
 import base64
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 import aiohttp
@@ -23,6 +23,7 @@ class OpenShiftAuth:
         self.prometheus_url: Optional[str] = None
         self.prometheus_token: Optional[str] = None
         self.cluster_info: Dict[str, Any] = {}
+        self.prometheus_alt_urls: List[str] = []
         
     async def initialize(self) -> None:
         """Initialize authentication and discover services"""
@@ -114,6 +115,7 @@ class OpenShiftAuth:
             
             prometheus_service = None
             prometheus_namespace = None
+            self.prometheus_alt_urls = []
             
             for namespace in prometheus_namespaces:
                 try:
@@ -122,6 +124,22 @@ class OpenShiftAuth:
                         if 'prometheus' in service.metadata.name.lower():
                             prometheus_service = service
                             prometheus_namespace = namespace
+                            # Collect candidate in-cluster URLs (prefer non-OAuth services)
+                            try:
+                                svc_name = service.metadata.name
+                                # Derive ports
+                                ports = [p.port for p in (service.spec.ports or [])]
+                                # Heuristic: prefer 9090 (Prometheus web) if present
+                                candidate_ports = []
+                                if 9090 in ports:
+                                    candidate_ports.append(9090)
+                                candidate_ports.extend([p for p in ports if p not in candidate_ports])
+                                for port in candidate_ports:
+                                    url = f"http://{svc_name}.{namespace}.svc.cluster.local:{port}"
+                                    if url not in self.prometheus_alt_urls:
+                                        self.prometheus_alt_urls.append(url)
+                            except Exception:
+                                pass
                             break
                     if prometheus_service:
                         break
@@ -137,6 +155,20 @@ class OpenShiftAuth:
                             if 'thanos-querier' in service.metadata.name.lower():
                                 prometheus_service = service
                                 prometheus_namespace = namespace
+                                # Collect candidate in-cluster URLs
+                                try:
+                                    svc_name = service.metadata.name
+                                    ports = [p.port for p in (service.spec.ports or [])]
+                                    candidate_ports = []
+                                    if 9090 in ports:
+                                        candidate_ports.append(9090)
+                                    candidate_ports.extend([p for p in ports if p not in candidate_ports])
+                                    for port in candidate_ports:
+                                        url = f"http://{svc_name}.{namespace}.svc.cluster.local:{port}"
+                                        if url not in self.prometheus_alt_urls:
+                                            self.prometheus_alt_urls.append(url)
+                                except Exception:
+                                    pass
                                 break
                         if prometheus_service:
                             break
@@ -154,10 +186,16 @@ class OpenShiftAuth:
                 
                 # Try to get route (OpenShift) or construct service URL
                 if self.cluster_info.get('is_openshift', False):
-                    self.prometheus_url = await self._get_openshift_route_url(
+                    route_url = await self._get_openshift_route_url(
                         prometheus_service.metadata.name,
                         prometheus_namespace
                     )
+                    # Decide whether to prefer internal service over Route
+                    prefer_internal = os.getenv('OVNK_PREFER_INTERNAL_PROMETHEUS', 'true').lower() in ['1', 'true', 'yes']
+                    if prefer_internal and self.prometheus_alt_urls:
+                        self.prometheus_url = self.prometheus_alt_urls[0]
+                    else:
+                        self.prometheus_url = route_url
                 
                 if not self.prometheus_url:
                     # Fallback to service URL
@@ -444,6 +482,32 @@ class OpenShiftAuth:
                             logging.getLogger(__name__).warning("Prometheus test: failed to parse JSON, returning False")
                             return False
                         return data.get('status') == 'success'
+                    # Handle 403 by trying alternate internal endpoints if any
+                    if response.status == 403 and self.prometheus_alt_urls:
+                        logging.getLogger(__name__).warning(
+                            f"Prometheus route access forbidden (403). Trying internal endpoints: {self.prometheus_alt_urls}"
+                        )
+                        for alt in self.prometheus_alt_urls:
+                            try:
+                                async with session.get(
+                                    f"{alt}/api/v1/query",
+                                    params={'query': 'up'},
+                                    headers=headers,
+                                    timeout=aiohttp.ClientTimeout(total=10)
+                                ) as alt_resp:
+                                    if alt_resp.status == 200:
+                                        alt_text = await alt_resp.text()
+                                        try:
+                                            alt_data = json.loads(alt_text)
+                                            if alt_data.get('status') == 'success':
+                                                self.prometheus_url = alt
+                                                logging.getLogger(__name__).info(f"Switched Prometheus URL to internal endpoint: {alt}")
+                                                return True
+                                        except Exception:
+                                            continue
+                            except Exception:
+                                continue
+                        return False
                     return False
                     
         except Exception as e:

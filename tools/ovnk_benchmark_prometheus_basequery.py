@@ -92,6 +92,10 @@ class PrometheusBaseQuery:
             logger.debug(f"query_instant GET {url} params={params}")
             async with self.session.get(url, params=params) as response:
                 logger.debug(f"query_instant response status={response.status}")
+                if response.status == 403:
+                    text = await response.text()
+                    logger.warning(f"query_instant 403 Forbidden. Body_snippet={text[:500]}")
+                    raise PrometheusQueryError(f"Forbidden (403) from Prometheus. Ensure proper token/rolebinding. Body: {text}")
                 if response.status != 200:
                     error_text = await response.text()
                     logger.debug(f"query_instant non-200 body_snippet={error_text[:500]}")
@@ -141,6 +145,10 @@ class PrometheusBaseQuery:
             logger.debug(f"query_range GET {url} params={params}")
             async with self.session.get(url, params=params) as response:
                 logger.debug(f"query_range response status={response.status}")
+                if response.status == 403:
+                    text = await response.text()
+                    logger.warning(f"query_range 403 Forbidden. Body_snippet={text[:500]}")
+                    raise PrometheusQueryError(f"Forbidden (403) from Prometheus. Ensure proper token/rolebinding. Body: {text}")
                 if response.status != 200:
                     error_text = await response.text()
                     logger.debug(f"query_range non-200 body_snippet={error_text[:500]}")
