@@ -245,6 +245,10 @@ ocp-benchmark-mcp/
 | `REPORT_PERIOD_DAYS` | Report period in days | `7` |
 | `DATABASE_PATH` | DuckDB database path | `storage/ovnk_benchmark.db` |
 | `REPORT_OUTPUT_DIR` | Report output directory | `exports` |
+export OVNK_PROMETHEUS_USE_ROUTE=true          # Use OpenShift routes (default)
+export OVNK_PROMETHEUS_NAMESPACE=openshift-monitoring
+export OVNK_PROMETHEUS_SA=prometheus-k8s
+export KUBECONFIG=/path/to/kubeconfig
 
 ### Metrics Configuration
 
