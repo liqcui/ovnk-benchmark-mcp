@@ -176,6 +176,7 @@ class MCPClient:
                     logger.info(f"Calling tool via {primary_url} (attempt {attempt})")
                     return await _open_and_call(primary_url)
                 except Exception as e:
+                    traceback.print_exc()
                     last_error = e
                     logger.warning(f"call_tool attempt {attempt} failed for {primary_url}: {repr(e)}")
                     await asyncio.sleep(0.2 * attempt)

@@ -38,6 +38,7 @@ except ImportError:
 # Configure timezone
 os.environ['TZ'] = 'UTC'
 
+
 class MetricsRequest(BaseModel):
     """Request model for basic metrics queries"""
     duration: str = Field(
@@ -137,6 +138,11 @@ class AnalysisRequest(BaseModel):
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
+
+class HealthCheckRequest(BaseModel):
+    """Empty request model for health check"""
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+    
 # Initialize FastMCP app
 app = FastMCP("ocp-benchmark-mcp")
 
@@ -146,6 +152,7 @@ config: Optional[Config] = None
 prometheus_client: Optional[PrometheusBaseQuery] = None
 storage: Optional[PrometheusStorage] = None
 unified_analyzer: Optional[UnifiedPerformanceAnalyzer] = None
+
 
 async def initialize_components():
     """Initialize global components"""
@@ -170,7 +177,7 @@ async def initialize_components():
     name="get_mcp_health_status",
     description="""Health check for the MCP server. Verifies MCP server is running, Prometheus connectivity, and Kubernetes API connectivity. Returns component statuses and timestamps."""
 )
-async def get_mcp_health_status() -> Dict[str, Any]:
+async def get_mcp_health_status(request: HealthCheckRequest) -> Dict[str, Any]:
     """Return health status for MCP server, Prometheus, and KubeAPI"""
     global auth_manager, prometheus_client
     try:
