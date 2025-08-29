@@ -139,7 +139,7 @@ class MCPClient:
             traceback.print_exc()
             logger.error(f"Failed to connect to MCP server: {e}")
             return False
-    
+
     def _create_langchain_tools(self):
         """Create LangChain tool wrappers for MCP tools"""
         self.langchain_tools = []
@@ -175,8 +175,34 @@ class MCPClient:
                         }
     
                         result = await session.call_tool(tool_name, request_data)
-                        json_data = json.loads(result.content[0].text)
-                        return json_data
+                        
+                        # Enhanced error handling for JSON parsing
+                        if not result.content:
+                            logger.warning(f"Tool {tool_name} returned empty content")
+                            return {"error": "Empty response from tool", "tool": tool_name}
+                        
+                        if len(result.content) == 0:
+                            logger.warning(f"Tool {tool_name} returned no content items")
+                            return {"error": "No content items in response", "tool": tool_name}
+                        
+                        content_text = result.content[0].text
+                        if not content_text or content_text.strip() == "":
+                            logger.warning(f"Tool {tool_name} returned empty text content")
+                            return {"error": "Empty text content from tool", "tool": tool_name}
+                        
+                        try:
+                            json_data = json.loads(content_text)
+                            return json_data
+                        except json.JSONDecodeError as json_err:
+                            logger.error(f"Failed to parse JSON from tool {tool_name}. Content: '{content_text[:200]}...'")
+                            logger.error(f"JSON decode error: {json_err}")
+                            # Return the raw text if it's not JSON
+                            return {
+                                "error": f"Invalid JSON response from tool: {str(json_err)}",
+                                "tool": tool_name,
+                                "raw_content": content_text[:500],  # Limit to first 500 chars for debugging
+                                "content_type": "text"
+                            }
 
             last_error = None
             for attempt in range(1, 3):
@@ -193,9 +219,54 @@ class MCPClient:
                     
         except Exception as e:
             logger.error(f"Error calling tool {tool_name}: {e}")
-            raise
-    
-    async def check_health(self) -> Dict[str, Any]:
+            # Return a structured error response instead of raising
+            return {
+                "error": str(e),
+                "tool": tool_name,
+                "error_type": type(e).__name__
+            }
+
+    async def check_mcp_connectivity_health(self):
+        """Connect to MCP server and initialize tools"""
+        try:
+            url = f"{self.mcp_server_url}/mcp"
+
+            # Connect to the server using Streamable HTTP
+            async with streamablehttp_client(
+                url
+                # headers={"accept": "application/json"}
+                ) as (
+                    read_stream,
+                    write_stream,
+                    get_session_id,
+            ):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize the connection
+                    await session.initialize()
+ 
+                    # Get session id once connection established
+                    session_id = get_session_id()
+                    print("Session ID: in call_tool", session_id)
+                    if session_id:
+                       return {
+                        "status": "healthy",
+                        "mcp_connection": "ok",
+                        "last_check": datetime.now(timezone.utc).isoformat()
+                      }
+                    else:
+                       return {
+                        "status": "unhealthy",
+                        "mcp_connection": "disconnected",
+                        "last_check": datetime.now(timezone.utc).isoformat()
+                      }
+                    
+        except Exception as e:
+            traceback.print_exc()
+            logger.error(f"Failed to connect to MCP server: {e}")
+            return False
+
+
+    async def check_cluster_connectivity_health(self) -> Dict[str, Any]:
         """Check MCP server health"""
         try:
             # Test basic connectivity
@@ -206,17 +277,26 @@ class MCPClient:
                 health_result = await self.call_tool("get_mcp_health_status", {})
                 print("--"*35)
                 print("health_result is ", health_result)
+                
+                # Check if the result contains an error
+                if isinstance(health_result, dict) and "error" in health_result:
+                    return {
+                        "status": "partial",
+                        "prometheus_connection": "error",
+                        "tools_available": len(self.available_tools),
+                        "tool_error": health_result.get("error", "Unknown tool error"),
+                        "last_check": datetime.now(timezone.utc).isoformat()
+                    }
+                
                 return {
                     "status": "healthy",
-                    "mcp_connection": "ok",
-                    "prometheus_connection": "ok" if not health_result.get("error") else "error",
+                    "prometheus_connection": "ok",
                     "tools_available": len(self.available_tools),
                     "last_check": datetime.now(timezone.utc).isoformat()
                 }
             except Exception as tool_error:
                 return {
                     "status": "partial",
-                    "mcp_connection": "ok",
                     "prometheus_connection": "error",
                     "tools_available": len(self.available_tools),
                     "tool_error": str(tool_error),
@@ -226,7 +306,6 @@ class MCPClient:
         except Exception as e:
             return {
                 "status": "unhealthy",
-                "mcp_connection": "error",
                 "prometheus_connection": "unknown",
                 "error": str(e),
                 "last_check": datetime.now(timezone.utc).isoformat()
@@ -399,7 +478,7 @@ class ChatBot:
     def _format_json_response(self, data: Dict[str, Any]) -> str:
         """Format JSON response as readable text"""
         if "error" in data:
-            return f"❌ Error: {data['error']}"
+            return f"⚠️ Error: {data['error']}"
         
         # Format different types of responses
         if "health_check_timestamp" in data:
@@ -532,10 +611,23 @@ async def serve_ui_html():
         return FileResponse(HTML_FILE_PATH, media_type="text/html")
     raise HTTPException(status_code=404, detail="ovnk_benchmark_mcp_llm.html not found")
 
-@app.get("/api/health", response_model=HealthResponse)
+@app.get("/api/mcp/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
-    health_data = await mcp_client.check_health()
+    health_data = await mcp_client.check_mcp_connectivity_health()
+  
+    print("#*"*35)
+    print(health_data)
+    return HealthResponse(
+        status=health_data["status"],
+        timestamp=health_data["last_check"],
+        details=health_data
+    )
+
+@app.get("/api/cluster/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint"""
+    health_data = await mcp_client.check_cluster_connectivity_health()
     print("#*"*35)
     print(health_data)
     return HealthResponse(

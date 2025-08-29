@@ -820,7 +820,7 @@
                 this.loadingOverlay.style.display = 'flex';
 
                 try {
-                    const response = await fetch('/api/health');
+                    const response = await fetch('/api/mcp/health');
                     const health = await response.json();
 
                     if (health.status === 'healthy') {
@@ -844,7 +844,7 @@
 
             async checkClusterHealth() {
                 try {
-                    const clusterResponse = await fetch('/api/tools/get_performance_health_check', {
+                    const clusterResponse = await fetch('/api/cluster/health', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({})
