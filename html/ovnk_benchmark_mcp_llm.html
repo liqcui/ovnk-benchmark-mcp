@@ -517,32 +517,32 @@
             <div class="quick-actions">
                 <h3>Quick Actions</h3>
                 <button class="action-button" onclick="sendQuickMessage('Perform a comprehensive health check')">
-                    🔍 Health Check
+                    Health Check
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('What is the current cluster status?')">
-                    🏛️ Cluster Overview
+                    Cluster Overview
                 </button>
                 <button class="action-button"
                     onclick="sendQuickMessage('Show me node information with resource utilization')">
-                    🖥️ Cluster Node Usage
+                    Cluster Node Usage
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Check API server performance metrics')">
-                    ⚡ API Performance
+                    API Performance
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
-                    📀 OVN-K Deep Dive
+                    OVN-K Deep Dive
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Analyze OVS performance metrics')">
-                    🌐 OVS Analysis
+                    OVS Analysis
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Check Multus CNI performance')">
-                    🎯 Multus Analysis
+                    Multus Analysis
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Analyze sync duration performance')">
-                    ⏱️ Sync Duration
+                    Sync Duration
                 </button>
                 <button class="action-button" onclick="sendQuickMessage('Run unified performance analysis')">
-                    📈 Full Performance Report
+                    Full Performance Report
                 </button>
             </div>
 
@@ -821,6 +821,18 @@
 
                 try {
                     const response = await fetch('/api/mcp/health');
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    // Check content type before parsing
+                    const contentType = response.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        const text = await response.text();
+                        throw new Error(`Expected JSON response but got ${contentType}. Response: ${text.substring(0, 200)}`);
+                    }
+
                     const health = await response.json();
 
                     if (health.status === 'healthy') {
@@ -834,7 +846,8 @@
                     this.isConnected = health.status === 'healthy';
 
                 } catch (error) {
-                    this.updateMCPStatus('disconnected', 'Connection Failed');
+                    console.error('MCP health check failed:', error);
+                    this.updateMCPStatus('disconnected', `Connection Failed: ${error.message}`);
                     this.updateClusterStatus('disconnected', 'Cluster Unknown');
                     this.isConnected = false;
                 } finally {
@@ -844,19 +857,43 @@
 
             async checkClusterHealth() {
                 try {
-                    const clusterResponse = await fetch('/api/cluster/health')
-                    const clusterHealth = await clusterResponse.json();
+                    const clusterResponse = await fetch('/api/cluster/health');
 
-                    const overallStatus = clusterHealth.overall_cluster_health || 'unknown';
-                    if (overallStatus === 'EXCELLENT' || overallStatus === 'excellent' || overallStatus === 'GOOD' || overallStatus === 'good') {
+                    if (!clusterResponse.ok) {
+                        throw new Error(`HTTP ${clusterResponse.status}: ${clusterResponse.statusText}`);
+                    }
+
+                    // Check content type before parsing
+                    const contentType = clusterResponse.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        const text = await clusterResponse.text();
+                        throw new Error(`Expected JSON response but got ${contentType}. Response: ${text.substring(0, 200)}`);
+                    }
+
+                    const clusterHealth = await clusterResponse.json();
+                    console.log('Cluster health response:', clusterHealth);
+
+                    // Look for cluster health in the details object
+                    const healthDetails = clusterHealth.details || {};
+                    const overallStatus = healthDetails.overall_cluster_health ||
+                        healthDetails.health_details?.overall_cluster_health ||
+                        'unknown';
+
+                    console.log('Overall status:', overallStatus);
+
+                    if (overallStatus === 'EXCELLENT' || overallStatus === 'excellent' ||
+                        overallStatus === 'GOOD' || overallStatus === 'good') {
                         this.updateClusterStatus('connected', `Cluster ${overallStatus.toUpperCase()}`);
                     } else if (overallStatus === 'MODERATE' || overallStatus === 'moderate') {
                         this.updateClusterStatus('checking', 'Cluster MODERATE');
+                    } else if (overallStatus === 'unknown') {
+                        this.updateClusterStatus('checking', 'Cluster Status Unknown');
                     } else {
                         this.updateClusterStatus('disconnected', 'Cluster Issues Detected');
                     }
                 } catch (e) {
-                    this.updateClusterStatus('disconnected', 'Cluster Unreachable');
+                    console.error('Cluster health check failed:', e);
+                    this.updateClusterStatus('disconnected', `Cluster Error: ${e.message}`);
                 }
             }
 

@@ -263,7 +263,12 @@ class MCPClient:
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Failed to connect to MCP server: {e}")
-            return False
+            return {
+                "status": "unhealthy",
+                "mcp_connection": "disconnected", 
+                "error": str(e),
+                "last_check": datetime.now(timezone.utc).isoformat()
+            }
 
 
     async def check_cluster_connectivity_health(self) -> Dict[str, Any]:
@@ -288,11 +293,16 @@ class MCPClient:
                         "last_check": datetime.now(timezone.utc).isoformat()
                     }
                 
+                # Extract cluster health information from the health result
+                overall_health = health_result.get("overall_cluster_health", "unknown")
+                
                 return {
                     "status": "healthy",
                     "prometheus_connection": "ok",
                     "tools_available": len(self.available_tools),
-                    "last_check": datetime.now(timezone.utc).isoformat()
+                    "overall_cluster_health": overall_health,
+                    "last_check": datetime.now(timezone.utc).isoformat(),
+                    "health_details": health_result
                 }
             except Exception as tool_error:
                 return {
@@ -612,8 +622,8 @@ async def serve_ui_html():
     raise HTTPException(status_code=404, detail="ovnk_benchmark_mcp_llm.html not found")
 
 @app.get("/api/mcp/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint"""
+async def mcp_health_check():
+    """MCP connectivity health check endpoint"""
     health_data = await mcp_client.check_mcp_connectivity_health()
     return HealthResponse(
         status=health_data["status"],
@@ -622,8 +632,8 @@ async def health_check():
     )
 
 @app.get("/api/cluster/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint"""
+async def cluster_health_check():
+    """Cluster health check endpoint"""
     health_data = await mcp_client.check_cluster_connectivity_health()
     print("#*"*35)
     print(health_data)
