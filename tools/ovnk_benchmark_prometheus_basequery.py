@@ -263,6 +263,7 @@ class PrometheusBaseQuery:
         """
         try:
             result = await self.query_instant('up')
+            print(f"Prometheus test_connection result: {result}")
             logger.info(f"Prometheus test_connection result: {result}")
             return isinstance(result, dict) and 'result' in result
         except Exception:
