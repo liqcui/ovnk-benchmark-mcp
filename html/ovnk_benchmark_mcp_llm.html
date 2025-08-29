@@ -845,9 +845,9 @@
             async checkClusterHealth() {
                 try {
                     const clusterResponse = await fetch('/api/cluster/health', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({})
+                        method: 'GET',
+                        // headers: { 'Content-Type': 'application/json' },
+                        // body: JSON.stringify({})
                     });
                     const clusterHealth = await clusterResponse.json();
 
