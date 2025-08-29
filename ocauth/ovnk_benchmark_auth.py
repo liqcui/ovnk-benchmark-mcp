@@ -278,7 +278,9 @@ class OpenShiftAuth:
             if self.prometheus_token:
                 headers['Authorization'] = f'Bearer {self.prometheus_token}'
             
-            async with aiohttp.ClientSession() as session:
+            # Disable SSL verification to allow self-signed certificate chains
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get(
                     f"{self.prometheus_url}/api/v1/query",
                     params={'query': 'up'},

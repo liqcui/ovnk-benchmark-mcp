@@ -43,10 +43,11 @@ class PrometheusBaseQuery:
             if self.token:
                 headers['Authorization'] = f'Bearer {self.token}'
             
+            # Disable SSL verification to support self-signed certs on Prometheus endpoints
             self.session = aiohttp.ClientSession(
                 headers=headers,
                 timeout=self.timeout,
-                connector=aiohttp.TCPConnector(verify_ssl=False)
+                connector=aiohttp.TCPConnector(ssl=False)
             )
     
     async def close(self) -> None:
