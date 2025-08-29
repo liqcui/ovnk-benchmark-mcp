@@ -190,19 +190,38 @@ class MCPClient:
                             logger.warning(f"Tool {tool_name} returned empty text content")
                             return {"error": "Empty text content from tool", "tool": tool_name}
                         
+                        # Handle different response formats
+                        content_text = content_text.strip()
+                        
+                        # If content is empty after stripping
+                        if not content_text:
+                            return {"error": "Empty response after trimming whitespace", "tool": tool_name}
+                        
+                        # Try to parse as JSON first
                         try:
                             json_data = json.loads(content_text)
                             return json_data
                         except json.JSONDecodeError as json_err:
                             logger.error(f"Failed to parse JSON from tool {tool_name}. Content: '{content_text[:200]}...'")
                             logger.error(f"JSON decode error: {json_err}")
-                            # Return the raw text if it's not JSON
-                            return {
-                                "error": f"Invalid JSON response from tool: {str(json_err)}",
-                                "tool": tool_name,
-                                "raw_content": content_text[:500],  # Limit to first 500 chars for debugging
-                                "content_type": "text"
-                            }
+                            
+                            # Check if it's a simple string response that should be JSON
+                            if content_text.startswith('{') or content_text.startswith('['):
+                                # Looks like malformed JSON
+                                return {
+                                    "error": f"Malformed JSON response: {str(json_err)}",
+                                    "tool": tool_name,
+                                    "raw_content": content_text[:500],
+                                    "content_type": "malformed_json"
+                                }
+                            else:
+                                # Return as plain text response
+                                return {
+                                    "result": content_text,
+                                    "tool": tool_name,
+                                    "content_type": "text",
+                                    "message": "Tool returned plain text instead of JSON"
+                                }
 
             last_error = None
             for attempt in range(1, 3):
@@ -272,52 +291,87 @@ class MCPClient:
 
 
     async def check_cluster_connectivity_health(self) -> Dict[str, Any]:
-        """Check MCP server health"""
+        """Check cluster health via MCP tools"""
         try:
-            # Test basic connectivity
+            # Test basic connectivity first
             await self.connect()
             
-            # Try a simple tool call to verify functionality
-            try:
-                health_result = await self.call_tool("get_mcp_health_status", {})
+            # Try different health check tools in order of preference
+            health_tools = [
+                "get_mcp_health_status",
+                "get_cluster_info", 
+                "get_node_info",
+                "get_api_server_metrics"
+            ]
+            
+            health_result = None
+            tool_used = None
+            
+            for tool_name in health_tools:
+                # Check if tool exists in available tools
+                if any(tool["name"] == tool_name for tool in self.available_tools):
+                    try:
+                        logger.info(f"Trying health check with tool: {tool_name}")
+                        health_result = await self.call_tool(tool_name, {})
+                        
+                        # Check if we got a valid result
+                        if (isinstance(health_result, dict) and 
+                            "error" not in health_result and 
+                            health_result):
+                            tool_used = tool_name
+                            break
+                        elif isinstance(health_result, dict) and "error" in health_result:
+                            logger.warning(f"Tool {tool_name} returned error: {health_result.get('error')}")
+                            continue
+                            
+                    except Exception as tool_error:
+                        logger.warning(f"Tool {tool_name} failed: {str(tool_error)}")
+                        continue
+            
+            # Analyze the health result
+            if health_result and tool_used:
                 print("--"*35)
-                print("health_result is ", health_result)
+                print(f"health_result from {tool_used}:", health_result)
                 
-                # Check if the result contains an error
-                if isinstance(health_result, dict) and "error" in health_result:
-                    return {
-                        "status": "partial",
-                        "prometheus_connection": "error",
-                        "tools_available": len(self.available_tools),
-                        "tool_error": health_result.get("error", "Unknown tool error"),
-                        "last_check": datetime.now(timezone.utc).isoformat()
-                    }
-                
-                # Extract cluster health information from the health result
-                overall_health = health_result.get("overall_cluster_health", "unknown")
+                # Extract health information based on tool type
+                overall_health = "unknown"
+                if tool_used == "get_mcp_health_status":
+                    overall_health = health_result.get("overall_cluster_health", "unknown")
+                elif tool_used == "get_cluster_info":
+                    # Infer health from cluster info
+                    if "nodes" in health_result or "cluster_version" in health_result:
+                        overall_health = "good"
+                elif tool_used in ["get_node_info", "get_api_server_metrics"]:
+                    # If we can get node or API metrics, cluster is responsive
+                    overall_health = "moderate"
                 
                 return {
                     "status": "healthy",
                     "prometheus_connection": "ok",
                     "tools_available": len(self.available_tools),
                     "overall_cluster_health": overall_health,
+                    "tool_used": tool_used,
                     "last_check": datetime.now(timezone.utc).isoformat(),
                     "health_details": health_result
                 }
-            except Exception as tool_error:
+            else:
+                # No tools worked, but MCP connection is established
                 return {
                     "status": "partial",
                     "prometheus_connection": "error",
                     "tools_available": len(self.available_tools),
-                    "tool_error": str(tool_error),
+                    "tool_error": "All health check tools failed or returned empty responses",
+                    "overall_cluster_health": "unknown",
                     "last_check": datetime.now(timezone.utc).isoformat()
                 }
                 
         except Exception as e:
+            logger.error(f"Cluster connectivity check failed: {e}")
             return {
                 "status": "unhealthy",
-                "prometheus_connection": "unknown",
+                "prometheus_connection": "unknown", 
                 "error": str(e),
+                "overall_cluster_health": "unknown",
                 "last_check": datetime.now(timezone.utc).isoformat()
             }
 
