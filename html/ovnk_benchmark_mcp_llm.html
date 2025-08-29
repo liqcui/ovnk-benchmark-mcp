@@ -844,11 +844,13 @@
 
             async checkClusterHealth() {
                 try {
-                    const clusterResponse = await fetch('/api/cluster/health', {
-                        method: 'GET',
-                        // headers: { 'Content-Type': 'application/json' },
-                        // body: JSON.stringify({})
-                    });
+                    const clusterResponse = await fetch('/api/cluster/health'
+                        // , {
+                        //     method: 'GET',
+                        //     // headers: { 'Content-Type': 'application/json' },
+                        //     // body: JSON.stringify({})
+                        // }
+                    );
                     const clusterHealth = await clusterResponse.json();
 
                     const overallStatus = clusterHealth.overall_cluster_health || 'unknown';
