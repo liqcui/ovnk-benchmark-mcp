@@ -32,6 +32,14 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from dotenv import load_dotenv
 
+import warnings
+# Suppress urllib3 deprecation warning triggered by kubernetes client using HTTPResponse.getheaders()
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"HTTPResponse\.getheaders\(\) is deprecated"
+)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
