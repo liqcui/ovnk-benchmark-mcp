@@ -11,7 +11,15 @@ from urllib.parse import urlencode
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import json
+import logging
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S UTC'
+)
+logger = logging.getLogger(__name__)
 
 class PrometheusQueryError(Exception):
     """Custom exception for Prometheus query errors"""
@@ -255,6 +263,7 @@ class PrometheusBaseQuery:
         """
         try:
             result = await self.query_instant('up')
+            logger.info(f"Prometheus test_connection result: {result}")
             return isinstance(result, dict) and 'result' in result
         except Exception:
             return False
