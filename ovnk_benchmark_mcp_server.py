@@ -217,6 +217,8 @@ async def initialize_components():
         config = Config()
         auth_manager = OpenShiftAuth(config.kubeconfig_path)
         await auth_manager.initialize()
+        print("#-"*35)
+        print("auth_manager.prometheus_token",auth_manager.prometheus_token)
         
         prometheus_client = PrometheusBaseQuery(
             auth_manager.prometheus_url,

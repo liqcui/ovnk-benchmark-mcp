@@ -3,6 +3,7 @@ Prometheus Base Query Module
 Provides base functionality for querying Prometheus
 """
 
+from traceback import print_stack
 import aiohttp
 import asyncio
 from datetime import datetime, timezone, timedelta
@@ -15,12 +16,8 @@ import logging
 import os
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S UTC'
-)
 logger = logging.getLogger(__name__)
+
 _env_level = os.environ.get("OVNK_PROM_LOG_LEVEL", "INFO").upper()
 try:
     logger.setLevel(getattr(logging, _env_level, logging.INFO))
@@ -275,20 +272,21 @@ class PrometheusBaseQuery:
             end_dt.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         )
     
-    # async def test_connection(self) -> bool:
-    #     """
-    #     Test connection to Prometheus
+    async def test_connection(self) -> bool:
+        """
+        Test connection to Prometheus
         
-    #     Returns:
-    #         True if connection successful, False otherwise
-    #     """
-    #     try:
-    #         result = await self.query_instant('up')
-    #         print(f"Prometheus test_connection result: {result}")
-    #         logger.info(f"Prometheus test_connection result: {result}")
-    #         return isinstance(result, dict) and 'result' in result
-    #     except Exception:
-    #         return False
+        Returns:
+            True if connection successful, False otherwise
+        """
+        try:
+            result = await self.query_instant('up')
+            print(f"Prometheus test_connection result: {result}")
+            logger.info(f"Prometheus test_connection result: {result}")
+            return isinstance(result, dict) and 'result' in result
+        except Exception as e:
+            logger.error(f"Prometheus test_connection error: {e}")
+            return False
 
     async def test_connection(self) -> Any:
         """
