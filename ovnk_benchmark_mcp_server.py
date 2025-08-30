@@ -71,7 +71,7 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 logger.debug(f"Logging configured. Root level={root_level}, OVNK_LOG_LEVEL={_server_log_level}")
 
-from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo
+from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo,collect_cluster_information
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
 from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
@@ -384,10 +384,11 @@ async def get_openshift_general_info(request: GeneralInfoRequest) -> Dict[str, A
         
         # Add timeout to prevent hanging
         cluster_info = await asyncio.wait_for(
-            general_info.collect_cluster_info(),
+            #general_info.collect_cluster_info(),
+            collect_cluster_information(),
             timeout=30.0
         )
-        return general_info.to_dict(cluster_info)
+        return cluster_info
     except asyncio.TimeoutError:
         return {"error": "Timeout collecting cluster information", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
