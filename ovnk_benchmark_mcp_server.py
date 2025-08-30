@@ -2,7 +2,6 @@
 """
 OpenShift OVN-Kubernetes Benchmark MCP Server
 Main server entry point using FastMCP with streamable-http transport
-Updated with comprehensive analysis tools based on unified performance analyzer
 Fixed SSE stream handling and resource management
 """
 
@@ -15,6 +14,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
 import signal
 import sys
+
+# Add these imports to the existing imports section
+from tools.ovnk_benchmark_openshift_cluster_stat import ClusterStatCollector
+from analysis.ovnk_benchmark_analysis_cluster_stat import ClusterStatAnalyzer
 
 import fastmcp
 from fastmcp.server import FastMCP
@@ -78,14 +81,6 @@ from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 from config.ovnk_benchmark_config import Config
 from elt.ovnk_benchmark_elt_duckdb import PerformanceELT
 from storage.ovnk_benchmark_storage_ovnk import PrometheusStorage
-
-# Import analysis modules
-try:
-    from analysis.ovnk_benchmark_performance_unified import UnifiedPerformanceAnalyzer
-    UNIFIED_ANALYZER_AVAILABLE = True
-except ImportError:
-    UNIFIED_ANALYZER_AVAILABLE = False
-    logger.warning("Warning: Unified analyzer not available")
 
 # Configure timezone
 os.environ['TZ'] = 'UTC'
@@ -169,49 +164,39 @@ class PerformanceDataRequest(BaseModel):
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-class AnalysisRequest(BaseModel):
-    """Request model for performance analysis operations"""
-    component: str = Field(
-        description="Component to analyze: 'pods', 'ovs', 'sync_duration', 'multus', or 'all'"
-    )
-    metrics_data: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Metrics data to analyze (if not provided, will be collected automatically)"
-    )
-    duration: str = Field(
-        default="1h",
-        description="Duration for data collection if metrics_data not provided"
-    )
-    save_reports: bool = Field(
-        default=True,
-        description="Whether to save analysis reports to files"
-    )
-    output_dir: str = Field(
-        default=".",
-        description="Directory to save analysis reports"
-    )
-    
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-
-
 class HealthCheckRequest(BaseModel):
     """Empty request model for health check"""
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-    
+
+class ClusterStatusRequest(BaseModel):
+    """Request model for cluster status analysis operations"""
+    include_detailed_analysis: bool = Field(
+        default=True,
+        description="Whether to include detailed component analysis with health scoring and recommendations"
+    )
+
+    output_format: str = Field(
+        default="json",
+        description="Output format for the report: 'json', 'text', or 'both'"
+    )
+  
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
 # Initialize FastMCP app
-app = FastMCP("ocp-benchmark-mcp")
+app = FastMCP("ovnk-benchmark-mcp")
 
 # Global components
 auth_manager: Optional[OpenShiftAuth] = None
 config: Optional[Config] = None
 prometheus_client: Optional[PrometheusBaseQuery] = None
 storage: Optional[PrometheusStorage] = None
-unified_analyzer: Optional[UnifiedPerformanceAnalyzer] = None
+cluster_collector: Optional[ClusterStatCollector] = None
+cluster_analyzer: Optional[ClusterStatAnalyzer] = None
 
 
 async def initialize_components():
     """Initialize global components with proper error handling"""
-    global auth_manager, config, prometheus_client, storage, unified_analyzer
+    global auth_manager, config, prometheus_client, storage, cluster_collector, cluster_analyzer
     
     try:
         config = Config()
@@ -225,18 +210,19 @@ async def initialize_components():
         storage = PrometheusStorage()
         await storage.initialize()
         
-        if UNIFIED_ANALYZER_AVAILABLE:
-            unified_analyzer = UnifiedPerformanceAnalyzer()
+        # Initialize cluster status components
+        cluster_collector = ClusterStatCollector(config.kubeconfig_path)
+        await cluster_collector.initialize()
+        cluster_analyzer = ClusterStatAnalyzer()
             
         logger.info("All components initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize components: {e}")
         raise
 
-
 async def cleanup_resources():
     """Clean up global resources on shutdown"""
-    global auth_manager, storage
+    global auth_manager, storage, cluster_collector
     
     logger.info("Cleaning up resources...")
     
@@ -252,14 +238,18 @@ async def cleanup_resources():
     except Exception as e:
         logger.error(f"Error cleaning up auth manager: {e}")
     
+    try:
+        if cluster_collector:
+            await cluster_collector.cleanup()
+    except Exception as e:
+        logger.error(f"Error cleaning up cluster collector: {e}")
+    
     logger.info("Resource cleanup completed")
-
 
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
     logger.info(f"Received signal {signum}, initiating shutdown...")
     shutdown_event.set()
-
 
 # Setup signal handlers
 signal.signal(signal.SIGINT, signal_handler)
@@ -431,7 +421,202 @@ async def get_cluster_node_usage(request: MetricsRequest) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error querying node usage: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.tool(
+    name="analyze_cluster_status",
+    description="""Perform comprehensive OpenShift cluster status analysis including node health, cluster operator status, and machine config pool (MCP) status with detailed health scoring and actionable recommendations. This tool provides complete cluster health assessment for operational monitoring and troubleshooting.
+
+Parameters:
+- include_detailed_analysis (default: true): Whether to include detailed component analysis with health scoring, issue identification, and recommendations
+- save_report (default: false): Whether to save the analysis report to files for documentation and reporting purposes
+- output_format (default: "json"): Report output format - "json" for structured data, "text" for human-readable summary, or "both" for complete documentation
+- output_dir (default: "."): Directory path where report files will be saved if save_report is enabled
+
+Returns comprehensive cluster analysis including:
+- Overall cluster health score (0-100) with status classification (excellent/good/fair/poor/critical)
+- Node status analysis with ready/not-ready counts, role distribution, and node condition assessment
+- Cluster operator health with availability, degraded, and progressing status for all operators
+- Machine config pool status with update progress, degraded pools, and configuration sync status
+- Critical issues requiring immediate attention with severity classification
+- Warning issues for monitoring and preventive maintenance
+- Prioritized recommendations for cluster optimization and issue resolution
+- Executive summary with key findings and immediate action indicators
+- Component-specific health scores and detailed status breakdowns
+
+Use this tool for:
+- Regular cluster health monitoring and operational dashboards
+- Troubleshooting cluster issues and performance problems  
+- Pre-maintenance cluster health verification
+- Post-deployment validation and health checks
+- Capacity planning and resource optimization analysis
+- Compliance and audit reporting for cluster operations
+- Root cause analysis for cluster performance degradation
+- Executive reporting on infrastructure health status
+
+The tool automatically detects critical infrastructure issues, provides actionable insights for cluster administrators, and generates comprehensive reports suitable for both technical teams and management reporting."""
+)
+async def analyze_cluster_status(request: ClusterStatusRequest) -> Dict[str, Any]:
+    """
+    Perform comprehensive OpenShift cluster status analysis including node health,
+    cluster operator status, and machine config pool status with detailed health scoring
+    and actionable recommendations.
     
+    Provides complete cluster health assessment for operational monitoring and troubleshooting.
+    """
+    global cluster_collector, cluster_analyzer
+    try:
+        if not cluster_collector or not cluster_analyzer:
+            await initialize_components()
+        
+        logger.info("Starting comprehensive cluster status analysis...")
+        
+        # Collect cluster status data with timeout
+        cluster_data = await asyncio.wait_for(
+            cluster_collector.collect_comprehensive_cluster_status(),
+            timeout=60.0
+        )
+        
+        if 'error' in cluster_data:
+            return {
+                'error': f"Failed to collect cluster data: {cluster_data['error']}",
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+        
+        # Perform analysis if requested
+        if request.include_detailed_analysis:
+            analysis_result = cluster_analyzer.analyze_cluster_status(cluster_data)
+            
+            if 'error' in analysis_result:
+                return {
+                    'error': f"Analysis failed: {analysis_result['error']}",
+                    'cluster_data': cluster_data,
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+        else:
+            # Return basic status without detailed analysis
+            analysis_result = {
+                'basic_analysis': True,
+                'cluster_data': cluster_data,
+                'overall_summary': cluster_data.get('overall_summary', {}),
+                'analysis_timestamp': datetime.now(timezone.utc).isoformat()
+            }
+                
+        # Add collection metadata
+        analysis_result['collection_metadata'] = {
+            'collection_timestamp': cluster_data.get('collection_timestamp'),
+            'analysis_duration': request.include_detailed_analysis,
+            'components_analyzed': list(cluster_data.keys()),
+        }
+        
+        logger.info("Cluster status analysis completed successfully")
+        return analysis_result
+        
+    except asyncio.TimeoutError:
+        return {
+            'error': 'Timeout during cluster status collection - cluster may be experiencing issues',
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error in cluster status analysis: {e}")
+        return {
+            'error': str(e),
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+
+
+@app.tool(
+    name="store_performance_data",
+    description="""Store performance metrics data in the DuckDB database for historical analysis and trend monitoring. This tool enables long-term performance tracking and historical comparison capabilities.
+
+Parameters:
+- metrics_data: Dictionary containing performance metrics data to store in database (required)
+- timestamp (optional): ISO timestamp for the data (defaults to current time if not provided)
+
+Returns storage confirmation including:
+- Success/failure status of data storage operation
+- Timestamp of stored data
+- Storage location and database information
+
+Use this tool to persist performance data for historical analysis, trend monitoring, capacity planning, or building performance baselines over time."""
+)
+async def store_performance_data(request: PerformanceDataRequest) -> Dict[str, Any]:
+    """
+    Store performance metrics data in the DuckDB database for historical analysis
+    and trend monitoring.
+    
+    Enables long-term performance tracking and historical comparison capabilities.
+    """
+    global storage
+    try:
+        if not storage:
+            await initialize_components()
+        
+        elt = PerformanceELT(storage.db_path)
+        timestamp = request.timestamp or datetime.now(timezone.utc).isoformat()
+        
+        # Add timeout for storage operations
+        await asyncio.wait_for(
+            elt.store_performance_data(request.metrics_data, timestamp),
+            timeout=30.0
+        )
+        
+        return {
+            "status": "success", 
+            "message": "Performance data stored successfully",
+            "timestamp": timestamp
+        }
+    except asyncio.TimeoutError:
+        return {"error": "Timeout storing performance data", "timestamp": datetime.now(timezone.utc).isoformat()}
+    except Exception as e:
+        logger.error(f"Error storing performance data: {e}")
+        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.tool(
+    name="get_performance_history", 
+    description="""Retrieve historical performance data from the database for trend analysis and performance tracking over time. This tool supports filtering by metric type and configurable time ranges for comprehensive historical analysis.
+
+Parameters:
+- days (default: 7): Number of days of historical data to retrieve (1-365)
+- metric_type (optional): Filter by specific metric type (e.g., "pods", "ovs", "sync_duration", "multus")
+
+Returns historical performance data including:
+- Time-series performance data over specified period
+- Trend analysis and performance patterns
+- Historical comparison points for baseline analysis
+- Performance degradation or improvement indicators
+- Long-term capacity utilization trends
+
+Use this tool for performance trend analysis, capacity planning, identifying performance degradation over time, or establishing performance baselines for comparison."""
+)
+async def get_performance_history(days: int = 7, metric_type: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieve historical performance data from the database for trend analysis
+    and performance tracking over time.
+    
+    Supports filtering by metric type and configurable time ranges for analysis.
+    """
+    global storage
+    try:
+        if not storage:
+            await initialize_components()
+        
+        elt = PerformanceELT(storage.db_path)
+        
+        # Add timeout for database operations
+        result = await asyncio.wait_for(
+            elt.get_performance_history(days, metric_type),
+            timeout=30.0
+        )
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "Timeout retrieving performance history", "timestamp": datetime.now(timezone.utc).isoformat()}
+    except Exception as e:
+        logger.error(f"Error retrieving performance history: {e}")
+        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 @app.tool(
     name="query_kube_api_metrics",
     description="""Query Kubernetes API server performance metrics including request rates, response times, error rates, and resource consumption. This tool is essential for monitoring cluster control plane health and performance, providing insights into API server latency and throughput.
@@ -739,676 +924,6 @@ async def query_ovnk_sync_duration_seconds_metrics(request: MetricsRequest) -> D
         return {"error": "Timeout collecting sync duration metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
         logger.error(f"Error querying sync duration metrics: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="analyze_pods_performance",
-    description="""Perform comprehensive performance analysis of OVN-Kubernetes pods including resource utilization patterns, performance bottlenecks, health scoring, and actionable recommendations. This tool generates detailed analysis reports with insights for pod performance optimization.
-
-Parameters:
-- component: Must be set to "pods" for pod analysis
-- metrics_data (optional): Pre-collected metrics data to analyze. If not provided, will collect automatically
-- duration (default: "1h"): Data collection duration if metrics_data not provided (e.g., "5m", "1h", "1d")
-- save_reports (default: true): Whether to save analysis reports to files (JSON and text formats)
-- output_dir (default: "."): Directory to save analysis reports
-
-Returns comprehensive pod analysis including:
-- Overall pod health scoring and status assessment
-- Resource utilization efficiency analysis 
-- Performance bottleneck identification
-- Pod placement and node distribution analysis
-- Resource limit and request optimization recommendations
-- Comparative performance analysis across pods
-- Critical issues requiring immediate attention
-- Performance improvement recommendations
-
-Use this tool for in-depth pod performance analysis, optimization planning, capacity management, or troubleshooting resource-related issues in OVN-K deployments."""
-)
-async def analyze_pods_performance(request: AnalysisRequest) -> Dict[str, Any]:
-    """
-    Perform comprehensive performance analysis of OVN-Kubernetes pods including
-    resource utilization patterns, performance bottlenecks, health scoring, and recommendations.
-    
-    Generates detailed analysis reports with actionable insights for pod performance optimization.
-    """
-    global prometheus_client, unified_analyzer
-    try:
-        if not UNIFIED_ANALYZER_AVAILABLE:
-            return {"error": "Unified analyzer not available", "timestamp": datetime.now(timezone.utc).isoformat()}
-        
-        if not prometheus_client:
-            await initialize_components()
-        
-        # Get metrics data if not provided
-        metrics_data = request.metrics_data
-        if not metrics_data:
-            metrics_data = await asyncio.wait_for(
-                collect_ovn_duration_usage(prometheus_client, duration=request.duration),
-                timeout=60.0
-            )
-        
-        # Perform analysis
-        if not unified_analyzer:
-            unified_analyzer = UnifiedPerformanceAnalyzer()
-        
-        analysis_result = unified_analyzer.analyze_component("pods", metrics_data)
-        
-        # Save reports if requested
-        if request.save_reports:
-            try:
-                report_files = unified_analyzer.generate_comprehensive_report(
-                    {"pods": analysis_result},
-                    save_json=True,
-                    save_text=True,
-                    output_dir=request.output_dir
-                )
-                analysis_result["saved_reports"] = report_files
-            except Exception as e:
-                analysis_result["report_save_error"] = str(e)
-        
-        return {
-            "analysis_result": analysis_result,
-            "metrics_data_summary": {
-                "collection_type": metrics_data.get("collection_type", "unknown"),
-                "total_pods": len(metrics_data.get("top_10_pods", [])),
-                "timestamp": metrics_data.get("collection_timestamp", datetime.now(timezone.utc).isoformat())
-            }
-        }
-    
-    except asyncio.TimeoutError:
-        return {"error": "Timeout during pod performance analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error analyzing pod performance: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="analyze_ovs_performance",
-    description="""Perform comprehensive performance analysis of Open vSwitch (OVS) components including CPU/memory usage patterns, flow table efficiency, bridge performance, and health assessment. This tool provides detailed OVS performance insights with optimization recommendations.
-
-Parameters:
-- component: Must be set to "ovs" for OVS analysis
-- metrics_data (optional): Pre-collected OVS metrics data to analyze. If not provided, will collect automatically
-- duration (default: "1h"): Data collection duration if metrics_data not provided
-- save_reports (default: true): Whether to save analysis reports to files
-- output_dir (default: "."): Directory to save analysis reports
-
-Returns comprehensive OVS analysis including:
-- OVS component health scoring (ovs-vswitchd, ovsdb-server)
-- CPU and memory utilization efficiency analysis
-- Flow table performance and optimization recommendations  
-- Bridge-specific performance analysis (br-int, br-ex)
-- Connection metrics analysis (stream_open, rconn issues)
-- Per-node OVS performance comparison
-- Resource consumption trends and patterns
-- Critical performance issues and alerts
-- Optimization recommendations for flow processing
-
-Use this tool for OVS performance tuning, troubleshooting dataplane issues, flow table optimization, or comprehensive OVS health assessment."""
-)
-async def analyze_ovs_performance(request: AnalysisRequest) -> Dict[str, Any]:
-    """
-    Perform comprehensive performance analysis of Open vSwitch (OVS) components including
-    CPU/memory usage patterns, flow table efficiency, bridge performance, and health assessment.
-    
-    Provides detailed OVS performance insights with optimization recommendations.
-    """
-    global prometheus_client, auth_manager, unified_analyzer
-    try:
-        if not UNIFIED_ANALYZER_AVAILABLE:
-            return {"error": "Unified analyzer not available", "timestamp": datetime.now(timezone.utc).isoformat()}
-        
-        if not prometheus_client or not auth_manager:
-            await initialize_components()
-        
-        # Get metrics data if not provided
-        metrics_data = request.metrics_data
-        if not metrics_data:
-            collector = OVSUsageCollector(prometheus_client, auth_manager)
-            metrics_data = await asyncio.wait_for(
-                collector.collect_all_ovs_metrics(request.duration),
-                timeout=60.0
-            )
-        
-        # Perform analysis
-        if not unified_analyzer:
-            unified_analyzer = UnifiedPerformanceAnalyzer()
-        
-        analysis_result = unified_analyzer.analyze_component("ovs", metrics_data)
-        
-        # Save reports if requested
-        if request.save_reports:
-            try:
-                report_files = unified_analyzer.generate_comprehensive_report(
-                    {"ovs": analysis_result},
-                    save_json=True,
-                    save_text=True,
-                    output_dir=request.output_dir
-                )
-                analysis_result["saved_reports"] = report_files
-            except Exception as e:
-                analysis_result["report_save_error"] = str(e)
-        
-        return {
-            "analysis_result": analysis_result,
-            "metrics_data_summary": {
-                "collection_type": metrics_data.get("collection_type", "unknown"),
-                "timestamp": metrics_data.get("timestamp", datetime.now(timezone.utc).isoformat())
-            }
-        }
-    
-    except asyncio.TimeoutError:
-        return {"error": "Timeout during OVS performance analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error analyzing OVS performance: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="analyze_sync_duration_performance",
-    description="""Perform comprehensive analysis of OVN-Kubernetes synchronization duration metrics including sync time patterns, performance bottlenecks, and controller efficiency. This tool identifies critical sync performance issues and provides optimization guidance.
-
-Parameters:
-- component: Must be set to "sync_duration" for synchronization analysis
-- metrics_data (optional): Pre-collected sync duration metrics. If not provided, will collect automatically
-- duration (default: "1h"): Data collection duration if metrics_data not provided
-- save_reports (default: true): Whether to save analysis reports to files
-- output_dir (default: "."): Directory to save analysis reports
-
-Returns comprehensive sync duration analysis including:
-- Controller sync performance health scoring
-- Resource-specific synchronization bottleneck identification
-- Sync duration trend analysis and statistical breakdown
-- Per-resource-type performance analysis (pods, services, network policies)
-- Controller responsiveness assessment
-- Resource reconciliation efficiency metrics
-- Critical sync delays requiring attention
-- Performance optimization recommendations for controllers
-
-Use this tool to diagnose control plane performance issues, optimize resource synchronization, troubleshoot slow network policy application, or assess overall OVN-K controller efficiency."""
-)
-async def analyze_sync_duration_performance(request: AnalysisRequest) -> Dict[str, Any]:
-    """
-    Perform comprehensive analysis of OVN-Kubernetes synchronization duration metrics
-    including sync time patterns, performance bottlenecks, and controller efficiency.
-    
-    Identifies critical sync performance issues and provides optimization guidance.
-    """
-    global prometheus_client, unified_analyzer
-    try:
-        if not UNIFIED_ANALYZER_AVAILABLE:
-            return {"error": "Unified analyzer not available", "timestamp": datetime.now(timezone.utc).isoformat()}
-        
-        if not prometheus_client:
-            await initialize_components()
-        
-        # Get metrics data if not provided
-        metrics_data = request.metrics_data
-        if not metrics_data:
-            collector = OVNSyncDurationCollector(prometheus_client)
-            metrics_data = await asyncio.wait_for(
-                collector.collect_sync_duration_seconds_metrics(request.duration),
-                timeout=60.0
-            )
-        
-        # Perform analysis
-        if not unified_analyzer:
-            unified_analyzer = UnifiedPerformanceAnalyzer()
-        
-        analysis_result = unified_analyzer.analyze_component("sync_duration", metrics_data)
-        
-        # Save reports if requested
-        if request.save_reports:
-            try:
-                report_files = unified_analyzer.generate_comprehensive_report(
-                    {"sync_duration": analysis_result},
-                    save_json=True,
-                    save_text=True,
-                    output_dir=request.output_dir
-                )
-                analysis_result["saved_reports"] = report_files
-            except Exception as e:
-                analysis_result["report_save_error"] = str(e)
-        
-        return {
-            "analysis_result": analysis_result,
-            "metrics_data_summary": {
-                "collection_type": metrics_data.get("collection_type", "unknown"),
-                "duration": metrics_data.get("duration", request.duration),
-                "timestamp": metrics_data.get("timestamp", datetime.now(timezone.utc).isoformat())
-            }
-        }
-    
-    except asyncio.TimeoutError:
-        return {"error": "Timeout during sync duration analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error analyzing sync duration performance: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="analyze_multus_performance",
-    description="""Perform comprehensive performance analysis of Multus CNI components including network attachment processing efficiency, resource usage patterns, and multi-network performance characteristics. This tool provides insights into secondary network interface provisioning performance.
-
-Parameters:
-- component: Must be set to "multus" for Multus CNI analysis
-- metrics_data (optional): Pre-collected Multus metrics data to analyze. If not provided, will collect automatically
-- duration (default: "1h"): Data collection duration if metrics_data not provided
-- save_reports (default: true): Whether to save analysis reports to files
-- output_dir (default: "."): Directory to save analysis reports
-
-Returns comprehensive Multus analysis including:
-- Multus daemon performance health scoring
-- Network attachment processing efficiency analysis
-- Secondary network interface provisioning latency assessment
-- Multi-network pod resource consumption patterns
-- CNI plugin performance and error rate analysis
-- Network attachment definition processing bottlenecks
-- Resource utilization optimization recommendations
-- Multi-network configuration efficiency insights
-
-Use this tool for Multus performance optimization, troubleshooting multi-network issues, analyzing secondary interface provisioning performance, or validating multi-network deployment efficiency."""
-)
-async def analyze_multus_performance(request: AnalysisRequest) -> Dict[str, Any]:
-    """
-    Perform comprehensive performance analysis of Multus CNI components including
-    network attachment processing efficiency, resource usage, and performance patterns.
-    
-    Provides insights into secondary network interface provisioning performance.
-    """
-    global prometheus_client, unified_analyzer
-    try:
-        if not UNIFIED_ANALYZER_AVAILABLE:
-            return {"error": "Unified analyzer not available", "timestamp": datetime.now(timezone.utc).isoformat()}
-        
-        if not prometheus_client:
-            await initialize_components()
-        
-        # Get metrics data if not provided
-        metrics_data = request.metrics_data
-        if not metrics_data:
-            # Use pod collector with Multus-specific patterns
-            collector = PodsUsageCollector(prometheus_client)
-            metrics_data = await asyncio.wait_for(
-                collector.collect_duration_usage(
-                    request.duration,
-                    pod_pattern="multus.*|network-metrics.*",
-                    namespace_pattern="openshift-multus"
-                ),
-                timeout=60.0
-            )
-        
-        # Perform analysis
-        if not unified_analyzer:
-            unified_analyzer = UnifiedPerformanceAnalyzer()
-        
-        analysis_result = unified_analyzer.analyze_component("multus", metrics_data)
-        
-        # Save reports if requested
-        if request.save_reports:
-            try:
-                report_files = unified_analyzer.generate_comprehensive_report(
-                    {"multus": analysis_result},
-                    save_json=True,
-                    save_text=True,
-                    output_dir=request.output_dir
-                )
-                analysis_result["saved_reports"] = report_files
-            except Exception as e:
-                analysis_result["report_save_error"] = str(e)
-        
-        return {
-            "analysis_result": analysis_result,
-            "metrics_data_summary": {
-                "collection_type": metrics_data.get("collection_type", "unknown"),
-                "total_pods": len(metrics_data.get("top_10_pods", [])),
-                "timestamp": metrics_data.get("collection_timestamp", datetime.now(timezone.utc).isoformat())
-            }
-        }
-    
-    except asyncio.TimeoutError:
-        return {"error": "Timeout during Multus performance analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error analyzing Multus performance: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="analyze_unified_performance",
-    description="""Perform comprehensive unified performance analysis across all OVNK components including cross-component correlation analysis, unified health scoring, and comprehensive optimization recommendations. This tool generates executive summary and comprehensive reports covering the entire OVNK stack.
-
-Parameters:
-- component: Must be set to "all" for unified cross-component analysis
-- metrics_data (optional): Pre-collected metrics for all components. If not provided, will collect automatically for all components
-- duration (default: "1h"): Data collection duration if metrics_data not provided
-- save_reports (default: true): Whether to save comprehensive analysis reports to files
-- output_dir (default: "."): Directory to save analysis reports
-
-Returns unified analysis including:
-- Executive summary with overall cluster health assessment
-- Cross-component performance correlation analysis
-- Unified health scoring across all OVNK components (pods, OVS, sync duration, Multus)
-- Critical issue identification with prioritized action items
-- Performance bottleneck root cause analysis across components
-- Comprehensive optimization recommendations
-- Resource allocation and capacity planning insights
-- System-wide performance trends and patterns
-- Integration between networking components analysis
-
-Use this tool for comprehensive OVNK performance assessment, executive reporting, system-wide optimization planning, or holistic troubleshooting of complex performance issues spanning multiple components."""
-)
-async def analyze_unified_performance(request: AnalysisRequest) -> Dict[str, Any]:
-    """
-    Perform comprehensive unified performance analysis across all OVNK components
-    including cross-component correlation analysis, unified health scoring, and
-    comprehensive optimization recommendations.
-    
-    Generates executive summary and comprehensive reports covering the entire OVNK stack.
-    """
-    global prometheus_client, auth_manager, unified_analyzer
-    try:
-        if not UNIFIED_ANALYZER_AVAILABLE:
-            return {"error": "Unified analyzer not available", "timestamp": datetime.now(timezone.utc).isoformat()}
-        
-        if not prometheus_client or not auth_manager:
-            await initialize_components()
-        
-        if not unified_analyzer:
-            unified_analyzer = UnifiedPerformanceAnalyzer()
-        
-        # Collect data for all components if not provided
-        components_data = request.metrics_data or {}
-        
-        if not components_data:
-            logger.info("Collecting metrics for all components...")
-            
-            # Collect pods metrics
-            try:
-                components_data["pods"] = await asyncio.wait_for(
-                    collect_ovn_duration_usage(prometheus_client, duration=request.duration),
-                    timeout=60.0
-                )
-            except Exception as e:
-                logger.error(f"Failed to collect pods metrics: {e}")
-                components_data["pods"] = {"error": str(e)}
-            
-            # Collect OVS metrics
-            try:
-                ovs_collector = OVSUsageCollector(prometheus_client, auth_manager)
-                components_data["ovs"] = await asyncio.wait_for(
-                    ovs_collector.collect_all_ovs_metrics(request.duration),
-                    timeout=60.0
-                )
-            except Exception as e:
-                logger.error(f"Failed to collect OVS metrics: {e}")
-                components_data["ovs"] = {"error": str(e)}
-            
-            # Collect sync duration metrics
-            try:
-                sync_collector = OVNSyncDurationCollector(prometheus_client)
-                components_data["sync_duration"] = await asyncio.wait_for(
-                    sync_collector.collect_sync_duration_seconds_metrics(request.duration),
-                    timeout=60.0
-                )
-            except Exception as e:
-                logger.error(f"Failed to collect sync duration metrics: {e}")
-                components_data["sync_duration"] = {"error": str(e)}
-            
-            # Collect Multus metrics
-            try:
-                multus_collector = PodsUsageCollector(prometheus_client)
-                components_data["multus"] = await asyncio.wait_for(
-                    multus_collector.collect_duration_usage(
-                        request.duration,
-                        pod_pattern="multus.*|network-metrics.*",
-                        namespace_pattern="openshift-multus"
-                    ),
-                    timeout=60.0
-                )
-            except Exception as e:
-                logger.error(f"Failed to collect Multus metrics: {e}")
-                components_data["multus"] = {"error": str(e)}
-        
-        # Perform unified analysis
-        analysis_results = unified_analyzer.analyze_all_components(components_data)
-        
-        # Generate comprehensive reports
-        if request.save_reports:
-            try:
-                report_files = unified_analyzer.generate_comprehensive_report(
-                    analysis_results,
-                    save_json=True,
-                    save_text=True,
-                    output_dir=request.output_dir
-                )
-                return {
-                    "analysis_results": analysis_results,
-                    "saved_reports": report_files,
-                    "executive_summary": unified_analyzer._generate_executive_summary(analysis_results),
-                    "cross_component_insights": unified_analyzer._generate_cross_component_insights(analysis_results)
-                }
-            except Exception as e:
-                logger.error(f"Failed to save reports: {e}")
-                return {
-                    "analysis_results": analysis_results,
-                    "report_save_error": str(e),
-                    "executive_summary": unified_analyzer._generate_executive_summary(analysis_results)
-                }
-        
-        return {
-            "analysis_results": analysis_results,
-            "executive_summary": unified_analyzer._generate_executive_summary(analysis_results),
-            "cross_component_insights": unified_analyzer._generate_cross_component_insights(analysis_results)
-        }
-    
-    except asyncio.TimeoutError:
-        return {"error": "Timeout during unified performance analysis", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error in unified performance analysis: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="get_ovnk_performance_health_check",
-    description="""Perform a quick health check across all OVNK components providing a high-level status overview with health scores and immediate action items. This tool is ideal for monitoring dashboards and quick system status assessment.
-
-Parameters:
-- pod_pattern (default: "ovnkube.*"): Pod pattern for health check scope
-- container_pattern (default: ".*"): Container pattern for analysis
-- label_selector (default: ".*"): Label selector pattern
-- namespace_pattern (default: "openshift-ovn-kubernetes"): Target namespace pattern
-- top_n (default: 10): Number of top issues to highlight
-- duration (default: "1h"): Analysis duration for health assessment
-- start_time (optional): Historical health check start time
-- end_time (optional): Historical health check end time
-
-Returns quick health assessment including:
-- Overall cluster health status (EXCELLENT/GOOD/MODERATE/POOR/CRITICAL)
-- Per-component health scores and status indicators
-- Critical issues count requiring immediate attention  
-- Warning issues count for monitoring
-- Key findings summary with actionable insights
-- Component health status breakdown (pods, OVS, sync duration, etc.)
-- Immediate action required flag for urgent issues
-- Quick performance overview without deep analysis
-
-Use this tool for monitoring dashboards, quick status checks, health monitoring alerts, or rapid assessment of OVNK system health before deeper analysis."""
-)
-async def get_performance_health_check(request: PODsRequest) -> Dict[str, Any]:
-    """
-    Perform a quick health check across all OVNK components providing
-    a high-level status overview with health scores and immediate action items.
-    
-    Ideal for monitoring dashboards and quick system status assessment.
-    """
-    global prometheus_client, auth_manager, unified_analyzer
-    try:
-        if not UNIFIED_ANALYZER_AVAILABLE:
-            return {"error": "Unified analyzer not available", "timestamp": datetime.now(timezone.utc).isoformat()}
-        
-        if not prometheus_client or not auth_manager:
-            await initialize_components()
-        
-        if not unified_analyzer:
-            unified_analyzer = UnifiedPerformanceAnalyzer()
-        
-        # Quick data collection (shorter duration for health check)
-        health_duration = "5m"  # Quick health check
-        components_data = {}
-        
-        # Collect minimal data for quick assessment
-        try:
-            components_data["pods"] = await asyncio.wait_for(
-                collect_ovn_duration_usage(prometheus_client, duration=health_duration),
-                timeout=30.0
-            )
-        except Exception as e:
-            logger.error(f"Failed to collect pods data for health check: {e}")
-            components_data["pods"] = {"error": str(e)}
-        
-        try:
-            ovs_collector = OVSUsageCollector(prometheus_client, auth_manager)
-            components_data["ovs"] = await asyncio.wait_for(
-                ovs_collector.collect_all_ovs_metrics(health_duration),
-                timeout=30.0
-            )
-        except Exception as e:
-            logger.error(f"Failed to collect OVS data for health check: {e}")
-            components_data["ovs"] = {"error": str(e)}
-        
-        # Quick analysis
-        analysis_results = unified_analyzer.analyze_all_components(components_data)
-        executive_summary = unified_analyzer._generate_executive_summary(analysis_results)
-        
-        # Generate health status
-        health_status = {}
-        for component, result in analysis_results.items():
-            if "error" in result:
-                health_status[component] = "ERROR"
-            else:
-                health_score = unified_analyzer._extract_health_score(component, result)
-                if health_score is None:
-                    health_status[component] = "UNKNOWN"
-                elif health_score >= 85:
-                    health_status[component] = "EXCELLENT"
-                elif health_score >= 70:
-                    health_status[component] = "GOOD"
-                elif health_score >= 50:
-                    health_status[component] = "MODERATE"
-                elif health_score >= 30:
-                    health_status[component] = "POOR"
-                else:
-                    health_status[component] = "CRITICAL"
-        
-        return {
-            "health_check_timestamp": datetime.now(timezone.utc).isoformat(),
-            "overall_cluster_health": executive_summary.get("overall_cluster_health", "unknown"),
-            "component_health_status": health_status,
-            "critical_issues": executive_summary.get("critical_issues_count", 0),
-            "warning_issues": executive_summary.get("warning_issues_count", 0),
-            "immediate_action_required": executive_summary.get("immediate_action_required", False),
-            "key_findings": executive_summary.get("key_findings", []),
-            "components_analyzed": list(health_status.keys()),
-            "health_check_duration": health_duration
-        }
-    
-    except asyncio.TimeoutError:
-        return {"error": "Timeout during health check", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error during health check: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="store_performance_data",
-    description="""Store performance metrics data in the DuckDB database for historical analysis and trend monitoring. This tool enables long-term performance tracking and historical comparison capabilities.
-
-Parameters:
-- metrics_data: Dictionary containing performance metrics data to store in database (required)
-- timestamp (optional): ISO timestamp for the data (defaults to current time if not provided)
-
-Returns storage confirmation including:
-- Success/failure status of data storage operation
-- Timestamp of stored data
-- Storage location and database information
-
-Use this tool to persist performance data for historical analysis, trend monitoring, capacity planning, or building performance baselines over time."""
-)
-async def store_performance_data(request: PerformanceDataRequest) -> Dict[str, Any]:
-    """
-    Store performance metrics data in the DuckDB database for historical analysis
-    and trend monitoring.
-    
-    Enables long-term performance tracking and historical comparison capabilities.
-    """
-    global storage
-    try:
-        if not storage:
-            await initialize_components()
-        
-        elt = PerformanceELT(storage.db_path)
-        timestamp = request.timestamp or datetime.now(timezone.utc).isoformat()
-        
-        # Add timeout for storage operations
-        await asyncio.wait_for(
-            elt.store_performance_data(request.metrics_data, timestamp),
-            timeout=30.0
-        )
-        
-        return {
-            "status": "success", 
-            "message": "Performance data stored successfully",
-            "timestamp": timestamp
-        }
-    except asyncio.TimeoutError:
-        return {"error": "Timeout storing performance data", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error storing performance data: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="get_performance_history", 
-    description="""Retrieve historical performance data from the database for trend analysis and performance tracking over time. This tool supports filtering by metric type and configurable time ranges for comprehensive historical analysis.
-
-Parameters:
-- days (default: 7): Number of days of historical data to retrieve (1-365)
-- metric_type (optional): Filter by specific metric type (e.g., "pods", "ovs", "sync_duration", "multus")
-
-Returns historical performance data including:
-- Time-series performance data over specified period
-- Trend analysis and performance patterns
-- Historical comparison points for baseline analysis
-- Performance degradation or improvement indicators
-- Long-term capacity utilization trends
-
-Use this tool for performance trend analysis, capacity planning, identifying performance degradation over time, or establishing performance baselines for comparison."""
-)
-async def get_performance_history(days: int = 7, metric_type: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Retrieve historical performance data from the database for trend analysis
-    and performance tracking over time.
-    
-    Supports filtering by metric type and configurable time ranges for analysis.
-    """
-    global storage
-    try:
-        if not storage:
-            await initialize_components()
-        
-        elt = PerformanceELT(storage.db_path)
-        
-        # Add timeout for database operations
-        result = await asyncio.wait_for(
-            elt.get_performance_history(days, metric_type),
-            timeout=30.0
-        )
-        return result
-    except asyncio.TimeoutError:
-        return {"error": "Timeout retrieving performance history", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error retrieving performance history: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
