@@ -18,6 +18,7 @@ import sys
 # Add these imports to the existing imports section
 from tools.ovnk_benchmark_openshift_cluster_stat import ClusterStatCollector
 from analysis.ovnk_benchmark_analysis_cluster_stat import ClusterStatAnalyzer
+from tools.ovnk_benchmark_prometheus_ovnk_basicinfo import ovnBasicInfoCollector, get_pod_phase_counts
 
 import fastmcp
 from fastmcp.server import FastMCP
@@ -180,6 +181,23 @@ class ClusterStatusRequest(BaseModel):
         description="Output format for the report: 'json', 'text', or 'both'"
     )
   
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
+class OVNBasicInfoRequest(BaseModel):
+    """Request model for OVN basic information queries"""
+    include_pod_status: bool = Field(
+        default=True,
+        description="Whether to include cluster-wide pod phase counts and status information"
+    )
+    include_db_metrics: bool = Field(
+        default=True,
+        description="Whether to include OVN database size metrics (Northbound and Southbound)"
+    )
+    custom_metrics: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional dictionary of custom metric_name -> prometheus_query pairs for additional data collection"
+    )
+    
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 # Initialize FastMCP app
@@ -526,95 +544,128 @@ async def analyze_cluster_status(request: ClusterStatusRequest) -> Dict[str, Any
 
 
 @app.tool(
-    name="store_performance_data",
-    description="""Store performance metrics data in the DuckDB database for historical analysis and trend monitoring. This tool enables long-term performance tracking and historical comparison capabilities.
+    name="query_ovn_basic_info",
+    description="""Query fundamental OVN (Open Virtual Network) database information and cluster-wide pod status metrics for baseline monitoring and health assessment. This tool provides essential OVN infrastructure metrics including database sizes and overall pod health status across the cluster.
 
 Parameters:
-- metrics_data: Dictionary containing performance metrics data to store in database (required)
-- timestamp (optional): ISO timestamp for the data (defaults to current time if not provided)
+- include_pod_status (default: true): Whether to include cluster-wide pod phase counts and status distribution (Running, Pending, Failed, Succeeded, Unknown)
+- include_db_metrics (default: true): Whether to include OVN database size metrics for both Northbound and Southbound databases in bytes
+- custom_metrics (optional): Dictionary of additional custom metric_name -> prometheus_query pairs for extended data collection beyond default OVN metrics
 
-Returns storage confirmation including:
-- Success/failure status of data storage operation
-- Timestamp of stored data
-- Storage location and database information
+Returns comprehensive OVN basic information including:
+- OVN Northbound database size with maximum values across all instances
+- OVN Southbound database size with maximum values across all instances  
+- Cluster-wide pod phase distribution (Running, Pending, Failed, Succeeded, Unknown pods)
+- Total pod count across all namespaces for capacity monitoring
+- Database size trends and storage utilization indicators
+- Custom metric results if additional queries were specified
+- Timestamp information for all collected metrics
+- Error details for any failed metric collection attempts
 
-Use this tool to persist performance data for historical analysis, trend monitoring, capacity planning, or building performance baselines over time."""
+Use this tool for:
+- Baseline OVN database health monitoring and size tracking
+- Overall cluster pod health assessment and capacity planning
+- Initial cluster state verification before detailed performance analysis
+- OVN database growth monitoring and storage capacity planning
+- Quick cluster health status checks and operational dashboards
+- Pre-troubleshooting baseline data collection
+- Establishing baseline metrics for performance comparison
+
+This tool provides foundational OVN infrastructure data that is essential for understanding cluster health before diving into detailed performance metrics."""
 )
-async def store_performance_data(request: PerformanceDataRequest) -> Dict[str, Any]:
+async def query_ovn_basic_info(request: OVNBasicInfoRequest) -> Dict[str, Any]:
     """
-    Store performance metrics data in the DuckDB database for historical analysis
-    and trend monitoring.
+    Query fundamental OVN database information and cluster-wide pod status metrics
+    for baseline monitoring and health assessment.
     
-    Enables long-term performance tracking and historical comparison capabilities.
+    Provides essential OVN infrastructure metrics including database sizes and pod health status.
     """
-    global storage
+    global prometheus_client, auth_manager
     try:
-        if not storage:
+        if not prometheus_client or not auth_manager:
             await initialize_components()
         
-        elt = PerformanceELT(storage.db_path)
-        timestamp = request.timestamp or datetime.now(timezone.utc).isoformat()
-        
-        # Add timeout for storage operations
-        await asyncio.wait_for(
-            elt.store_performance_data(request.metrics_data, timestamp),
-            timeout=30.0
-        )
-        
-        return {
-            "status": "success", 
-            "message": "Performance data stored successfully",
-            "timestamp": timestamp
+        result = {
+            "collection_timestamp": datetime.now(timezone.utc).isoformat(),
+            "metrics_collected": []
         }
-    except asyncio.TimeoutError:
-        return {"error": "Timeout storing performance data", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error storing performance data: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="get_performance_history", 
-    description="""Retrieve historical performance data from the database for trend analysis and performance tracking over time. This tool supports filtering by metric type and configurable time ranges for comprehensive historical analysis.
-
-Parameters:
-- days (default: 7): Number of days of historical data to retrieve (1-365)
-- metric_type (optional): Filter by specific metric type (e.g., "pods", "ovs", "sync_duration", "multus")
-
-Returns historical performance data including:
-- Time-series performance data over specified period
-- Trend analysis and performance patterns
-- Historical comparison points for baseline analysis
-- Performance degradation or improvement indicators
-- Long-term capacity utilization trends
-
-Use this tool for performance trend analysis, capacity planning, identifying performance degradation over time, or establishing performance baselines for comparison."""
-)
-async def get_performance_history(days: int = 7, metric_type: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Retrieve historical performance data from the database for trend analysis
-    and performance tracking over time.
-    
-    Supports filtering by metric type and configurable time ranges for analysis.
-    """
-    global storage
-    try:
-        if not storage:
-            await initialize_components()
         
-        elt = PerformanceELT(storage.db_path)
+        # Collect OVN database metrics if requested
+        if request.include_db_metrics:
+            try:
+                logger.info("Collecting OVN database metrics...")
+                collector = ovnBasicInfoCollector(
+                    auth_manager.prometheus_url, 
+                    auth_manager.prometheus_token
+                )
+                
+                # Use custom metrics if provided, otherwise use defaults
+                metrics_to_collect = request.custom_metrics
+                
+                db_metrics = await asyncio.wait_for(
+                    collector.collect_max_values(metrics_to_collect),
+                    timeout=30.0
+                )
+                
+                result["ovn_database_metrics"] = db_metrics
+                result["metrics_collected"].append("ovn_database_metrics")
+                logger.info("OVN database metrics collected successfully")
+                
+            except asyncio.TimeoutError:
+                result["ovn_database_metrics"] = {
+                    "error": "Timeout collecting OVN database metrics"
+                }
+                logger.warning("Timeout collecting OVN database metrics")
+            except Exception as e:
+                result["ovn_database_metrics"] = {
+                    "error": f"Failed to collect OVN database metrics: {str(e)}"
+                }
+                logger.error(f"Error collecting OVN database metrics: {e}")
         
-        # Add timeout for database operations
-        result = await asyncio.wait_for(
-            elt.get_performance_history(days, metric_type),
-            timeout=30.0
-        )
+        # Collect pod status information if requested
+        if request.include_pod_status:
+            try:
+                logger.info("Collecting cluster-wide pod status...")
+                
+                pod_status = await asyncio.wait_for(
+                    get_pod_phase_counts(
+                        auth_manager.prometheus_url,
+                        auth_manager.prometheus_token
+                    ),
+                    timeout=30.0
+                )
+                
+                result["pod_status_metrics"] = pod_status
+                result["metrics_collected"].append("pod_status_metrics")
+                logger.info("Pod status metrics collected successfully")
+                
+            except asyncio.TimeoutError:
+                result["pod_status_metrics"] = {
+                    "error": "Timeout collecting pod status metrics"
+                }
+                logger.warning("Timeout collecting pod status metrics")
+            except Exception as e:
+                result["pod_status_metrics"] = {
+                    "error": f"Failed to collect pod status metrics: {str(e)}"
+                }
+                logger.error(f"Error collecting pod status metrics: {e}")
+        
+        # Add summary information
+        result["summary"] = {
+            "total_metrics_types": len(result["metrics_collected"]),
+            "collection_success": len([k for k in result.keys() if k.endswith("_metrics") and "error" not in result[k]]),
+            "collection_errors": len([k for k in result.keys() if k.endswith("_metrics") and "error" in result[k]]),
+        }
+        
+        logger.info(f"OVN basic info collection completed: {result['summary']}")
         return result
-    except asyncio.TimeoutError:
-        return {"error": "Timeout retrieving performance history", "timestamp": datetime.now(timezone.utc).isoformat()}
+        
     except Exception as e:
-        logger.error(f"Error retrieving performance history: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+        logger.error(f"Error in OVN basic info collection: {e}")
+        return {
+            "error": str(e), 
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
 
 
 @app.tool(
@@ -924,6 +975,97 @@ async def query_ovnk_sync_duration_seconds_metrics(request: MetricsRequest) -> D
         return {"error": "Timeout collecting sync duration metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
         logger.error(f"Error querying sync duration metrics: {e}")
+        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@app.tool(
+    name="store_performance_data",
+    description="""Store performance metrics data in the DuckDB database for historical analysis and trend monitoring. This tool enables long-term performance tracking and historical comparison capabilities.
+
+Parameters:
+- metrics_data: Dictionary containing performance metrics data to store in database (required)
+- timestamp (optional): ISO timestamp for the data (defaults to current time if not provided)
+
+Returns storage confirmation including:
+- Success/failure status of data storage operation
+- Timestamp of stored data
+- Storage location and database information
+
+Use this tool to persist performance data for historical analysis, trend monitoring, capacity planning, or building performance baselines over time."""
+)
+async def store_performance_data(request: PerformanceDataRequest) -> Dict[str, Any]:
+    """
+    Store performance metrics data in the DuckDB database for historical analysis
+    and trend monitoring.
+    
+    Enables long-term performance tracking and historical comparison capabilities.
+    """
+    global storage
+    try:
+        if not storage:
+            await initialize_components()
+        
+        elt = PerformanceELT(storage.db_path)
+        timestamp = request.timestamp or datetime.now(timezone.utc).isoformat()
+        
+        # Add timeout for storage operations
+        await asyncio.wait_for(
+            elt.store_performance_data(request.metrics_data, timestamp),
+            timeout=30.0
+        )
+        
+        return {
+            "status": "success", 
+            "message": "Performance data stored successfully",
+            "timestamp": timestamp
+        }
+    except asyncio.TimeoutError:
+        return {"error": "Timeout storing performance data", "timestamp": datetime.now(timezone.utc).isoformat()}
+    except Exception as e:
+        logger.error(f"Error storing performance data: {e}")
+        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.tool(
+    name="get_performance_history", 
+    description="""Retrieve historical performance data from the database for trend analysis and performance tracking over time. This tool supports filtering by metric type and configurable time ranges for comprehensive historical analysis.
+
+Parameters:
+- days (default: 7): Number of days of historical data to retrieve (1-365)
+- metric_type (optional): Filter by specific metric type (e.g., "pods", "ovs", "sync_duration", "multus")
+
+Returns historical performance data including:
+- Time-series performance data over specified period
+- Trend analysis and performance patterns
+- Historical comparison points for baseline analysis
+- Performance degradation or improvement indicators
+- Long-term capacity utilization trends
+
+Use this tool for performance trend analysis, capacity planning, identifying performance degradation over time, or establishing performance baselines for comparison."""
+)
+async def get_performance_history(days: int = 7, metric_type: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieve historical performance data from the database for trend analysis
+    and performance tracking over time.
+    
+    Supports filtering by metric type and configurable time ranges for analysis.
+    """
+    global storage
+    try:
+        if not storage:
+            await initialize_components()
+        
+        elt = PerformanceELT(storage.db_path)
+        
+        # Add timeout for database operations
+        result = await asyncio.wait_for(
+            elt.get_performance_history(days, metric_type),
+            timeout=30.0
+        )
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "Timeout retrieving performance history", "timestamp": datetime.now(timezone.utc).isoformat()}
+    except Exception as e:
+        logger.error(f"Error retrieving performance history: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 

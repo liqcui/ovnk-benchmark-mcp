@@ -31,6 +31,7 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from dotenv import load_dotenv
+from elt.ovnk_benchmark_elt_json2table import convert_json_to_tables,auto_detect_and_convert_to_tables
 
 import warnings
 # Suppress urllib3 deprecation warning triggered by kubernetes client using HTTPResponse.getheaders()
@@ -200,7 +201,8 @@ class MCPClient:
                         # Try to parse as JSON first
                         try:
                             json_data = json.loads(content_text)
-                            return json_data
+                            json_data_2table=auto_detect_and_convert_to_tables(json_data,"html")
+                            return json_data_2table
                         except json.JSONDecodeError as json_err:
                             logger.error(f"Failed to parse JSON from tool {tool_name}. Content: '{content_text[:200]}...'")
                             logger.error(f"JSON decode error: {json_err}")
