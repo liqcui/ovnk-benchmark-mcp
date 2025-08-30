@@ -90,6 +90,9 @@ dependencies = [
     
     # AI and LLM
     "openai>=1.0.0",
+
+    #tabulate
+    "tabulate>=0.9.0",
 ]
 
 [project.optional-dependencies]
