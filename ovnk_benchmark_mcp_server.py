@@ -388,6 +388,7 @@ async def get_openshift_general_info(request: GeneralInfoRequest) -> Dict[str, A
             collect_cluster_information(),
             timeout=30.0
         )
+        cluster_info={"cluster_info": cluster_info}
         print("#-"*35)
         print("cluster_info is:\n",cluster_info,type(cluster_info))
         return cluster_info
