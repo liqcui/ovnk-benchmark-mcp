@@ -201,6 +201,10 @@ class MCPClient:
                         # Try to parse as JSON first
                         try:
                             json_data = json.loads(content_text)
+                            print("#-"*35)
+                            print("type of json_data",type(json_data))
+                            print("json_data",json_data)
+                            print("#-"*35)
                             # json_data_2table=auto_detect_and_convert_to_tables(json_data,"html")
                             return json_data
                         except json.JSONDecodeError as json_err:
