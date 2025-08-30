@@ -176,6 +176,9 @@ class MCPClient:
                         }
     
                         result = await session.call_tool(tool_name, request_data)
+                        print("#*"*50)
+                        print("result in call_tool of mcp client:",result)
+                        print("#*"*50)
                         
                         # Enhanced error handling for JSON parsing
                         if not result.content:
