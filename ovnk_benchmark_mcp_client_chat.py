@@ -201,14 +201,7 @@ class MCPClient:
                         # Try to parse as JSON first
                         try:
                             json_data = json.loads(content_text)
-                            json_data_2table=[]
-                            if tool_name == "get_openshift_general_info":
-                                 json_data_2table=convert_json_to_tables(json_data,"html")
-                                 print("#-"*35)
-                                 print("type of json_data",type(json_data_2table))
-                                 print("json_data",json_data_2table)
-                                 print("#-"*35)
-                            return json_data_2table
+                            return json_data
                         except json.JSONDecodeError as json_err:
                             logger.error(f"Failed to parse JSON from tool {tool_name}. Content: '{content_text[:200]}...'")
                             logger.error(f"JSON decode error: {json_err}")
