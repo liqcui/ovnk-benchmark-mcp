@@ -172,7 +172,7 @@ class MCPClient:
                         logger.info(f"Calling tool {tool_name} with params {params}")
 
                         request_data = {
-                            "request": params or {}
+                            "arguments": params or {}
                         }
     
                         result = await session.call_tool(tool_name, request_data)
@@ -299,9 +299,9 @@ class MCPClient:
             # Try different health check tools in order of preference
             health_tools = [
                 "get_mcp_health_status",
-                "get_cluster_info", 
-                "get_node_info",
-                "get_api_server_metrics"
+                "get_openshift_general_info",
+                "get_cluster_node_usage",
+                "query_kube_api_metrics"
             ]
             
             health_result = None
@@ -334,7 +334,7 @@ class MCPClient:
                 overall_health = "unknown"
                 if tool_used == "get_mcp_health_status":
                     overall_health = health_result.get("status", "unknown")
-                elif tool_used == "get_cluster_info":
+                elif tool_used == "get_openshift_general_info":
                     # Infer health from cluster info
                     if "nodes" in health_result or "cluster_version" in health_result:
                         overall_health = "good"
