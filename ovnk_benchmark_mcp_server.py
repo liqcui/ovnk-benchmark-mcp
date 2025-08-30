@@ -385,13 +385,11 @@ async def get_openshift_general_info(request: GeneralInfoRequest) -> Dict[str, A
         # Add timeout to prevent hanging
         cluster_info = await asyncio.wait_for(
             # general_info.collect_cluster_info(),
-            get_cluster_info_json(),
+            collect_cluster_information(),
             timeout=30.0
         )
-        cluster_info_json={"cluster_info": cluster_info}
-        cluster_info=json.dumps(cluster_info_json)
         print("#-"*35)
-        print("cluster_info is:\n",cluster_info_json,type(cluster_info))
+        print("cluster_info is:\n",cluster_info,type(cluster_info))
         return cluster_info
     except asyncio.TimeoutError:
         return {"error": "Timeout collecting cluster information", "timestamp": datetime.now(timezone.utc).isoformat()}
