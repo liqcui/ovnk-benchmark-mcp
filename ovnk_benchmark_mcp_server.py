@@ -384,7 +384,7 @@ async def get_openshift_general_info(request: GeneralInfoRequest) -> Dict[str, A
         
         # Add timeout to prevent hanging
         cluster_info = await asyncio.wait_for(
-            get_cluster_info_json(),
+            collect_cluster_information(),
             timeout=30.0
         )
         return cluster_info
