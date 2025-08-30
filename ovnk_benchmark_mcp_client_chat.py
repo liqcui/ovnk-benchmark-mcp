@@ -203,7 +203,7 @@ class MCPClient:
                             json_data = json.loads(content_text)
                             json_data_2table=[]
                             if tool_name == "get_openshift_general_info":
-                                 json_data_2table=auto_detect_and_convert_to_tables(json_data,"html")
+                                 json_data_2table=convert_json_to_tables(json_data,"html")
                                  print("#-"*35)
                                  print("type of json_data",type(json_data_2table))
                                  print("json_data",json_data_2table)
