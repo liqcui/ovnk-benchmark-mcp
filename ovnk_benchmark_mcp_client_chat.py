@@ -201,21 +201,7 @@ class MCPClient:
                         # Try to parse as JSON first
                         try:
                             json_data = json.loads(content_text)
-                            # Ensure table-friendly structure and log a preview for specific tools
-                            if tool_name in ["get_openshift_general_info", "get_cluster_node_usage"]:
-                                try:
-                                    formated_data = auto_detect_and_convert_to_tables(json_data,"html")
-                                    logger.info(f"Table preview for {tool_name} generated (truncated)")
-                                except Exception as conv_err:
-                                    logger.warning(f"Failed to generate table preview for {tool_name}: {conv_err}")
-
-                                # Wrap to trigger table rendering in UI if needed
-                                if tool_name == "get_openshift_general_info" and isinstance(json_data, dict) and "cluster_info" not in json_data:
-                                    formated_data = {"cluster_info": json_data}
-                                if tool_name == "get_cluster_node_usage" and isinstance(json_data, dict) and "nodes" not in json_data:
-                                    formated_data = {"nodes": json_data}
-
-                            return formated_data
+                            return json_data
                         except json.JSONDecodeError as json_err:
                             logger.error(f"Failed to parse JSON from tool {tool_name}. Content: '{content_text[:200]}...'")
                             logger.error(f"JSON decode error: {json_err}")
