@@ -17,7 +17,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 
 # Import required modules
-from tools.ovnk_benchmark_openshift_cluster_info import OpenShiftGeneralInfo, NodeInfo, ClusterInfo
+from tools.ovnk_benchmark_openshift_cluster_info import ClusterInfoCollector,ClusterInfo
 from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
 from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from analysis.ovnk_benchmark_performance_utility import (

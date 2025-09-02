@@ -436,6 +436,11 @@ class ClusterInfoCollector:
         return asdict(cluster_info)
 
 
+# Backward compatibility alias for older imports
+# Some modules may still import OpenShiftGeneralInfo; map it to ClusterInfoCollector
+OpenShiftGeneralInfo = ClusterInfoCollector
+
+
 # Convenience functions
 async def collect_cluster_information(kubeconfig_path: Optional[str] = None) -> Dict[str, Any]:
     """Collect and return cluster information as dictionary"""
