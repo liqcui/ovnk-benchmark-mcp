@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-OpenShift Cluster Information Collection Tool
-Gathers comprehensive cluster information including nodes, resources, and network policies
+OpenShift Cluster Information Collector
+Combines cluster information and status collection into a unified module
 """
 
 import json
 import logging
+import asyncio
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
-from kubernetes import client
+from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
@@ -30,7 +31,7 @@ class NodeInfo:
     container_runtime: str
     kubelet_version: str
     os_image: str
-    ready_status: bool
+    ready_status: str  # Ready, NotReady, SchedulingDisabled, etc.
     schedulable: bool
     creation_timestamp: str
 
@@ -54,20 +55,24 @@ class ClusterInfo:
     networkpolicies_count: int
     adminnetworkpolicies_count: int
     egressfirewalls_count: int
+    egressips_count: int
+    udn_count: int
+    unavailable_cluster_operators: List[str]
+    mcp_status: Dict[str, str]
     collection_timestamp: str
-    cluster_operators_status: Dict[str, str]
 
 
-class OpenShiftGeneralInfo:
-    """Collects comprehensive OpenShift cluster information"""
+class ClusterInfoCollector:
+    """Collects comprehensive OpenShift cluster information and status"""
     
-    def __init__(self):
+    def __init__(self, kubeconfig_path: Optional[str] = None):
+        self.kubeconfig_path = kubeconfig_path
         self.auth_manager = None
         self.k8s_client = None
         
     async def initialize(self):
         """Initialize the collector with authentication"""
-        self.auth_manager = OpenShiftAuth()
+        self.auth_manager = OpenShiftAuth(self.kubeconfig_path)
         await self.auth_manager.initialize()
         self.k8s_client = self.auth_manager.kube_client
         
@@ -89,19 +94,13 @@ class OpenShiftGeneralInfo:
             nodes_info = await self._collect_nodes_info()
             
             # Resource counts
-            namespaces_count = await self._count_namespaces()
-            pods_count = await self._count_pods()
-            services_count = await self._count_services()
-            secrets_count = await self._count_secrets()
-            configmaps_count = await self._count_configmaps()
-            
-            # Network policy counts
-            networkpolicies_count = await self._count_networkpolicies()
-            adminnetworkpolicies_count = await self._count_admin_networkpolicies()
-            egressfirewalls_count = await self._count_egressfirewalls()
+            resource_counts = await self._collect_resource_counts()
             
             # Cluster operators status
-            cluster_operators_status = await self._get_cluster_operators_status()
+            unavailable_operators = await self._get_unavailable_cluster_operators()
+            
+            # Machine config pool status
+            mcp_status = await self._get_mcp_status()
             
             cluster_info = ClusterInfo(
                 cluster_name=cluster_name,
@@ -112,16 +111,19 @@ class OpenShiftGeneralInfo:
                 master_nodes=nodes_info["master_nodes"],
                 infra_nodes=nodes_info["infra_nodes"], 
                 worker_nodes=nodes_info["worker_nodes"],
-                namespaces_count=namespaces_count,
-                pods_count=pods_count,
-                services_count=services_count,
-                secrets_count=secrets_count,
-                configmaps_count=configmaps_count,
-                networkpolicies_count=networkpolicies_count,
-                adminnetworkpolicies_count=adminnetworkpolicies_count,
-                egressfirewalls_count=egressfirewalls_count,
-                collection_timestamp=datetime.now(timezone.utc).isoformat(),
-                cluster_operators_status=cluster_operators_status
+                namespaces_count=resource_counts["namespaces"],
+                pods_count=resource_counts["pods"],
+                services_count=resource_counts["services"],
+                secrets_count=resource_counts["secrets"],
+                configmaps_count=resource_counts["configmaps"],
+                networkpolicies_count=resource_counts["networkpolicies"],
+                adminnetworkpolicies_count=resource_counts["adminnetworkpolicies"],
+                egressfirewalls_count=resource_counts["egressfirewalls"],
+                egressips_count=resource_counts["egressips"],
+                udn_count=resource_counts["udn"],
+                unavailable_cluster_operators=unavailable_operators,
+                mcp_status=mcp_status,
+                collection_timestamp=datetime.now(timezone.utc).isoformat()
             )
             
             logger.info("Cluster information collection completed successfully")
@@ -226,12 +228,26 @@ class OpenShiftGeneralInfo:
         spec = node.spec
         metadata = node.metadata
         
-        # Get node conditions
+        # Determine node status
         ready_status = False
         for condition in status.conditions or []:
             if condition.type == "Ready" and condition.status == "True":
                 ready_status = True
                 break
+        
+        schedulable = not spec.unschedulable if spec.unschedulable is not None else True
+        
+        # Determine overall status string
+        if ready_status and schedulable:
+            status_str = 'Ready'
+        elif ready_status and not schedulable:
+            status_str = 'Ready,SchedulingDisabled'
+        elif not ready_status and schedulable:
+            status_str = 'NotReady'
+        elif not ready_status and not schedulable:
+            status_str = 'NotReady,SchedulingDisabled'
+        else:
+            status_str = 'Unknown'
                 
         return NodeInfo(
             name=metadata.name,
@@ -243,101 +259,98 @@ class OpenShiftGeneralInfo:
             container_runtime=status.node_info.container_runtime_version,
             kubelet_version=status.node_info.kubelet_version,
             os_image=status.node_info.os_image,
-            ready_status=ready_status,
-            schedulable=not spec.unschedulable if spec.unschedulable is not None else True,
+            ready_status=status_str,
+            schedulable=schedulable,
             creation_timestamp=metadata.creation_timestamp.isoformat() if metadata.creation_timestamp else ""
         )
-        
-    async def _count_namespaces(self) -> int:
-        """Count total number of namespaces"""
+    
+    async def _collect_resource_counts(self) -> Dict[str, int]:
+        """Collect counts of various cluster resources"""
         try:
             v1 = client.CoreV1Api(self.k8s_client)
-            namespaces = v1.list_namespace()
-            return len(namespaces.items)
-        except Exception as e:
-            logger.warning(f"Could not count namespaces: {e}")
-            return 0
-            
-    async def _count_pods(self) -> int:
-        """Count total number of pods across all namespaces"""
-        try:
-            v1 = client.CoreV1Api(self.k8s_client)
-            pods = v1.list_pod_for_all_namespaces()
-            return len(pods.items)
-        except Exception as e:
-            logger.warning(f"Could not count pods: {e}")
-            return 0
-            
-    async def _count_services(self) -> int:
-        """Count total number of services"""
-        try:
-            v1 = client.CoreV1Api(self.k8s_client)
-            services = v1.list_service_for_all_namespaces()
-            return len(services.items)
-        except Exception as e:
-            logger.warning(f"Could not count services: {e}")
-            return 0
-            
-    async def _count_secrets(self) -> int:
-        """Count total number of secrets"""
-        try:
-            v1 = client.CoreV1Api(self.k8s_client)
-            secrets = v1.list_secret_for_all_namespaces()
-            return len(secrets.items)
-        except Exception as e:
-            logger.warning(f"Could not count secrets: {e}")
-            return 0
-            
-    async def _count_configmaps(self) -> int:
-        """Count total number of configmaps"""
-        try:
-            v1 = client.CoreV1Api(self.k8s_client)
-            configmaps = v1.list_config_map_for_all_namespaces()
-            return len(configmaps.items)
-        except Exception as e:
-            logger.warning(f"Could not count configmaps: {e}")
-            return 0
-            
-    async def _count_networkpolicies(self) -> int:
-        """Count total number of network policies"""
-        try:
             networking_v1 = client.NetworkingV1Api(self.k8s_client)
-            network_policies = networking_v1.list_network_policy_for_all_namespaces()
-            return len(network_policies.items)
-        except Exception as e:
-            logger.warning(f"Could not count network policies: {e}")
-            return 0
-            
-    async def _count_admin_networkpolicies(self) -> int:
-        """Count total number of admin network policies"""
-        try:
             custom_api = client.CustomObjectsApi(self.k8s_client)
-            admin_policies = custom_api.list_cluster_custom_object(
-                group="policy.networking.k8s.io",
-                version="v1alpha1",
-                plural="adminnetworkpolicies"
-            )
-            return len(admin_policies.get("items", []))
-        except Exception as e:
-            logger.warning(f"Could not count admin network policies: {e}")
-            return 0
             
-    async def _count_egressfirewalls(self) -> int:
-        """Count total number of egress firewalls"""
-        try:
-            custom_api = client.CustomObjectsApi(self.k8s_client)
-            egress_firewalls = custom_api.list_cluster_custom_object(
-                group="k8s.ovn.org",
-                version="v1",
-                plural="egressfirewalls"
-            )
-            return len(egress_firewalls.get("items", []))
-        except Exception as e:
-            logger.warning(f"Could not count egress firewalls: {e}")
-            return 0
+            # Basic resources
+            namespaces = v1.list_namespace()
+            pods = v1.list_pod_for_all_namespaces()
+            services = v1.list_service_for_all_namespaces()
+            secrets = v1.list_secret_for_all_namespaces()
+            configmaps = v1.list_config_map_for_all_namespaces()
             
-    async def _get_cluster_operators_status(self) -> Dict[str, str]:
-        """Get status of cluster operators"""
+            # Network policies
+            networkpolicies = networking_v1.list_network_policy_for_all_namespaces()
+            
+            # Custom resources
+            counts = {
+                "namespaces": len(namespaces.items),
+                "pods": len(pods.items),
+                "services": len(services.items),
+                "secrets": len(secrets.items),
+                "configmaps": len(configmaps.items),
+                "networkpolicies": len(networkpolicies.items),
+                "adminnetworkpolicies": 0,
+                "egressfirewalls": 0,
+                "egressips": 0,
+                "udn": 0
+            }
+            
+            # Admin network policies
+            try:
+                admin_policies = custom_api.list_cluster_custom_object(
+                    group="policy.networking.k8s.io",
+                    version="v1alpha1",
+                    plural="adminnetworkpolicies"
+                )
+                counts["adminnetworkpolicies"] = len(admin_policies.get("items", []))
+            except Exception as e:
+                logger.warning(f"Could not count admin network policies: {e}")
+            
+            # Egress firewalls
+            try:
+                egress_firewalls = custom_api.list_cluster_custom_object(
+                    group="k8s.ovn.org",
+                    version="v1",
+                    plural="egressfirewalls"
+                )
+                counts["egressfirewalls"] = len(egress_firewalls.get("items", []))
+            except Exception as e:
+                logger.warning(f"Could not count egress firewalls: {e}")
+            
+            # Egress IPs
+            try:
+                egress_ips = custom_api.list_cluster_custom_object(
+                    group="k8s.ovn.org",
+                    version="v1",
+                    plural="egressips"
+                )
+                counts["egressips"] = len(egress_ips.get("items", []))
+            except Exception as e:
+                logger.warning(f"Could not count egress IPs: {e}")
+            
+            # User Defined Networks (UDN)
+            try:
+                udn_resources = custom_api.list_cluster_custom_object(
+                    group="k8s.ovn.org",
+                    version="v1",
+                    plural="userdefinednetworks"
+                )
+                counts["udn"] = len(udn_resources.get("items", []))
+            except Exception as e:
+                logger.warning(f"Could not count user defined networks: {e}")
+            
+            return counts
+            
+        except Exception as e:
+            logger.error(f"Failed to collect resource counts: {e}")
+            return {
+                "namespaces": 0, "pods": 0, "services": 0, "secrets": 0,
+                "configmaps": 0, "networkpolicies": 0, "adminnetworkpolicies": 0,
+                "egressfirewalls": 0, "egressips": 0, "udn": 0
+            }
+    
+    async def _get_unavailable_cluster_operators(self) -> List[str]:
+        """Get list of unavailable cluster operators"""
         try:
             custom_api = client.CustomObjectsApi(self.k8s_client)
             operators = custom_api.list_cluster_custom_object(
@@ -346,26 +359,74 @@ class OpenShiftGeneralInfo:
                 plural="clusteroperators"
             )
             
-            operator_status = {}
+            unavailable_operators = []
             for operator in operators.get("items", []):
                 name = operator["metadata"]["name"]
                 conditions = operator.get("status", {}).get("conditions", [])
                 
-                # Find the "Available" condition
-                status = "Unknown"
+                # Check if operator is available
+                is_available = False
                 for condition in conditions:
-                    if condition["type"] == "Available":
-                        status = "Available" if condition["status"] == "True" else "Unavailable"
+                    if condition["type"] == "Available" and condition["status"] == "True":
+                        is_available = True
                         break
                         
-                operator_status[name] = status
-                
-            return operator_status
+                if not is_available:
+                    unavailable_operators.append(name)
+                    
+            return unavailable_operators
             
         except Exception as e:
             logger.warning(f"Could not get cluster operators status: {e}")
-            return {}
+            return []
+    
+    async def _get_mcp_status(self) -> Dict[str, str]:
+        """Get machine config pool status"""
+        try:
+            custom_api = client.CustomObjectsApi(self.k8s_client)
+            mcp_response = custom_api.list_cluster_custom_object(
+                group="machineconfiguration.openshift.io",
+                version="v1",
+                plural="machineconfigpools"
+            )
             
+            mcp_status = {}
+            for mcp in mcp_response.get('items', []):
+                pool_name = mcp.get('metadata', {}).get('name', 'unknown')
+                
+                # Determine pool status
+                if 'status' in mcp:
+                    conditions = mcp['status'].get('conditions', [])
+                    
+                    updated = False
+                    updating = False
+                    degraded = False
+                    
+                    for condition in conditions:
+                        if condition.get('type') == 'Updated' and condition.get('status') == 'True':
+                            updated = True
+                        elif condition.get('type') == 'Updating' and condition.get('status') == 'True':
+                            updating = True
+                        elif condition.get('type') == 'Degraded' and condition.get('status') == 'True':
+                            degraded = True
+                    
+                    if degraded:
+                        status = 'Degraded'
+                    elif updating:
+                        status = 'Updating'
+                    elif updated:
+                        status = 'Updated'
+                    else:
+                        status = 'Unknown'
+                        
+                    mcp_status[pool_name] = status
+            
+            return mcp_status
+            
+        except Exception as e:
+            logger.warning(f"Could not get machine config pool status: {e}")
+            return {}
+        
     def to_json(self, cluster_info: ClusterInfo) -> str:
         """Convert cluster info to JSON string"""
         return json.dumps(asdict(cluster_info), indent=2, default=str)
@@ -375,16 +436,28 @@ class OpenShiftGeneralInfo:
         return asdict(cluster_info)
 
 
-# Convenience functions for MCP server
-async def collect_cluster_information() -> Dict[str, Any]:
+# Convenience functions
+async def collect_cluster_information(kubeconfig_path: Optional[str] = None) -> Dict[str, Any]:
     """Collect and return cluster information as dictionary"""
-    collector = OpenShiftGeneralInfo()
+    collector = ClusterInfoCollector(kubeconfig_path)
     cluster_info = await collector.collect_cluster_info()
     return collector.to_dict(cluster_info)
 
 
-async def get_cluster_info_json() -> str:
+async def get_cluster_info_json(kubeconfig_path: Optional[str] = None) -> str:
     """Collect and return cluster information as JSON string"""
-    collector = OpenShiftGeneralInfo()
+    collector = ClusterInfoCollector(kubeconfig_path)
     cluster_info = await collector.collect_cluster_info()
     return collector.to_json(cluster_info)
+
+
+if __name__ == "__main__":
+    async def main():
+        try:
+            collector = ClusterInfoCollector()
+            cluster_info = await collector.collect_cluster_info()
+            print(collector.to_json(cluster_info))
+        except Exception as e:
+            print(f"Error: {e}")
+    
+    asyncio.run(main())

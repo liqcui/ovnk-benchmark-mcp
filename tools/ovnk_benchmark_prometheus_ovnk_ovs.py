@@ -526,7 +526,6 @@ class OVSUsageCollector:
             comprehensive_report = {
                 'timestamp': datetime.now(timezone.utc).isoformat(),
                 'collection_type': 'instant' if not duration else f'range_{duration}',
-                'cluster_info': self.auth_client.get_cluster_summary(),
                 'cpu_usage': results[0] if not isinstance(results[0], Exception) else {'error': str(results[0])},
                 'memory_usage': results[1] if not isinstance(results[1], Exception) else {'error': str(results[1])},
                 'dp_flows': results[2] if not isinstance(results[2], Exception) else {'error': str(results[2])},

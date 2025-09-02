@@ -8,9 +8,8 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional, Union, Tuple
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery, PrometheusQueryError
+from tools.ovnk_benchmark_prometheus_utility import mcpToolsUtility
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
-from kubernetes import client
-from kubernetes.client.rest import ApiException
 
 
 class PodsUsageCollector:
@@ -19,17 +18,23 @@ class PodsUsageCollector:
     def __init__(self, prometheus_client: PrometheusBaseQuery, auth: Optional[OpenShiftAuth] = None):
         self.prometheus_client = prometheus_client
         self.auth = auth
-        self.node_info_cache: Dict[str, Dict[str, Any]] = {}
+        self.utility = mcpToolsUtility(auth_client=auth)
         
     def _get_default_queries(self, pod_pattern: str = ".*", container_pattern: str = ".*", namespace_pattern: str = ".*", interval: str = "1m") -> Dict[str, str]:
         """Get default PromQL queries for pod usage"""
         matchers = self._build_label_matchers(pod_pattern, container_pattern, namespace_pattern)
+        
+        # Include container in grouping if specific container pattern is used
+        group_by = "pod"
+        if container_pattern != ".*":
+            group_by = "pod, container"
+        
         return {
-            'memory_usage': f'sum by(pod) (container_memory_rss{matchers})',
-            'memory_working_set': f'sum by(pod) (container_memory_working_set_bytes{matchers})',
-            'cpu_usage': f'sum by(pod) (rate(container_cpu_usage_seconds_total{matchers}[{interval}])) * 100',
-            'memory_limit': f'sum by(pod) (container_spec_memory_limit_bytes{matchers})',
-            'cpu_limit': f'sum by(pod) (container_spec_cpu_quota{matchers}) / sum by(pod) (container_spec_cpu_period{matchers}) * 100'
+            'memory_usage': f'sum by({group_by}) (container_memory_rss{matchers})',
+            'memory_working_set': f'sum by({group_by}) (container_memory_working_set_bytes{matchers})',
+            'cpu_usage': f'sum by({group_by}) (rate(container_cpu_usage_seconds_total{matchers}[{interval}])) * 100',
+            'memory_limit': f'sum by({group_by}) (container_spec_memory_limit_bytes{matchers})',
+            'cpu_limit': f'sum by({group_by}) (container_spec_cpu_quota{matchers}) / sum by({group_by}) (container_spec_cpu_period{matchers}) * 100'
         }
 
     def _build_label_matchers(self, pod_pattern: str, container_pattern: str, namespace_pattern: str) -> str:
@@ -55,92 +60,56 @@ class PodsUsageCollector:
         return '{' + ', '.join(parts) + '}'
     
     def _get_ovn_queries(self, interval: str = "1m") -> Dict[str, str]:
-        """Get OVN-specific PromQL queries"""
+        """Get OVN-specific PromQL queries with broader container coverage"""
         return {
-            'memory_ovnkube_node_pods': 'sum by(pod) (container_memory_rss{pod=~"ovnkube-node-.*", container=~"kube-rbac-proxy-node|kube-rbac-proxy-ovn-metrics|nbdb|northd|ovn-acl-logging|ovn-controller|ovnkube-controller|sbdb", container!="", container!="POD"})',
-            'cpu_ovnkube_node_pods': f'sum by(pod) (rate(container_cpu_usage_seconds_total{{pod=~"ovnkube-node.*", namespace=~"openshift-ovn-kubernetes", container!="", container!="POD"}}[{interval}])) * 100'
+            # Memory queries for OVN pods - use working set which is more accurate for actual usage
+            'memory_usage': 'sum by(pod, container) (container_memory_working_set_bytes{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
+            'memory_rss': 'sum by(pod, container) (container_memory_rss{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
+            
+            # CPU queries for OVN pods - use broader matching
+            'cpu_usage': f'sum by(pod, container) (rate(container_cpu_usage_seconds_total{{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}}[{interval}])) * 100',
+            
+            # Resource limits for context
+            'memory_limit': 'sum by(pod, container) (container_spec_memory_limit_bytes{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
+            'cpu_limit': 'sum by(pod, container) (container_spec_cpu_quota{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}) / sum by(pod, container) (container_spec_cpu_period{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}) * 100'
         }
     
-    async def _get_node_info(self, pod_name: str) -> Optional[Dict[str, Any]]:
-        """Get node information for a pod"""
-        if not self.auth or not self.auth.kube_client:
-            return None
-        
+    async def _get_pod_node_mapping(self, namespace_pattern: str = ".*") -> Dict[str, Dict[str, str]]:
+        """Get pod to node and namespace mapping using utility functions as first choice"""
         try:
-            v1 = client.CoreV1Api(self.auth.kube_client)
+            # First choice: Use utility function for specific namespace
+            if namespace_pattern != ".*":
+                pod_info = self.utility.get_pod_full_info_via_oc(namespace=namespace_pattern)
+                return pod_info
             
-            # Try to find the pod across all namespaces
-            for namespace in ['default', 'openshift-ovn-kubernetes', 'kube-system', 'openshift-monitoring']:
-                try:
-                    pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
-                    node_name = pod.spec.node_name
-                    
-                    if node_name and node_name not in self.node_info_cache:
-                        # Get node information
-                        try:
-                            node = v1.read_node(name=node_name)
-                            labels = node.metadata.labels or {}
-                            # Derive roles from standard label patterns, e.g.,
-                            #  - node-role.kubernetes.io/worker: ""
-                            #  - node-role.kubernetes.io/master: ""
-                            # Also support legacy kubernetes.io/role: "master|worker"
-                            roles_set = set()
-                            for label_key, label_value in labels.items():
-                                if label_key.startswith('node-role.kubernetes.io/'):
-                                    role_suffix = label_key.split('/', 1)[1]
-                                    roles_set.add(role_suffix or (label_value or 'unknown'))
-                                elif label_key == 'kubernetes.io/role' and label_value:
-                                    roles_set.add(label_value)
-
-                            # Prefer modern topology label, fallback to legacy failure-domain label
-                            zone = labels.get('topology.kubernetes.io/zone', labels.get('failure-domain.beta.kubernetes.io/zone', 'unknown'))
-                            # Prefer modern instance-type label, fallback to legacy beta label
-                            instance_type = labels.get('node.kubernetes.io/instance-type', labels.get('beta.kubernetes.io/instance-type', 'unknown'))
-
-                            self.node_info_cache[node_name] = {
-                                'name': node_name,
-                                'roles': sorted(list(roles_set)),
-                                'zone': zone,
-                                'instance_type': instance_type,
-                                'os': node.status.node_info.os_image,
-                                'kernel': node.status.node_info.kernel_version,
-                                'kubelet_version': node.status.node_info.kubelet_version,
-                                'allocatable_cpu': node.status.allocatable.get('cpu', 'unknown'),
-                                'allocatable_memory': node.status.allocatable.get('memory', 'unknown')
-                            }
-                        except ApiException:
-                            self.node_info_cache[node_name] = {'name': node_name, 'error': 'Could not fetch node details'}
-                    
-                    return {
-                        'pod_name': pod_name,
-                        'namespace': namespace,
-                        'node_name': node_name,
-                        'node_info': self.node_info_cache.get(node_name, {}),
-                        'creation_timestamp': pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None,
-                        'labels': dict(pod.metadata.labels) if pod.metadata.labels else {},
-                        'phase': pod.status.phase,
-                        'restart_count': sum([container.restart_count for container in (pod.status.container_statuses or [])])
-                    }
-                except ApiException:
-                    continue
+            # For wildcard namespace, try global query first
+            try:
+                all_pod_info = self.utility.get_all_pods_info_via_oc_global()
+                if all_pod_info:
+                    return all_pod_info
+            except Exception:
+                pass
             
-            return None
+            # Fallback: Get info across common namespaces
+            all_pod_info = self.utility.get_all_pods_info_across_namespaces()
+            return all_pod_info
             
         except Exception as e:
-            print(f"Warning: Could not get node info for pod {pod_name}: {e}")
-            return None
+            print(f"Warning: Could not get pod-node mapping: {e}")
+            return {}
     
-    def _extract_pod_name_from_metric(self, metric: Dict[str, Any]) -> str:
-        """Extract pod name from Prometheus metric labels"""
-        if 'metric' in metric and 'pod' in metric['metric']:
-            return metric['metric']['pod']
-        return 'unknown'
-    
-    def _extract_node_name_from_metric(self, metric: Dict[str, Any]) -> str:
-        """Extract node name from Prometheus metric labels"""
-        if 'metric' in metric and 'node' in metric['metric']:
-            return metric['metric']['node']
-        return 'unknown'
+    def _extract_identifiers_from_metric(self, metric: Dict[str, Any]) -> Tuple[str, str, str]:
+        """Extract pod name, container name, and namespace from Prometheus metric labels"""
+        pod_name = 'unknown'
+        container_name = 'unknown'
+        namespace = 'unknown'
+        
+        if 'metric' in metric:
+            pod_name = metric['metric'].get('pod', 'unknown')
+            container_name = metric['metric'].get('container', 'unknown')
+            namespace = metric['metric'].get('namespace', 'unknown')
+        
+        return pod_name, container_name, namespace
     
     def _calculate_stats(self, values: List[float]) -> Dict[str, float]:
         """Calculate min, max, avg from a list of values"""
@@ -184,25 +153,31 @@ class PodsUsageCollector:
             namespace_pattern: Regular expression pattern for namespace names
             custom_queries: Custom PromQL queries dictionary
             use_ovn_queries: Use predefined OVN queries
-            time: Optional specific timestamp
+            time: Optional specific timestamp (UTC)
             
         Returns:
-            Dictionary containing usage summary and top 10 pods
+            Dictionary containing usage summary and separate top 5 pods for CPU and memory
         """
         try:
             # Determine queries to use
             if custom_queries:
                 queries = custom_queries
+                include_containers = container_pattern != ".*"
             elif use_ovn_queries:
                 queries = self._get_ovn_queries()
+                include_containers = True  # Force container-level analysis for OVN
             else:
                 queries = self._get_default_queries(pod_pattern, container_pattern, namespace_pattern)
+                include_containers = container_pattern != ".*"
             
             # Execute queries
             results = await self.prometheus_client.query_multiple_instant(queries, time)
             
-            # Process results
-            pod_usage = {}
+            # Get pod-node mapping using utility as first choice
+            pod_info_mapping = await self._get_pod_node_mapping(namespace_pattern)
+            
+            # Process results - group by pod and container if needed
+            usage_data = {}
             
             for query_name, result in results.items():
                 if 'error' in result:
@@ -213,15 +188,29 @@ class PodsUsageCollector:
                     continue
                 
                 for metric in result['result']:
-                    pod_name = self._extract_pod_name_from_metric(metric)
-                    node_name = self._extract_node_name_from_metric(metric)
+                    pod_name, container_name, metric_namespace = self._extract_identifiers_from_metric(metric)
                     
-                    if pod_name not in pod_usage:
-                        pod_usage[pod_name] = {
+                    # Create unique key for pod/container combination
+                    if include_containers:
+                        key = f"{pod_name}:{container_name}"
+                    else:
+                        key = pod_name
+                    
+                    if key not in usage_data:
+                        # Get node name and namespace from mapping first, then fallback to metric
+                        pod_info = pod_info_mapping.get(pod_name, {})
+                        node_name = pod_info.get('node_name', 'unknown')
+                        namespace = pod_info.get('namespace', metric_namespace if metric_namespace != 'unknown' else 'unknown')
+                        
+                        usage_data[key] = {
                             'pod_name': pod_name,
                             'node_name': node_name,
+                            'namespace': namespace,
                             'metrics': {}
                         }
+                        
+                        if include_containers:
+                            usage_data[key]['container_name'] = container_name
                     
                     # Extract value
                     if 'value' in metric:
@@ -231,22 +220,13 @@ class PodsUsageCollector:
                         except (ValueError, TypeError):
                             numeric_value = 0.0
                         
-                        pod_usage[pod_name]['metrics'][query_name] = {
+                        usage_data[key]['metrics'][query_name] = {
                             'value': numeric_value,
                             'timestamp': float(timestamp)
                         }
             
-            # Get additional pod information
-            for pod_name in pod_usage:
-                node_info = await self._get_node_info(pod_name)
-                if node_info:
-                    pod_usage[pod_name]['pod_info'] = node_info
-                    # Update node_name from pod_info if it was 'unknown'
-                    if pod_usage[pod_name]['node_name'] == 'unknown' and 'node_name' in node_info:
-                        pod_usage[pod_name]['node_name'] = node_info['node_name']
-            
-            # Create summary
-            summary = self._create_usage_summary(pod_usage, is_instant=True)
+            # Create summary with separate top 5 rankings
+            summary = self._create_usage_summary(usage_data, is_instant=True, include_containers=include_containers)
             
             return summary
             
@@ -273,10 +253,10 @@ class PodsUsageCollector:
             custom_queries: Custom PromQL queries dictionary
             use_ovn_queries: Use predefined OVN queries
             step: Query resolution step
-            end_time: Optional end time
+            end_time: Optional end time (UTC)
             
         Returns:
-            Dictionary containing usage summary and top 10 pods
+            Dictionary containing usage summary and separate top 5 pods for CPU and memory
         """
         try:
             # Get time range
@@ -285,18 +265,24 @@ class PodsUsageCollector:
             # Determine queries to use with dynamic rate window
             if custom_queries:
                 queries = custom_queries
+                include_containers = container_pattern != ".*"
             elif use_ovn_queries:
                 rate_window = self._select_rate_window(duration)
                 queries = self._get_ovn_queries(interval=rate_window)
+                include_containers = True  # Force container-level analysis for OVN
             else:
                 rate_window = self._select_rate_window(duration)
                 queries = self._get_default_queries(pod_pattern, container_pattern, namespace_pattern, interval=rate_window)
+                include_containers = container_pattern != ".*"
             
             # Execute range queries
             results = await self.prometheus_client.query_multiple_range(queries, start_time, actual_end_time, step)
             
-            # Process results
-            pod_usage = {}
+            # Get pod-node mapping using utility as first choice
+            pod_info_mapping = await self._get_pod_node_mapping(namespace_pattern)
+            
+            # Process results - group by pod and container if needed
+            usage_data = {}
             
             for query_name, result in results.items():
                 if 'error' in result:
@@ -307,15 +293,29 @@ class PodsUsageCollector:
                     continue
                 
                 for metric in result['result']:
-                    pod_name = self._extract_pod_name_from_metric(metric)
-                    node_name = self._extract_node_name_from_metric(metric)
+                    pod_name, container_name, metric_namespace = self._extract_identifiers_from_metric(metric)
                     
-                    if pod_name not in pod_usage:
-                        pod_usage[pod_name] = {
+                    # Create unique key for pod/container combination
+                    if include_containers:
+                        key = f"{pod_name}:{container_name}"
+                    else:
+                        key = pod_name
+                    
+                    if key not in usage_data:
+                        # Get node name and namespace from mapping first
+                        pod_info = pod_info_mapping.get(pod_name, {})
+                        node_name = pod_info.get('node_name', 'unknown')
+                        namespace = pod_info.get('namespace', metric_namespace)
+                        
+                        usage_data[key] = {
                             'pod_name': pod_name,
                             'node_name': node_name,
+                            'namespace': namespace,
                             'metrics': {}
                         }
+                        
+                        if include_containers:
+                            usage_data[key]['container_name'] = container_name
                     
                     # Extract time series values
                     if 'values' in metric:
@@ -333,7 +333,7 @@ class PodsUsageCollector:
                         
                         if values:
                             stats = self._calculate_stats(values)
-                            pod_usage[pod_name]['metrics'][query_name] = {
+                            usage_data[key]['metrics'][query_name] = {
                                 'min': stats['min'],
                                 'max': stats['max'],
                                 'avg': stats['avg'],
@@ -342,19 +342,8 @@ class PodsUsageCollector:
                                 'end_time': max(timestamps) if timestamps else None
                             }
             
-            # Get additional pod information and ensure node names are populated
-            for pod_name in pod_usage:
-                node_info = await self._get_node_info(pod_name)
-                print("#*"*35)
-                print("node_info in side of collect_duration_usage:\n",node_info)
-                if node_info:
-                    pod_usage[pod_name]['pod_info'] = node_info
-                    # Update node_name from pod_info if it was 'unknown' or empty
-                    if pod_usage[pod_name]['node_name'] in ['unknown', ''] and 'node_name' in node_info:
-                        pod_usage[pod_name]['node_name'] = node_info['node_name']
-            
-            # Create summary
-            summary = self._create_usage_summary(pod_usage, is_instant=False)
+            # Create summary with separate top 5 rankings
+            summary = self._create_usage_summary(usage_data, is_instant=False, include_containers=include_containers)
             summary['query_info'] = {
                 'duration': duration,
                 'start_time': start_time,
@@ -386,14 +375,14 @@ class PodsUsageCollector:
         except Exception:
             return "1m"
     
-    def _create_usage_summary(self, pod_usage: Dict[str, Any], is_instant: bool) -> Dict[str, Any]:
-        """Create usage summary from collected pod usage data"""
+    def _create_usage_summary(self, usage_data: Dict[str, Any], is_instant: bool, include_containers: bool = False) -> Dict[str, Any]:
+        """Create usage summary from collected usage data with separate top 5 CPU and memory rankings"""
         
-        # Calculate CPU and memory usage for ranking
-        pod_rankings = []
+        # Prepare entries for ranking
+        entries = []
         
-        for pod_name, pod_data in pod_usage.items():
-            metrics = pod_data.get('metrics', {})
+        for key, data in usage_data.items():
+            metrics = data.get('metrics', {})
             
             # Get CPU usage (try different metric names)
             cpu_usage = 0.0
@@ -405,9 +394,11 @@ class PodsUsageCollector:
                         cpu_usage = metrics[cpu_metric].get('avg', 0.0)
                     break
             
-            # Get memory usage (try different metric names) 
+            # Get memory usage (try different metric names, prioritize working set for OVN) 
             memory_usage = 0.0
-            for mem_metric in ['memory_usage', 'memory_working_set', 'memory_ovnkube_node_pods', 'memory-ovnkube-node-pods']:
+            # For OVN queries, prioritize memory_usage (working_set) over memory_rss
+            memory_metrics_priority = ['memory_usage', 'memory_working_set', 'memory_rss', 'memory_ovnkube_node_pods', 'memory-ovnkube-node-pods']
+            for mem_metric in memory_metrics_priority:
                 if mem_metric in metrics:
                     if is_instant:
                         memory_usage = metrics[mem_metric].get('value', 0.0)
@@ -415,109 +406,104 @@ class PodsUsageCollector:
                         memory_usage = metrics[mem_metric].get('avg', 0.0)
                     break
             
-            # Calculate combined usage score for ranking (CPU% + Memory in MB)
-            memory_mb = memory_usage / (1024 * 1024) if memory_usage > 0 else 0
-            usage_score = cpu_usage + memory_mb * 0.01  # Weight memory less than CPU
+            entry = {
+                'pod_name': data['pod_name'],
+                'node_name': data['node_name'],
+                'namespace': data['namespace'],
+                'cpu_usage': cpu_usage,
+                'memory_usage': memory_usage,
+                'data': data
+            }
             
-            # Get node name - prioritize from pod_info, then from initial data
-            node_name = 'unknown'
-            if 'pod_info' in pod_data and 'node_name' in pod_data['pod_info']:
-                node_name = pod_data['pod_info']['node_name']
-            elif pod_data.get('node_name') and pod_data.get('node_name') != 'unknown':
-                node_name = pod_data['node_name']
+            if include_containers:
+                entry['container_name'] = data.get('container_name', 'unknown')
             
-            pod_rankings.append({
-                'pod_name': pod_name,
-                'node_name': node_name,
-                'cpu_usage_percent': cpu_usage,
-                'memory_usage_bytes': memory_usage,
-                'usage_score': usage_score,
-                'pod_data': pod_data
-            })
+            entries.append(entry)
         
-        # Sort by usage score and get top 10
-        pod_rankings.sort(key=lambda x: x['usage_score'], reverse=True)
-        top_10_pods = pod_rankings[:10]
+        # Create separate top 5 rankings for CPU and memory
+        cpu_rankings = sorted(entries, key=lambda x: x['cpu_usage'], reverse=True)[:5]
+        memory_rankings = sorted(entries, key=lambda x: x['memory_usage'], reverse=True)[:5]
         
-        # Create formatted summary
+        # Create formatted summary with UTC timezone
         summary = {
             'collection_timestamp': datetime.now(timezone.utc).isoformat(),
             'collection_type': 'instant' if is_instant else 'duration',
-            'total_pods_analyzed': len(pod_usage),
-            'top_10_pods': []
+            'total_analyzed': len(usage_data),
+            'include_containers': include_containers,
+            'top_5_cpu_usage': [],
+            'top_5_memory_usage': []
         }
         
-        for rank, pod in enumerate(top_10_pods, 1):
-            pod_data = pod['pod_data']
-            
-            # Ensure node_name is always present in the summary
-            node_name = pod['node_name']
-            if node_name == 'unknown' and 'pod_info' in pod_data and 'node_name' in pod_data['pod_info']:
-                node_name = pod_data['pod_info']['node_name']
-            
-            pod_summary = {
-                'rank': rank,
-                'pod_name': pod['pod_name'],
-                'node_name': node_name,
-                'usage_metrics': {}
-            }
-            
-            # Add pod info if available
-            if 'pod_info' in pod_data:
-                pod_summary['pod_info'] = pod_data['pod_info']
-            
-            # Format metrics
-            for metric_name, metric_data in pod_data.get('metrics', {}).items():
-                if 'cpu' in metric_name.lower():
-                    if is_instant:
-                        pod_summary['usage_metrics'][metric_name] = {
-                            'value': round(metric_data.get('value', 0.0), 2),
-                            'unit': '%',
-                            'timestamp': metric_data.get('timestamp')
-                        }
-                    else:
-                        pod_summary['usage_metrics'][metric_name] = {
-                            'min': round(metric_data.get('min', 0.0), 2),
-                            'avg': round(metric_data.get('avg', 0.0), 2),
-                            'max': round(metric_data.get('max', 0.0), 2),
-                            'unit': '%',
-                            'data_points': metric_data.get('data_points', 0)
-                        }
-                        
-                elif 'memory' in metric_name.lower():
-                    if is_instant:
-                        value = metric_data.get('value', 0.0)
-                        formatted_value, unit = self._format_memory_bytes(value)
-                        pod_summary['usage_metrics'][metric_name] = {
-                            'value': formatted_value,
-                            'unit': unit,
-                            'timestamp': metric_data.get('timestamp')
-                        }
-                    else:
-                        min_val, min_unit = self._format_memory_bytes(metric_data.get('min', 0.0))
-                        avg_val, avg_unit = self._format_memory_bytes(metric_data.get('avg', 0.0))
-                        max_val, max_unit = self._format_memory_bytes(metric_data.get('max', 0.0))
-                        
-                        pod_summary['usage_metrics'][metric_name] = {
-                            'min': min_val,
-                            'avg': avg_val, 
-                            'max': max_val,
-                            'unit': max_unit,  # Use max unit as representative
-                            'data_points': metric_data.get('data_points', 0)
-                        }
-            
-            summary['top_10_pods'].append(pod_summary)
+        # Format CPU top 5 usage
+        for rank, entry in enumerate(cpu_rankings, 1):
+            cpu_summary = self._format_usage_entry(entry, rank, is_instant, include_containers, focus='cpu')
+            summary['top_5_cpu_usage'].append(cpu_summary)
+        
+        # Format Memory top 5 usage
+        for rank, entry in enumerate(memory_rankings, 1):
+            memory_summary = self._format_usage_entry(entry, rank, is_instant, include_containers, focus='memory')
+            summary['top_5_memory_usage'].append(memory_summary)
         
         return summary
     
-    def export_summary_json(self, summary: Dict[str, Any], output_file: str) -> None:
-        """Export summary to JSON file"""
-        try:
-            with open(output_file, 'w') as f:
-                json.dump(summary, f, indent=2, default=str)
-            print(f"✅ Summary exported to {output_file}")
-        except Exception as e:
-            print(f"❌ Failed to export summary: {e}")
+    def _format_usage_entry(self, entry: Dict[str, Any], rank: int, is_instant: bool, include_containers: bool, focus: str = 'all') -> Dict[str, Any]:
+        """Format a single usage entry for the summary (max 5 levels deep)"""
+        data = entry['data']
+        
+        usage_summary = {
+            'rank': rank,
+            'pod_name': entry['pod_name'],
+            'node_name': entry['node_name'],
+            'namespace': entry['namespace']
+        }
+        
+        if include_containers:
+            usage_summary['container_name'] = entry.get('container_name', 'unknown')
+        
+        # Format metrics based on focus (keep within 5 level limit)
+        usage_summary['metrics'] = {}
+        for metric_name, metric_data in data.get('metrics', {}).items():
+            # Filter metrics based on focus
+            if focus == 'cpu' and 'cpu' not in metric_name.lower():
+                continue
+            elif focus == 'memory' and 'memory' not in metric_name.lower():
+                continue
+            
+            if 'cpu' in metric_name.lower():
+                if is_instant:
+                    usage_summary['metrics'][metric_name] = {
+                        'value': round(metric_data.get('value', 0.0), 2),
+                        'unit': '%'
+                    }
+                else:
+                    usage_summary['metrics'][metric_name] = {
+                        'min': round(metric_data.get('min', 0.0), 2),
+                        'avg': round(metric_data.get('avg', 0.0), 2),
+                        'max': round(metric_data.get('max', 0.0), 2),
+                        'unit': '%'
+                    }
+                    
+            elif 'memory' in metric_name.lower():
+                if is_instant:
+                    value = metric_data.get('value', 0.0)
+                    formatted_value, unit = self._format_memory_bytes(value)
+                    usage_summary['metrics'][metric_name] = {
+                        'value': formatted_value,
+                        'unit': unit
+                    }
+                else:
+                    min_val, min_unit = self._format_memory_bytes(metric_data.get('min', 0.0))
+                    avg_val, avg_unit = self._format_memory_bytes(metric_data.get('avg', 0.0))
+                    max_val, max_unit = self._format_memory_bytes(metric_data.get('max', 0.0))
+                    
+                    usage_summary['metrics'][metric_name] = {
+                        'min': min_val,
+                        'avg': avg_val, 
+                        'max': max_val,
+                        'unit': max_unit
+                    }
+        
+        return usage_summary
 
 
 # Example usage functions

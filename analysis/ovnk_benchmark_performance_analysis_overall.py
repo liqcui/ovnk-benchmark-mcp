@@ -16,12 +16,12 @@ from dataclasses import dataclass, asdict
 from analysis.ovnk_benchmark_performance_analysis_allovnk import OVNKPerformanceAnalyzer
 from analysis.ovnk_benchmark_performance_analysis_clusters_api import ClusterAPIPerformanceAnalyzer
 from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo, collect_cluster_information
-from tools.ovnk_benchmark_prometheus_nodes_usage import NodeUsageQuery
-from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
+from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
+from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
 from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
 from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
-from tools.ovnk_benchmark_prometheus_ovnk_basicinfo import ovnBasicInfoCollector, get_pod_phase_counts
+from tools.ovnk_benchmark_prometheus_basicinfo import ovnBasicInfoCollector, get_pod_phase_counts
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 
@@ -218,8 +218,8 @@ class OverallPerformanceAnalyzer:
         """Collect node usage analysis"""
         try:
             async with PrometheusBaseQuery(self.prometheus_url, self.token) as client:
-                node_query = NodeUsageQuery(client)
-                return await node_query.query_node_usage(duration)
+                collector = nodeUsageCollector(client, self.auth_client)
+                return await collector.collect_usage_data(duration)
         except Exception as e:
             logger.error(f"Failed to collect node usage: {e}")
             return {'error': str(e)}
@@ -287,7 +287,7 @@ class OverallPerformanceAnalyzer:
         """Collect API latency analysis"""
         try:
             async with PrometheusBaseQuery(self.prometheus_url, self.token) as client:
-                api_metrics = KubeAPIMetrics(client)
+                api_metrics = kubeAPICollector(client)
                 return await api_metrics.get_metrics(duration)
         except Exception as e:
             logger.error(f"Failed to collect API latency: {e}")

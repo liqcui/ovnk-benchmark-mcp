@@ -18,8 +18,8 @@ from dataclasses import dataclass, asdict
 
 # Import required modules
 from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo, NodeInfo, ClusterInfo
-from tools.ovnk_benchmark_prometheus_nodes_usage import NodeUsageQuery
-from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
+from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
+from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from analysis.ovnk_benchmark_performance_utility import (
     BasePerformanceAnalyzer, PerformanceLevel, AlertLevel, ResourceType,
     PerformanceThreshold, PerformanceAlert, AnalysisMetadata, ClusterHealth,
@@ -940,7 +940,7 @@ async def main():
         # Initialize data collectors (these would be imported from your modules)
         general_info = OpenShiftGeneralInfo()
         node_usage_query = NodeUsageQuery()
-        api_metrics = KubeAPIMetrics()
+        api_metrics = kubeAPICollector()
         
         # Collect cluster information
         print("Collecting cluster information...")

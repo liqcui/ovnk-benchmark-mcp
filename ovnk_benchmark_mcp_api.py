@@ -18,7 +18,7 @@ import uvicorn
 # Import all the components from the original MCP server
 from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
-from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
+from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
 from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
 from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
@@ -240,7 +240,7 @@ async def get_openshift_general_info(request: GeneralInfoRequest = GeneralInfoRe
         )
 
 @app.post("/api/v1/cluster/node-usage", summary="Get Cluster Node Usage Metrics")
-async def get_cluster_node_usage(request: MetricsRequest = MetricsRequest()):
+async def query_cluster_node_usage(request: MetricsRequest = MetricsRequest()):
     """Get cluster node resource usage metrics including CPU utilization, memory consumption, disk usage, and network utilization."""
     global prometheus_client
     try:
@@ -263,7 +263,7 @@ async def query_kube_api_metrics(request: MetricsRequest = MetricsRequest()):
     try:
         if not prometheus_client:
             await initialize_components()
-        kube_api_metrics = KubeAPIMetrics(prometheus_client)
+        kube_api_metrics = kubeAPICollector(prometheus_client)
         return await kube_api_metrics.get_metrics(request.duration, request.start_time, request.end_time)
     except Exception as e:
         raise HTTPException(

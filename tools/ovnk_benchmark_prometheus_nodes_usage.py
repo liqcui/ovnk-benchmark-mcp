@@ -1,168 +1,79 @@
 #!/usr/bin/env python3
 """
-OVNK Benchmark Prometheus Node Usage Query
-Queries CPU, RAM, and network usage metrics for nodes grouped by role (master/infra/worker)
-Uses standard Kubernetes node role labels for role detection
+OVNK Benchmark Prometheus Node Usage Collector
+Collects CPU, RAM, and network usage metrics for nodes grouped by role
 """
 
 import asyncio
 import json
-import argparse
+import yaml
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 import sys
-import re
-import subprocess
 
-# Import the base query class and authentication
+# Import dependencies
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery, PrometheusQueryError
+from tools.ovnk_benchmark_prometheus_utility import mcpToolsUtility
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
-from kubernetes import client
-from kubernetes.client.rest import ApiException
 
 
-class NodeUsageQuery:
-    """Query node usage metrics from Prometheus with node role detection"""
+class nodeUsageCollector:
+    """Collect node usage metrics from Prometheus with role-based grouping"""
     
     def __init__(self, prometheus_client: PrometheusBaseQuery, auth_client: Optional[OpenShiftAuth] = None):
         self.prometheus_client = prometheus_client
         self.auth_client = auth_client
+        self.utility = mcpToolsUtility(auth_client)
         
-        # Base metric queries without role grouping
-        self.base_queries = {
+        # Default PromQL queries (hardcoded fallback)
+        self.default_queries = {
             'cpu_usage': '100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)',
             'memory_usage': '(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / 1024 / 1024',
             'network_rx': 'sum by (instance) (rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|virbr.*|cni.*|flannel.*|br.*|vxlan.*|genev.*|tun.*|tap.*|ovs.*"}[5m]))',
             'network_tx': 'sum by (instance) (rate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|virbr.*|cni.*|flannel.*|br.*|vxlan.*|genev.*|tun.*|tap.*|ovs.*"}[5m]))'
         }
         
+        # Load queries from metrics.yaml or use defaults
+        self.queries = self.load_metrics_config()
+        
         # Metric units
         self.units = {
             'cpu_usage': '%',
-            'memory_usage': 'MB',
+            'memory_usage': 'MB', 
             'network_rx': 'bytes/s',
             'network_tx': 'bytes/s'
         }
-        
-        # Standard Kubernetes node role labels in order of priority
-        self.role_labels = [
-            'node-role.kubernetes.io/control-plane',
-            'node-role.kubernetes.io/master', 
-            'node-role.kubernetes.io/infra',
-            'node-role.kubernetes.io/worker'
-        ]
     
-    async def get_node_labels_from_kubernetes(self) -> Dict[str, Dict[str, str]]:
-        """Get node labels directly from Kubernetes API"""
-        if not self.auth_client or not self.auth_client.kube_client:
-            return {}
+    def load_metrics_config(self) -> Dict[str, str]:
+        """Load metrics from metrics.yaml or use hardcoded defaults"""
+        metrics_file = 'metrics.yaml'
         
-        try:
-            v1 = client.CoreV1Api(self.auth_client.kube_client)
-            nodes = v1.list_node()
-            
-            labels_map = {}
-            for node in nodes.items:
-                node_name = node.metadata.name
-                labels = node.metadata.labels or {}
-                
-                # Store labels for this node and potential name variations
-                candidates = [node_name]
-                if '.' in node_name:
-                    candidates.append(node_name.split('.')[0])
-                
-                for key in candidates:
-                    if key not in labels_map:
-                        labels_map[key] = labels
-            
-            return labels_map
-            
-        except Exception as e:
-            print(f"Warning: Could not fetch node labels from Kubernetes API: {e}", file=sys.stderr)
-            return {}
-
-    async def get_node_labels_via_oc(self) -> Dict[str, Dict[str, str]]:
-        """Get node labels using oc CLI as a fallback."""
-        try:
-            completed = subprocess.run(
-                ["oc", "get", "nodes", "-o", "json"],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            data = json.loads(completed.stdout)
-            items = data.get("items", []) if isinstance(data, dict) else []
-            labels_map: Dict[str, Dict[str, str]] = {}
-            for node in items:
-                metadata = node.get("metadata", {})
-                node_name = metadata.get("name", "")
-                labels = metadata.get("labels", {}) or {}
-                candidates = [node_name]
-                if '.' in node_name:
-                    candidates.append(node_name.split('.')[0])
-                for key in candidates:
-                    if key and key not in labels_map:
-                        labels_map[key] = labels
-            if labels_map:
-                print(f"Retrieved node labels via oc for {len(labels_map)} nodes", file=sys.stderr)
-            return labels_map
-        except Exception as e:
-            print(f"Warning: Could not fetch node labels via oc CLI: {e}", file=sys.stderr)
-            return {}
+        if os.path.exists(metrics_file):
+            try:
+                with open(metrics_file, 'r') as f:
+                    config = yaml.safe_load(f)
+                    
+                if isinstance(config, dict) and 'metrics' in config:
+                    metrics = config['metrics']
+                    queries = {}
+                    
+                    # Extract relevant queries
+                    for metric_name in ['cpu_usage', 'memory_usage', 'network_rx', 'network_tx']:
+                        if metric_name in metrics:
+                            queries[metric_name] = metrics[metric_name].get('query', self.default_queries[metric_name])
+                        else:
+                            queries[metric_name] = self.default_queries[metric_name]
+                    
+                    return queries
+            except Exception:
+                pass
+        
+        # Return defaults if config loading fails
+        return self.default_queries
     
-    async def get_node_labels(self) -> Dict[str, Dict[str, str]]:
-        """Get node labels from Kubernetes API first, fallback to Prometheus metric"""
-        # Try Kubernetes API first if available
-        if self.auth_client:
-            k8s_labels = await self.get_node_labels_from_kubernetes()
-            if k8s_labels:
-                print(f"Retrieved node labels from Kubernetes API for {len(k8s_labels)} nodes", file=sys.stderr)
-                return k8s_labels
-        
-        # Try oc CLI as a secondary fallback
-        oc_labels = await self.get_node_labels_via_oc()
-        if oc_labels:
-            return oc_labels
-        
-        # Fallback to Prometheus metric
-        print("Falling back to Prometheus kube_node_labels metric", file=sys.stderr)
-        try:
-            result = await self.prometheus_client.query_instant('kube_node_labels')
-            labels_map: Dict[str, Dict[str, str]] = {}
-            
-            if 'result' in result:
-                for item in result['result']:
-                    if 'metric' not in item:
-                        continue
-                    metric_labels = item['metric']
-                    node_name = metric_labels.get('node') or metric_labels.get('kubernetes_node') or metric_labels.get('nodename')
-                    instance = metric_labels.get('instance', '')
-                    host = instance.split(':')[0] if instance else ''
-                    
-                    # Keep all labels except __name__
-                    labels = {k: v for k, v in metric_labels.items() if k != '__name__'}
-                    
-                    candidates: List[str] = []
-                    if node_name:
-                        candidates.append(node_name)
-                        if '.' in node_name:
-                            candidates.append(node_name.split('.')[0])
-                    if host:
-                        candidates.append(host)
-                        if '.' in host:
-                            candidates.append(host.split('.')[0])
-                    
-                    for key in candidates:
-                        if key and key not in labels_map:
-                            labels_map[key] = labels
-            
-            return labels_map
-        except Exception as e:
-            print(f"Warning: Could not fetch node labels: {e}", file=sys.stderr)
-            return {}
-    
-    async def get_node_instance_mapping(self) -> Dict[str, str]:
-        """Get mapping from instance to node name"""
+    async def get_instance_node_mapping(self) -> Dict[str, str]:
+        """Get mapping from Prometheus instance to node name"""
         try:
             result = await self.prometheus_client.query_instant('up{job="node-exporter"}')
             instance_to_node = {}
@@ -171,93 +82,28 @@ class NodeUsageQuery:
                 for item in result['result']:
                     if 'metric' in item:
                         instance = item['metric'].get('instance', '')
-                        # Try to get node name from various possible labels
                         node_name = (item['metric'].get('node') or 
                                    item['metric'].get('nodename') or 
                                    item['metric'].get('kubernetes_node') or
-                                   instance.split(':')[0])  # fallback to instance without port
+                                   instance.split(':')[0])
                         
                         if instance and node_name:
                             instance_to_node[instance] = node_name
             
             return instance_to_node
-        except Exception as e:
-            print(f"Warning: Could not get instance mapping: {e}", file=sys.stderr)
+        except Exception:
             return {}
     
-    def determine_node_role(self, node_name: str, labels: Dict[str, str], instance: str) -> str:
-        """Determine node role from standard Kubernetes node role labels"""
-        
-        # Check for standard Kubernetes node role labels in priority order
-        for role_label in self.role_labels:
-            if role_label in labels:
-                # Extract role from the label name
-                if 'control-plane' in role_label:
-                    return 'master'
-                elif 'master' in role_label:
-                    return 'master'
-                elif 'infra' in role_label:
-                    return 'infra'
-                elif 'worker' in role_label:
-                    return 'worker'
-        
-        # Fallback: Check other node labels for role indicators
-        for label_key, label_value in labels.items():
-            label_key_lower = label_key.lower()
-            label_value_lower = label_value.lower()
-            
-            # Check label keys
-            if 'master' in label_key_lower or 'control-plane' in label_key_lower or 'controlplane' in label_key_lower:
-                return 'master'
-            elif 'infra' in label_key_lower:
-                return 'infra'  
-            elif 'worker' in label_key_lower:
-                return 'worker'
-            
-            # Check label values
-            if 'master' in label_value_lower or 'control' in label_value_lower:
-                return 'master'
-            elif 'infra' in label_value_lower:
-                return 'infra'
-            elif 'worker' in label_value_lower:
-                return 'worker'
-        
-        # Final fallback to name pattern matching
-        name_lower = node_name.lower()
-        instance_lower = instance.lower().split(':')[0]
-        
-        # Check node name patterns
-        if any(pattern in name_lower for pattern in ['master', 'control', 'cp']):
-            return 'master'
-        elif any(pattern in name_lower for pattern in ['infra', 'infrastructure']):
-            return 'infra'
-        elif any(pattern in name_lower for pattern in ['worker', 'node', 'compute']):
-            return 'worker'
-        
-        # Check instance patterns
-        if any(pattern in instance_lower for pattern in ['master', 'control', 'cp']):
-            return 'master'
-        elif any(pattern in instance_lower for pattern in ['infra', 'infrastructure']):
-            return 'infra'
-        elif any(pattern in instance_lower for pattern in ['worker', 'node', 'compute']):
-            return 'worker'
-        
-        return 'unknown'
-    
     async def query_metric_stats(self, metric_query: str, start_time: str, end_time: str) -> Dict[str, Dict[str, float]]:
-        """Query a metric and calculate min/avg/max for each instance"""
+        """Query metric and calculate min/avg/max for each instance"""
         try:
             result = await self.prometheus_client.query_range(metric_query, start_time, end_time, '15s')
             stats = {}
             
             if 'result' in result:
                 for item in result['result']:
-                    # In case query is not aggregated, aggregate per instance here
-                    instance = item.get('metric', {}).get('instance', 'unknown')
-                    if not instance and 'device' in item.get('metric', {}):
-                        # Skip per-device series without instance label
-                        continue
-                    if instance == 'unknown':
+                    instance = item.get('metric', {}).get('instance', '')
+                    if not instance:
                         continue
                     
                     # Extract values and calculate statistics
@@ -270,9 +116,7 @@ class NodeUsageQuery:
                                     values.append(val)
                             except (ValueError, TypeError):
                                 continue
-                        # Defensive: if values all zeros and per-device series slipped through, continue
-                        if not values:
-                            continue
+                        
                         if values:
                             stats[instance] = {
                                 'min': round(min(values), 2),
@@ -281,23 +125,67 @@ class NodeUsageQuery:
                             }
             
             return stats
-        except Exception as e:
-            print(f"Warning: Failed to query metric {metric_query}: {e}", file=sys.stderr)
+        except Exception:
             return {}
     
-    async def query_node_usage(self, duration: str, end_time: Optional[str] = None, debug: bool = False) -> Dict[str, Any]:
-        """Main method to query node usage metrics"""
+    async def debug_role_detection(self) -> Dict[str, Any]:
+        """Debug method to check role detection"""
+        debug_info = {
+            'node_labels_sources': {},
+            'role_assignments': {},
+            'label_samples': {}
+        }
+        
+        # Try each source
+        if self.auth_client:
+            k8s_labels = await self.utility.get_node_labels_from_kubernetes()
+            debug_info['node_labels_sources']['kubernetes_api'] = len(k8s_labels)
+            debug_info['label_samples']['kubernetes_api'] = {
+                node: labels for node, labels in list(k8s_labels.items())[:2]
+            }
+        
+        oc_labels = await self.utility.get_node_labels_via_oc()
+        debug_info['node_labels_sources']['oc_cli'] = len(oc_labels)
+        debug_info['label_samples']['oc_cli'] = {
+            node: labels for node, labels in list(oc_labels.items())[:2]
+        }
+        
+        prom_labels = await self.utility.get_node_labels_from_prometheus(self.prometheus_client)
+        debug_info['node_labels_sources']['prometheus'] = len(prom_labels)
+        debug_info['label_samples']['prometheus'] = {
+            node: labels for node, labels in list(prom_labels.items())[:2]
+        }
+        
+        # Get final labels and role assignments
+        final_labels = await self.utility.get_all_node_labels(self.prometheus_client)
+        debug_info['final_node_count'] = len(final_labels)
+        
+        for node_name, labels in final_labels.items():
+            role = self.utility.determine_node_role(node_name, labels)
+            debug_info['role_assignments'][node_name] = {
+                'role': role,
+                'role_labels': {k: v for k, v in labels.items() if 'role' in k.lower()},
+                'has_controlplane_label': any('control-plane' in k for k in labels.keys()),
+                'has_master_label': any('master' in k for k in labels.keys()),
+                'has_worker_label': any('worker' in k for k in labels.keys())
+            }
+        
+        return debug_info
+
+    async def collect_usage_data(self, duration: str = '1h', end_time: Optional[str] = None, debug: bool = False) -> Dict[str, Any]:
+        """Main method to collect node usage data"""
         
         # Get time range
         start_time, end_time = self.prometheus_client.get_time_range_from_duration(duration, end_time)
         
-        # Get node information
-        print("Getting node labels and mappings...", file=sys.stderr)
-        node_labels = await self.get_node_labels()
-        instance_mapping = await self.get_node_instance_mapping()
+        # Get node information and mappings - pass prometheus_client for fallback
+        node_groups = await self.utility.get_node_groups(self.prometheus_client)
+        instance_mapping = await self.get_instance_node_mapping()
         
-        # Determine label source for metadata
-        label_source = "kubernetes_api" if (self.auth_client and node_labels) else "prometheus_metric"
+        # Query all metrics
+        all_metrics = {}
+        for metric_name, query in self.queries.items():
+            all_metrics[metric_name] = await self.query_metric_stats(query, start_time, end_time)
         
         # Initialize result structure
         result = {
@@ -306,105 +194,126 @@ class NodeUsageQuery:
                 'duration': duration,
                 'start_time': start_time,
                 'end_time': end_time,
-                'timezone': 'UTC',
-                'role_detection_method': 'kubernetes_node_role_labels',
-                'label_source': label_source,
-                'standard_role_labels': self.role_labels,
-                'units': {
-                    'cpu_usage': 'percentage (%)',
-                    'memory_usage': 'megabytes (MB)',
-                    'network_rx': 'bytes per second (bytes/s)',
-                    'network_tx': 'bytes per second (bytes/s)'
-                }
+                'timezone': 'UTC'
             },
-            'node_groups': {
-                'master': {'nodes': [], 'summary': {}},
-                'infra': {'nodes': [], 'summary': {}},
+            'groups': {
+                'controlplane': {'nodes': [], 'summary': {}},
                 'worker': {'nodes': [], 'summary': {}},
-                'unknown': {'nodes': [], 'summary': {}}
+                'infra': {'nodes': [], 'summary': {}},
+                'workload': {'nodes': [], 'summary': {}}
+            },
+            'top_usage': {
+                'cpu': [],
+                'memory': []
             }
         }
         
-        # Query all metrics
-        print("Querying metrics...", file=sys.stderr)
-        all_metrics = {}
-        for metric_name, query in self.base_queries.items():
-            print(f"  Querying {metric_name}...", file=sys.stderr)
-            all_metrics[metric_name] = await self.query_metric_stats(query, start_time, end_time)
-        
-        # Process results by instance
+        # Collect all instances with metrics
         all_instances = set()
         for metric_data in all_metrics.values():
             all_instances.update(metric_data.keys())
         
-        print(f"Processing {len(all_instances)} instances...", file=sys.stderr)
-        
+        # Process each instance
+        node_usage_data = []
         for instance in all_instances:
-            # Get node name and role
             node_name = instance_mapping.get(instance, instance.split(':')[0])
-            labels = node_labels.get(node_name, {})
-            role = self.determine_node_role(node_name, labels, instance)
+            
+            # Find node role from groups using improved matching
+            node_role = 'worker'  # default
+            for role, nodes in node_groups.items():
+                for node in nodes:
+                    # Check exact match or short name match
+                    if (node['name'] == node_name or 
+                        node['name'].startswith(node_name + '.') or
+                        node_name.startswith(node['name'] + '.')):
+                        node_role = role
+                        break
+                if node_role != 'worker':
+                    break
+            
+            # If still not found, use utility's role detection directly
+            if node_role == 'worker':
+                # Get labels for this specific node
+                all_node_labels = await self.utility.get_all_node_labels(self.prometheus_client)
+                node_labels = all_node_labels.get(node_name, {})
+                if not node_labels:
+                    # Try short name
+                    for full_name, labels in all_node_labels.items():
+                        if full_name.startswith(node_name + '.') or node_name.startswith(full_name):
+                            node_labels = labels
+                            break
+                node_role = self.utility.determine_node_role(node_name, node_labels, instance)
             
             # Build node data
             node_data = {
                 'instance': instance,
-                'node_name': node_name,
-                'node_role': role,
-                'kubernetes_labels': {
-                    label: value for label, value in labels.items()
-                    if label.startswith('node-role.kubernetes.io/')
-                },
+                'name': node_name,
+                'role': node_role,
                 'metrics': {}
             }
             
-            # Add metrics with units
-            for metric_name in self.base_queries.keys():
+            # Add metrics
+            for metric_name in self.queries.keys():
                 if instance in all_metrics[metric_name]:
-                    stats = all_metrics[metric_name][instance]
+                    stats = all_metrics[metric_name][instance].copy()
                     stats['unit'] = self.units[metric_name]
                     node_data['metrics'][metric_name] = stats
                 else:
                     node_data['metrics'][metric_name] = {
-                        'min': None, 'avg': None, 'max': None, 
+                        'min': None, 'avg': None, 'max': None,
                         'unit': self.units[metric_name]
                     }
             
-            # Add to appropriate group
-            result['node_groups'][role]['nodes'].append(node_data)
+            node_usage_data.append(node_data)
+            result['groups'][node_role]['nodes'].append(node_data)
         
         # Calculate group summaries
-        print("Calculating summaries...", file=sys.stderr)
-        for role, group in result['node_groups'].items():
-            if not group['nodes']:
-                continue
-                
-            group['node_count'] = len(group['nodes'])
-            group['summary'] = self.calculate_group_summary(group['nodes'])
+        for role, group in result['groups'].items():
+            if group['nodes']:
+                group['summary'] = self.calculate_group_summary(group['nodes'])
+            group['count'] = len(group['nodes'])
         
-        # Add debug info
-        if debug:
-            role_label_usage = {}
-            for role, group in result['node_groups'].items():
-                role_label_usage[role] = {}
-                for node in group['nodes']:
-                    for label in self.role_labels:
-                        if label in node['kubernetes_labels']:
-                            role_label_usage[role][label] = role_label_usage[role].get(label, 0) + 1
-            
-            result['debug'] = {
-                'total_nodes': len(all_instances),
-                'node_labels_found': len(node_labels),
-                'instance_mappings': len(instance_mapping),
-                'nodes_by_role': {
-                    role: len(group['nodes']) 
-                    for role, group in result['node_groups'].items()
-                },
-                'role_label_usage': role_label_usage,
-                'sample_instances': list(all_instances)[:5],
-                'sample_node_labels': {
-                    node: labels for node, labels in list(node_labels.items())[:3]
-                }
+        # Get top 5 worker nodes for CPU and memory
+        worker_nodes = [node for node in node_usage_data if node['role'] == 'worker']
+        
+        # Top 5 CPU usage (by max value)
+        cpu_sorted = sorted(
+            [node for node in worker_nodes if node['metrics']['cpu_usage']['max'] is not None],
+            key=lambda x: x['metrics']['cpu_usage']['max'],
+            reverse=True
+        )[:5]
+        
+        result['top_usage']['cpu'] = [
+            {
+                'name': node['name'],
+                'instance': node['instance'], 
+                'cpu_max': node['metrics']['cpu_usage']['max'],
+                'cpu_avg': node['metrics']['cpu_usage']['avg']
             }
+            for node in cpu_sorted
+        ]
+        
+        # Top 5 memory usage (by max value)
+        memory_sorted = sorted(
+            [node for node in worker_nodes if node['metrics']['memory_usage']['max'] is not None],
+            key=lambda x: x['metrics']['memory_usage']['max'],
+            reverse=True
+        )[:5]
+        
+        result['top_usage']['memory'] = [
+            {
+                'name': node['name'],
+                'instance': node['instance'],
+                'memory_max': node['metrics']['memory_usage']['max'],
+                'memory_avg': node['metrics']['memory_usage']['avg']
+            }
+            for node in memory_sorted
+        ]
+        
+        # Add debug information if requested
+        if debug:
+            debug_data = await self.debug_role_detection()
+            result['debug'] = debug_data
         
         return result
     
@@ -412,20 +321,19 @@ class NodeUsageQuery:
         """Calculate summary statistics for a group of nodes"""
         summary = {}
         
-        for metric_name in self.base_queries.keys():
-            summary[metric_name] = {'min': [], 'avg': [], 'max': []}
+        for metric_name in self.queries.keys():
+            summary[metric_name] = {}
             
-            # Collect all values
-            for node in nodes:
-                if metric_name in node['metrics']:
-                    for stat in ['min', 'avg', 'max']:
+            # Collect values for each statistic
+            for stat in ['min', 'avg', 'max']:
+                values = []
+                for node in nodes:
+                    if metric_name in node['metrics']:
                         value = node['metrics'][metric_name].get(stat)
                         if value is not None:
-                            summary[metric_name][stat].append(value)
-            
-            # Calculate group statistics
-            for stat in ['min', 'avg', 'max']:
-                values = summary[metric_name][stat]
+                            values.append(value)
+                
+                # Calculate group statistic
                 if values:
                     if stat == 'min':
                         summary[metric_name][stat] = round(min(values), 2)
@@ -436,112 +344,60 @@ class NodeUsageQuery:
                 else:
                     summary[metric_name][stat] = None
             
-            # Add unit
             summary[metric_name]['unit'] = self.units[metric_name]
         
         return summary
-    
-    async def get_available_metrics(self) -> List[str]:
-        """Get list of available node exporter metrics"""
-        try:
-            metadata = await self.prometheus_client.get_metrics_metadata()
-            node_metrics = [metric for metric in metadata.keys() if metric.startswith('node_')]
-            return sorted(node_metrics)
-        except Exception:
-            return []
 
 
 async def main():
-    """Main function"""
-    parser = argparse.ArgumentParser(description='Query node usage metrics from Prometheus')
-    parser.add_argument('--prometheus-url', help='Prometheus server URL (auto-discovered if not provided)')
-    parser.add_argument('--token', help='Bearer token for authentication (auto-discovered if not provided)')
-    parser.add_argument('--kubeconfig', help='Path to kubeconfig file')
-    parser.add_argument('--duration', default='1h', help='Duration to query (e.g., 5m, 1h, 1d)')
-    parser.add_argument('--end-time', help='End time (ISO format), defaults to now')
-    parser.add_argument('--output', help='Output file path, defaults to stdout')
-    parser.add_argument('--pretty', action='store_true', help='Pretty print JSON output')
-    parser.add_argument('--debug', action='store_true', help='Enable debug output')
-    parser.add_argument('--list-metrics', action='store_true', help='List available node metrics and exit')
-    parser.add_argument('--quiet', action='store_true', help='Suppress progress messages')
-    parser.add_argument('--no-auth', action='store_true', help='Skip Kubernetes authentication')
+    """Main function for testing"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Collect node usage metrics')
+    parser.add_argument('--prometheus-url', help='Prometheus server URL')
+    parser.add_argument('--token', help='Bearer token for authentication')
+    parser.add_argument('--kubeconfig', help='Path to kubeconfig file') 
+    parser.add_argument('--duration', default='1h', help='Duration to query')
+    parser.add_argument('--end-time', help='End time (ISO format)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output for role detection')
+    parser.add_argument('--pretty', action='store_true', help='Pretty print JSON')
     
     args = parser.parse_args()
     
-    # Suppress progress messages if quiet
-    if args.quiet:
-        sys.stderr = open('/dev/null', 'w')
-    
-    # Initialize authentication if not disabled
+    # Initialize authentication
     auth_client = None
-    if not args.no_auth:
-        try:
-            auth_client = OpenShiftAuth(kubeconfig_path=args.kubeconfig)
-            await auth_client.initialize()
-        except Exception as e:
-            print(f"Warning: Authentication failed, proceeding without Kubernetes API access: {e}", file=sys.stderr)
-            auth_client = None
+    try:
+        auth_client = OpenShiftAuth(kubeconfig_path=args.kubeconfig)
+        await auth_client.initialize()
+    except Exception:
+        pass
     
-    # Determine Prometheus URL and token
-    prometheus_url = args.prometheus_url
-    token = args.token
-    
-    if auth_client and auth_client.prometheus_url and not prometheus_url:
-        prometheus_url = auth_client.prometheus_url
-        print(f"Using auto-discovered Prometheus URL: {prometheus_url}", file=sys.stderr)
-    
-    if auth_client and auth_client.prometheus_token and not token:
-        token = auth_client.prometheus_token
-        print("Using auto-discovered authentication token", file=sys.stderr)
+    # Determine Prometheus configuration
+    prometheus_url = args.prometheus_url or (auth_client.prometheus_url if auth_client else None)
+    token = args.token or (auth_client.prometheus_token if auth_client else None)
     
     if not prometheus_url:
-        print("Error: Prometheus URL must be provided via --prometheus-url or auto-discovery", file=sys.stderr)
+        print("Error: Prometheus URL required", file=sys.stderr)
         return 1
     
-    # Create Prometheus client
+    # Create collector and run
     prometheus_client = PrometheusBaseQuery(prometheus_url, token)
     
     try:
         async with prometheus_client:
-            # Test connection
             if not await prometheus_client.test_connection():
-                print("Error: Cannot connect to Prometheus server", file=sys.stderr)
+                print("Error: Cannot connect to Prometheus", file=sys.stderr)
                 return 1
             
-            # Create node usage query instance
-            node_query = NodeUsageQuery(prometheus_client, auth_client)
+            collector = nodeUsageCollector(prometheus_client, auth_client)
+            result = await collector.collect_usage_data(args.duration, args.end_time, args.debug)
             
-            # List metrics if requested
-            if args.list_metrics:
-                metrics = await node_query.get_available_metrics()
-                print(json.dumps(metrics, indent=2 if args.pretty else None))
-                return 0
-            
-            # Query node usage
-            result = await node_query.query_node_usage(args.duration, args.end_time, args.debug)
-            
-            # Format output
-            json_output = json.dumps(result, indent=2 if args.pretty else None)
-            
-            # Write output
-            if args.output:
-                with open(args.output, 'w') as f:
-                    f.write(json_output)
-                if not args.quiet:
-                    print(f"Results written to {args.output}", file=sys.stderr)
-            else:
-                print(json_output)
-            
+            print(json.dumps(result, indent=2 if args.pretty else None))
             return 0
     
     except Exception as e:
         print(f"Error: {str(e)}", file=sys.stderr)
         return 1
-    finally:
-        # Restore stderr if it was suppressed
-        if args.quiet and hasattr(sys.stderr, 'close'):
-            sys.stderr.close()
-            sys.stderr = sys.__stderr__
 
 
 if __name__ == '__main__':

@@ -15,16 +15,17 @@ from pydantic import BaseModel, Field, ConfigDict
 import signal
 import sys
 
-from tools.ovnk_benchmark_openshift_cluster_stat import ClusterStatCollector
-from analysis.ovnk_benchmark_analysis_cluster_stat import ClusterStatAnalyzer
-from tools.ovnk_benchmark_prometheus_ovnk_basicinfo import ovnBasicInfoCollector, get_pod_phase_counts
-from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo,collect_cluster_information,get_cluster_info_json
+from tools.ovnk_benchmark_openshift_cluster_info import ClusterInfoCollector, collect_cluster_information, get_cluster_info_json
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
-from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
+from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
+from analysis.ovnk_benchmark_analysis_cluster_stat import analyze_cluster_status as analyze_cluster_status_module, ClusterStatAnalyzer
+from tools.ovnk_benchmark_prometheus_basicinfo import ovnBasicInfoCollector, get_pod_phase_counts
+
+from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
-from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
+from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector,get_ovn_sync_summary_json,collect_ovn_sync_metrics_duration
 from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
-from tools.ovnk_benchmark_prometheus_nodes_usage import NodeUsageQuery
+from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 from config.ovnk_benchmark_config import Config
 from elt.ovnk_benchmark_elt_duckdb import PerformanceELT
@@ -87,30 +88,53 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 logger.debug(f"Logging configured. Root level={root_level}, OVNK_LOG_LEVEL={_server_log_level}")
 
-from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo,collect_cluster_information,get_cluster_info_json
-from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
-from tools.ovnk_benchmark_prometheus_kubeapi import KubeAPIMetrics
-from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
-from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
-from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
-from tools.ovnk_benchmark_prometheus_nodes_usage import NodeUsageQuery
-from ocauth.ovnk_benchmark_auth import OpenShiftAuth
-from config.ovnk_benchmark_config import Config
-from elt.ovnk_benchmark_elt_duckdb import PerformanceELT
-from storage.ovnk_benchmark_storage_ovnk import PrometheusStorage
-from analysis.ovnk_benchmark_performance_analysis_allovnk import OVNKPerformanceAnalyzer
-from analysis.ovnk_benchmark_performance_analysis_clusters_api import ClusterAPIPerformanceAnalyzer
-from analysis.ovnk_benchmark_performance_analysis_overall import (
-    OverallPerformanceAnalyzer,
-    analyze_overall_performance_with_auth
-)
-
 # Configure timezone
 os.environ['TZ'] = 'UTC'
 
 # Global shutdown event
 shutdown_event = asyncio.Event()
 
+class ClusterInfoRequest(BaseModel):
+    """Request model for OpenShift cluster information queries"""
+    include_node_details: bool = Field(
+        default=True,
+        description="Whether to include detailed node information including capacity, versions, and status for all nodes grouped by role (master/worker/infra)"
+    )
+    include_resource_counts: bool = Field(
+        default=True,
+        description="Whether to include comprehensive resource counts across all namespaces including pods, services, secrets, configmaps, and network policies"
+    )
+    include_network_policies: bool = Field(
+        default=True,
+        description="Whether to include detailed network policy information including NetworkPolicy, AdminNetworkPolicy, EgressFirewall, EgressIP, and UserDefinedNetwork counts"
+    )
+    include_operator_status: bool = Field(
+        default=True,
+        description="Whether to include cluster operator health status and identify any unavailable or degraded operators"
+    )
+    include_mcp_status: bool = Field(
+        default=True,
+        description="Whether to include Machine Config Pool (MCP) status information showing update progress and any degraded pools"
+    )
+    save_to_file: bool = Field(
+        default=False,
+        description="Whether to save the collected cluster information to a timestamped JSON file for documentation and audit purposes"
+    )
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
+class AnalyzeClusterStatusRequest(BaseModel):
+    """Request model for cluster status analysis with detailed health assessment"""
+    include_detailed_analysis: bool = Field(
+        default=True,
+        description="Whether to include detailed component analysis with health scoring, recommendations, and performance alerts"
+    )
+    generate_report: bool = Field(
+        default=True,
+        description="Whether to generate a human-readable summary report in addition to structured analysis data"
+    )
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 class MetricsRequest(BaseModel):
     """Request model for basic metrics queries"""
@@ -125,6 +149,43 @@ class MetricsRequest(BaseModel):
     end_time: Optional[str] = Field(
         default=None, 
         description="End time in ISO format (YYYY-MM-DDTHH:MM:SSZ)"
+    )
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
+class PODsContainerRequest(BaseModel):
+    """Request model for pod-specific metrics queries"""
+    pod_pattern: str = Field(
+        default="ovnkube.*", 
+        description="Regex pattern for pod names (e.g., 'ovnkube.*', 'multus.*')"
+    )
+    container_pattern: str = Field(
+        default="ovnkube-controller", 
+        description="Regex pattern for container names (e.g., 'ovnkube-controller', 'kube-rbac-proxy.*')"
+    )
+    label_selector: str = Field(
+        default=".*", 
+        description="Regex pattern for pod label selectors"
+    )
+    namespace_pattern: str = Field(
+        default="openshift-ovn-kubernetes", 
+        description="Regex pattern for namespace (e.g., 'openshift-ovn-kubernetes', 'openshift-multus')"
+    )
+    top_n: int = Field(
+        default=10, 
+        description="Number of top results to return (1-50)"
+    )
+    duration: str = Field(
+        default="1h", 
+        description="Query duration for range queries (e.g., 5m, 1h, 1d)"
+    )
+    start_time: Optional[str] = Field(
+        default=None, 
+        description="Start time in ISO format"
+    )
+    end_time: Optional[str] = Field(
+        default=None, 
+        description="End time in ISO format"
     )
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
@@ -166,11 +227,77 @@ class PODsRequest(BaseModel):
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-class GeneralInfoRequest(BaseModel):
-    """Request model for OpenShift general information queries"""
-    namespace: Optional[str] = Field(
+class PODsMultusRequest(BaseModel):
+    """Request model for pod-specific metrics queries"""
+    pod_pattern: str = Field(
+        default="multus-.*|network-metrics-.*", 
+        description="Regex pattern for pod names (e.g., 'ovnkube.*', 'multus.*')"
+    )
+    container_pattern: str = Field(
+        default=".*", 
+        description="Regex pattern for container names (e.g., 'ovnkube-controller', 'kube-rbac-proxy.*')"
+    )
+    label_selector: str = Field(
+        default=".*", 
+        description="Regex pattern for pod label selectors"
+    )
+    namespace_pattern: str = Field(
+        default="openshift-multus", 
+        description="Regex pattern for namespace (e.g., 'openshift-ovn-kubernetes', 'openshift-multus')"
+    )
+    top_n: int = Field(
+        default=10, 
+        description="Number of top results to return (1-50)"
+    )
+    duration: str = Field(
+        default="1h", 
+        description="Query duration for range queries (e.g., 5m, 1h, 1d)"
+    )
+    start_time: Optional[str] = Field(
         default=None, 
-        description="Specific namespace to query (optional, queries all if not specified)"
+        description="Start time in ISO format"
+    )
+    end_time: Optional[str] = Field(
+        default=None, 
+        description="End time in ISO format"
+    )
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
+class PrometheusBasicInfoRequest(BaseModel):
+    """Request model for Prometheus basic OVN information queries"""
+    include_pod_status: bool = Field(
+        default=True,
+        description="Whether to include cluster-wide pod phase counts and status information"
+    )
+    include_db_metrics: bool = Field(
+        default=True,
+        description="Whether to include OVN database size metrics (Northbound and Southbound)"
+    )
+    custom_metrics: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional dictionary of custom metric_name -> prometheus_query pairs for additional data collection"
+    )
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
+class OVNKSyncDurationRequest(BaseModel):
+    """Request model for OVN-Kubernetes sync duration metrics queries"""
+    query_type: str = Field(
+        default="instant",
+        description="Type of metrics query: 'instant' for current snapshot of sync duration metrics or 'duration' for time-range analysis with statistical aggregation over specified time period. Instant queries show current state, duration queries provide trend analysis with min/avg/max calculations."
+    )
+    duration: Optional[str] = Field(
+        default=None,
+        description="Analysis time window when query_type='duration' using Prometheus time format (e.g., '5m', '15m', '30m', '1h', '2h', '6h', '24h'). Required for duration-based analysis. Shorter durations (5m-30m) for recent performance, longer durations (1h-24h) for trend analysis and baseline establishment."
+    )
+    timestamp: Optional[str] = Field(
+        default=None,
+        description="Specific timestamp for instant queries in ISO format (YYYY-MM-DDTHH:MM:SSZ). When provided, retrieves sync metrics at exact point in time instead of current metrics. Useful for historical analysis, incident correlation, or comparing metrics across different time points."
+    )
+    end_time: Optional[str] = Field(
+        default=None,
+        description="End time for duration queries in ISO format (YYYY-MM-DDTHH:MM:SSZ). Defaults to current time if not specified. Combined with duration parameter to define analysis time window. Essential for analyzing historical performance periods or specific time ranges."
     )
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
@@ -189,20 +316,6 @@ class PerformanceDataRequest(BaseModel):
 
 class HealthCheckRequest(BaseModel):
     """Empty request model for health check"""
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-
-class ClusterStatusRequest(BaseModel):
-    """Request model for cluster status analysis operations"""
-    include_detailed_analysis: bool = Field(
-        default=True,
-        description="Whether to include detailed component analysis with health scoring and recommendations"
-    )
-
-    output_format: str = Field(
-        default="json",
-        description="Output format for the report: 'json', 'text', or 'both'"
-    )
-  
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 class OVNBasicInfoRequest(BaseModel):
@@ -273,13 +386,12 @@ auth_manager: Optional[OpenShiftAuth] = None
 config: Optional[Config] = None
 prometheus_client: Optional[PrometheusBaseQuery] = None
 storage: Optional[PrometheusStorage] = None
-cluster_collector: Optional[ClusterStatCollector] = None
 cluster_analyzer: Optional[ClusterStatAnalyzer] = None
 
 
 async def initialize_components():
     """Initialize global components with proper error handling"""
-    global auth_manager, config, prometheus_client, storage, cluster_collector, cluster_analyzer
+    global auth_manager, config, prometheus_client, storage, cluster_analyzer
     
     try:
         config = Config()
@@ -293,9 +405,6 @@ async def initialize_components():
         storage = PrometheusStorage()
         await storage.initialize()
         
-        # Initialize cluster status components
-        cluster_collector = ClusterStatCollector(config.kubeconfig_path)
-        await cluster_collector.initialize()
         cluster_analyzer = ClusterStatAnalyzer()
             
         logger.info("All components initialized successfully")
@@ -305,7 +414,7 @@ async def initialize_components():
 
 async def cleanup_resources():
     """Clean up global resources on shutdown"""
-    global auth_manager, storage, cluster_collector
+    global auth_manager, storage
     
     logger.info("Cleaning up resources...")
     
@@ -321,9 +430,6 @@ async def cleanup_resources():
     except Exception as e:
         logger.error(f"Error cleaning up auth manager: {e}")
     
-    try:
-        if cluster_collector:
-            await cluster_collector.cleanup()
     except Exception as e:
         logger.error(f"Error cleaning up cluster collector: {e}")
     
@@ -418,372 +524,677 @@ async def get_mcp_health_status(request: HealthCheckRequest) -> Dict[str, Any]:
         logger.error(f"Health check failed: {e}")
         return {"status": "error", "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
 
-
 @app.tool(
-    name="get_openshift_general_info",
-    description="""Get comprehensive OpenShift cluster information including NetworkPolicy counts, AdminNetworkPolicy counts, EgressFirewall counts, node status, and resource utilization. This tool provides cluster-wide configuration and status information that is essential for understanding the overall state of the OpenShift cluster before analyzing performance metrics.
+    name="get_openshift_cluster_info",
+    description="""Collect comprehensive OpenShift cluster information including detailed node status, resource utilization, network policy configurations, cluster operator health, and infrastructure details. This tool provides a complete cluster inventory and health overview essential for understanding cluster architecture, capacity, and operational status.
+
+This tool leverages the ClusterInfoCollector to gather structured information about your OpenShift cluster including:
+
+CLUSTER ARCHITECTURE:
+- Cluster name, version, and infrastructure platform (AWS, Azure, GCP, VMware, etc.)
+- API server endpoint and cluster identification
+- Total node count with role-based categorization (master/worker/infra nodes)
+- Collection timestamp for data freshness verification
+
+NODE INFORMATION (when include_node_details=True):
+- Detailed node inventory grouped by role (master, worker, infrastructure nodes)
+- Per-node specifications: CPU capacity, memory capacity, architecture, kernel version
+- Container runtime versions, kubelet versions, and OS image information  
+- Node health status (Ready/NotReady/SchedulingDisabled) and schedulability
+- Node creation timestamps and lifecycle information
+- Hardware and software configuration details for capacity planning
+
+RESOURCE INVENTORY (when include_resource_counts=True):
+- Comprehensive resource counts across all namespaces
+- Pod distribution and total pod count for capacity monitoring
+- Service, Secret, and ConfigMap counts for resource utilization analysis
+- Cross-namespace resource distribution patterns
+- Resource density metrics for capacity planning
+
+NETWORK POLICY CONFIGURATION (when include_network_policies=True):
+- NetworkPolicy count for standard Kubernetes network segmentation
+- AdminNetworkPolicy (ANP) count for cluster-wide network security policies  
+- EgressFirewall policy count for egress traffic control and security
+- EgressIP configuration count for source IP management
+- UserDefinedNetwork (UDN) count for custom network configurations
+- Network security posture assessment through policy distribution analysis
+
+CLUSTER OPERATOR HEALTH (when include_operator_status=True):
+- Complete cluster operator inventory and availability status
+- Identification of unavailable or degraded cluster operators
+- Operator health trends and stability indicators
+- Critical operator failure detection for immediate attention
+- Operator dependency analysis for troubleshooting
+
+MACHINE CONFIG POOL STATUS (when include_mcp_status=True):
+- Machine Config Pool health and update status (Updated/Updating/Degraded)
+- Configuration synchronization status across node pools
+- Update progress tracking for maintenance windows
+- Configuration drift detection and remediation status
+- Node pool stability and configuration consistency
+
+OPERATIONAL METADATA:
+- Data collection timestamp for freshness verification
+- Collection success metrics and any partial failure indicators
+- Structured JSON format for integration with monitoring and automation systems
+- Optional file export for documentation, compliance, and historical analysis
 
 Parameters:
-- namespace (optional): Specific namespace to query. If not provided, queries all namespaces for comprehensive cluster information.
-
-Returns detailed cluster information including:
-- NetworkPolicy counts and configurations
-- AdminNetworkPolicy (ANP) counts and status  
-- EgressFirewall policy counts
-- Node status, roles, and capacity information
-- Resource utilization across the cluster
-- OVN-Kubernetes component status
-
-Use this tool when you need to understand the overall cluster state, network policy configurations, or before performing detailed performance analysis."""
-)
-async def get_openshift_general_info(request: GeneralInfoRequest) -> Dict[str, Any]:
-    """
-    Get comprehensive OpenShift cluster information including NetworkPolicy, 
-    AdminNetworkPolicy, and EgressFirewall counts, node status, and resource utilization.
-    
-    Returns cluster-wide configuration and status information.
-    """
-    try:
-        general_info = OpenShiftGeneralInfo()
-        await general_info.initialize()
-        
-        # Add timeout to prevent hanging
-        cluster_info = await asyncio.wait_for(
-            # general_info.collect_cluster_info(),
-            collect_cluster_information(),
-            timeout=30.0
-        )
-        cluster_info={"cluster_info": cluster_info}
-        print("#-"*35)
-        print("cluster_info is:\n",cluster_info,type(cluster_info))
-        return cluster_info
-    except asyncio.TimeoutError:
-        return {"error": "Timeout collecting cluster information", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error collecting general info: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="get_cluster_node_usage",
-    description="""Get cluster node resource usage metrics including CPU utilization, memory consumption, disk usage, and network utilization across all worker and control plane nodes. This tool provides both instant snapshots and duration-based node performance metrics for capacity planning and performance analysis.
-
-Parameters:
-- duration (default: "5m"): Query duration using Prometheus time format (e.g., "5m", "1h", "1d", "7d")
-- start_time (optional): Start time in ISO format (YYYY-MM-DDTHH:MM:SSZ) for historical queries
-- end_time (optional): End time in ISO format (YYYY-MM-DDTHH:MM:SSZ) for historical queries
-
-Returns comprehensive node metrics including:
-- CPU usage percentages per node with min/avg/max statistics
-- Memory utilization including available, used, and cache/buffer metrics
-- Disk I/O operations and space utilization
-- Network bandwidth usage and packet rates
-- Node health status and capacity information
-- Role-based node grouping (master/worker nodes)
-
-Use this tool to identify node-level bottlenecks, capacity issues, or uneven resource distribution across the cluster."""
-)
-async def get_cluster_node_usage(request: MetricsRequest) -> Dict[str, Any]:
-    """
-    Get cluster node resource usage metrics including CPU, memory, disk, and network utilization
-    across all worker and control plane nodes.
-    
-    Provides both instant and duration-based node performance metrics.
-    """
-    global prometheus_client
-    try:
-        if not prometheus_client:
-            await initialize_components()
-            
-        cluster_nodes_usage = NodeUsageQuery(prometheus_client)
-        
-        # Add timeout to prevent hanging
-        cluster_info = await asyncio.wait_for(
-            cluster_nodes_usage.query_node_usage(request.duration),
-            timeout=30.0
-        )
-        return cluster_info
-    except asyncio.TimeoutError:
-        return {"error": "Timeout querying node usage metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error querying node usage: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.tool(
-    name="analyze_cluster_status",
-    description="""Perform comprehensive OpenShift cluster status analysis including node health, cluster operator status, and machine config pool (MCP) status with detailed health scoring and actionable recommendations. This tool provides complete cluster health assessment for operational monitoring and troubleshooting.
-
-Parameters:
-- include_detailed_analysis (default: true): Whether to include detailed component analysis with health scoring, issue identification, and recommendations
-- save_report (default: false): Whether to save the analysis report to files for documentation and reporting purposes
-- output_format (default: "json"): Report output format - "json" for structured data, "text" for human-readable summary, or "both" for complete documentation
-- output_dir (default: "."): Directory path where report files will be saved if save_report is enabled
-
-Returns comprehensive cluster analysis including:
-- Overall cluster health score (0-100) with status classification (excellent/good/fair/poor/critical)
-- Node status analysis with ready/not-ready counts, role distribution, and node condition assessment
-- Cluster operator health with availability, degraded, and progressing status for all operators
-- Machine config pool status with update progress, degraded pools, and configuration sync status
-- Critical issues requiring immediate attention with severity classification
-- Warning issues for monitoring and preventive maintenance
-- Prioritized recommendations for cluster optimization and issue resolution
-- Executive summary with key findings and immediate action indicators
-- Component-specific health scores and detailed status breakdowns
+- include_node_details (default: true): Include comprehensive node information with hardware specs, software versions, and health status for all cluster nodes
+- include_resource_counts (default: true): Include detailed resource inventory counts across all namespaces for capacity analysis
+- include_network_policies (default: true): Include network policy configurations and counts for security posture assessment
+- include_operator_status (default: true): Include cluster operator health status and identify any degraded or unavailable operators
+- include_mcp_status (default: true): Include Machine Config Pool status and update progress information
+- save_to_file (default: false): Save complete cluster information to timestamped JSON file for documentation and audit trails
 
 Use this tool for:
-- Regular cluster health monitoring and operational dashboards
-- Troubleshooting cluster issues and performance problems  
-- Pre-maintenance cluster health verification
-- Post-deployment validation and health checks
-- Capacity planning and resource optimization analysis
-- Compliance and audit reporting for cluster operations
-- Root cause analysis for cluster performance degradation
-- Executive reporting on infrastructure health status
+- Pre-deployment cluster readiness verification and infrastructure validation
+- Capacity planning and resource allocation analysis based on current utilization
+- Security posture assessment through network policy and operator health analysis
+- Operational health monitoring and cluster status reporting
+- Troubleshooting cluster issues by understanding current configuration and status
+- Compliance reporting and infrastructure documentation for audit purposes
+- Baseline establishment for cluster monitoring and change tracking over time
+- Executive reporting on cluster architecture, capacity, and operational health
 
-The tool automatically detects critical infrastructure issues, provides actionable insights for cluster administrators, and generates comprehensive reports suitable for both technical teams and management reporting."""
+The tool provides structured, comprehensive cluster information suitable for both technical analysis and management reporting, enabling informed decisions about cluster operations, capacity planning, and infrastructure optimization."""
 )
-async def analyze_cluster_status(request: ClusterStatusRequest) -> Dict[str, Any]:
+async def get_openshift_cluster_info(request: ClusterInfoRequest) -> Dict[str, Any]:
     """
-    Perform comprehensive/overal OpenShift cluster status analysis including node health,
-    cluster operator status, and machine config pool status with detailed health scoring
-    and actionable recommendations.
+    Collect comprehensive OpenShift cluster information including detailed node status,
+    resource utilization, network policy configurations, cluster operator health,
+    and infrastructure details.
     
-    Provides complete cluster health assessment for operational monitoring and troubleshooting.
+    Provides complete cluster inventory and health overview essential for understanding
+    cluster architecture, capacity, and operational status.
     """
-    global cluster_collector, cluster_analyzer
     try:
-        if not cluster_collector or not cluster_analyzer:
-            await initialize_components()
+        logger.info("Starting comprehensive cluster information collection...")
         
-        logger.info("Starting comprehensive cluster status analysis...")
+        # Initialize collector
+        collector = ClusterInfoCollector()
         
-        # Collect cluster status data with timeout
-        cluster_data = await asyncio.wait_for(
-            cluster_collector.collect_comprehensive_cluster_status(),
-            timeout=60.0
+        # Add timeout to prevent hanging during cluster information collection
+        cluster_info = await asyncio.wait_for(
+            collector.collect_cluster_info(),
+            timeout=60.0  # Extended timeout for comprehensive collection
         )
         
-        if 'error' in cluster_data:
-            return {
-                'error': f"Failed to collect cluster data: {cluster_data['error']}",
-                'timestamp': datetime.now(timezone.utc).isoformat()
-            }
+        # Convert to dictionary format
+        cluster_data = collector.to_dict(cluster_info)
         
-        # Perform analysis if requested
-        if request.include_detailed_analysis:
-            analysis_result = cluster_analyzer.analyze_cluster_status(cluster_data)
-            
-            if 'error' in analysis_result:
-                return {
-                    'error': f"Analysis failed: {analysis_result['error']}",
-                    'cluster_data': cluster_data,
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }
-        else:
-            # Return basic status without detailed analysis
-            analysis_result = {
-                'basic_analysis': True,
-                'cluster_data': cluster_data,
-                'overall_summary': cluster_data.get('overall_summary', {}),
-                'analysis_timestamp': datetime.now(timezone.utc).isoformat()
-            }
+        # Apply filtering based on request parameters
+        if not request.include_node_details:
+            # Remove detailed node information but keep counts
+            cluster_data.pop('master_nodes', None)
+            cluster_data.pop('infra_nodes', None) 
+            cluster_data.pop('worker_nodes', None)
+            logger.info("Node details excluded from response")
+        
+        if not request.include_resource_counts:
+            # Remove resource counts
+            resource_fields = ['namespaces_count', 'pods_count', 'services_count', 
+                             'secrets_count', 'configmaps_count']
+            for field in resource_fields:
+                cluster_data.pop(field, None)
+            logger.info("Resource counts excluded from response")
+        
+        if not request.include_network_policies:
+            # Remove network policy information
+            policy_fields = ['networkpolicies_count', 'adminnetworkpolicies_count',
+                           'egressfirewalls_count', 'egressips_count', 'udn_count']
+            for field in policy_fields:
+                cluster_data.pop(field, None)
+            logger.info("Network policy information excluded from response")
+        
+        if not request.include_operator_status:
+            cluster_data.pop('unavailable_cluster_operators', None)
+            logger.info("Operator status excluded from response")
+        
+        if not request.include_mcp_status:
+            cluster_data.pop('mcp_status', None)
+            logger.info("Machine Config Pool status excluded from response")
+        
+        # Save to file if requested
+        if request.save_to_file:
+            try:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                filename = f"cluster_info_{timestamp}.json"
                 
+                with open(filename, 'w') as f:
+                    json.dump(cluster_data, f, indent=2, default=str)
+                
+                cluster_data['saved_file'] = filename
+                logger.info(f"Cluster information saved to {filename}")
+            except Exception as save_error:
+                logger.warning(f"Failed to save cluster info to file: {save_error}")
+                cluster_data['save_file_error'] = str(save_error)
+        
         # Add collection metadata
-        analysis_result['collection_metadata'] = {
-            'collection_timestamp': cluster_data.get('collection_timestamp'),
-            'analysis_duration': request.include_detailed_analysis,
-            'components_analyzed': list(cluster_data.keys()),
+        cluster_data['collection_metadata'] = {
+            'tool_name': 'get_openshift_cluster_info',
+            'parameters_applied': {
+                'include_node_details': request.include_node_details,
+                'include_resource_counts': request.include_resource_counts,
+                'include_network_policies': request.include_network_policies,
+                'include_operator_status': request.include_operator_status,
+                'include_mcp_status': request.include_mcp_status,
+                'save_to_file': request.save_to_file
+            },
+            'collection_duration_seconds': 60.0,
+            'data_freshness': cluster_data.get('collection_timestamp'),
+            'total_fields_collected': len(cluster_data)
         }
         
-        logger.info("Cluster status analysis completed successfully")
-        logger.info(f"analysis_result is {type(analysis_result)}")
-        return analysis_result
+        # Log collection summary
+        node_summary = f"Nodes: {cluster_data.get('total_nodes', 0)} total"
+        if request.include_node_details:
+            masters = len(cluster_data.get('master_nodes', []))
+            workers = len(cluster_data.get('worker_nodes', []))
+            infra = len(cluster_data.get('infra_nodes', []))
+            node_summary += f" ({masters} master, {workers} worker, {infra} infra)"
+        
+        unavailable_ops = len(cluster_data.get('unavailable_cluster_operators', []))
+        degraded_mcps = len([status for status in cluster_data.get('mcp_status', {}).values() 
+                           if status in ['Degraded', 'Updating']])
+        
+        logger.info(f"Cluster information collection completed - {node_summary}, "
+                   f"Unavailable operators: {unavailable_ops}, Degraded MCPs: {degraded_mcps}")
+        
+        return cluster_data
         
     except asyncio.TimeoutError:
         return {
-            'error': 'Timeout during cluster status collection - cluster may be experiencing issues',
-            'timestamp': datetime.now(timezone.utc).isoformat()
+            "error": "Timeout collecting cluster information - cluster may be experiencing issues or have extensive resources",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timeout_seconds": 60,
+            "suggestion": "Try running with fewer details enabled or check cluster responsiveness"
         }
     except Exception as e:
-        logger.error(f"Error in cluster status analysis: {e}")
+        logger.error(f"Error collecting cluster information: {e}")
         return {
-            'error': str(e),
-            'timestamp': datetime.now(timezone.utc).isoformat()
+            "error": str(e), 
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tool_name": "get_openshift_cluster_info"
         }
 
 
 @app.tool(
-    name="query_ovn_basic_info",
-    description="""Query fundamental OVN (Open Virtual Network) database information and cluster-wide pod status metrics for baseline monitoring and health assessment. This tool provides essential OVN infrastructure metrics including database sizes and overall pod health status across the cluster.
+    name="query_cluster_node_usage",
+    description="""Get comprehensive cluster node resource usage metrics including CPU utilization, memory consumption, and network utilization across all worker, control plane, and infrastructure nodes grouped by role. This tool provides both instant snapshots and duration-based node performance metrics with statistical analysis (min/avg/max) for capacity planning and performance monitoring.
+
+RESOURCE METRICS COLLECTED:
+- CPU usage percentages per node with statistical analysis (min/avg/max values over time period)
+- Memory utilization in MB including total usage calculations from available memory metrics
+- Network receive/transmit rates in bytes/second with comprehensive device filtering (excludes loopback, virtual, and container interfaces)
+- Per-node resource consumption trends and patterns for capacity planning analysis
+
+NODE ORGANIZATION:
+- Nodes automatically grouped by role: controlplane, worker, infra, and workload categories
+- Role-based summary statistics providing group-level resource utilization overview
+- Individual node metrics with instance mapping from Prometheus endpoints to node names
+- Node count and distribution analysis across different roles for infrastructure planning
+
+TOP RESOURCE CONSUMERS:
+- Top 5 worker nodes by maximum CPU usage with both peak and average utilization metrics
+- Top 5 worker nodes by maximum memory usage with both peak and average consumption data
+- Resource ranking helps identify nodes requiring attention or optimization
+- Performance comparison data for load balancing and capacity distribution analysis
+
+STATISTICAL ANALYSIS:
+- Minimum, average, and maximum values for each metric over the specified time period
+- Time-based trend analysis showing resource utilization patterns and peaks
+- Group-level aggregated statistics for role-based capacity planning
+- Historical performance data for establishing baselines and identifying trends
+
+METADATA AND TIMESTAMPS:
+- Query execution timestamp and timezone information (UTC) for data correlation
+- Duration coverage and time range details for analysis context
+- Data freshness indicators and collection success metrics
+- Instance-to-node name mapping for cross-referencing with other monitoring systems
 
 Parameters:
-- include_pod_status (default: true): Whether to include cluster-wide pod phase counts and status distribution (Running, Pending, Failed, Succeeded, Unknown)
-- include_db_metrics (default: true): Whether to include OVN database size metrics for both Northbound and Southbound databases in bytes
-- custom_metrics (optional): Dictionary of additional custom metric_name -> prometheus_query pairs for extended data collection beyond default OVN metrics
-
-Returns comprehensive OVN basic information including:
-- OVN Northbound database size with maximum values across all instances
-- OVN Southbound database size with maximum values across all instances  
-- Cluster-wide pod phase distribution (Running, Pending, Failed, Succeeded, Unknown pods)
-- Total pod count across all namespaces for capacity monitoring
-- Database size trends and storage utilization indicators
-- Custom metric results if additional queries were specified
-- Timestamp information for all collected metrics
-- Error details for any failed metric collection attempts
+- duration (default: "1h"): Query duration using Prometheus time format (e.g., "5m", "15m", "1h", "3h", "1d", "7d") - longer durations provide better trend analysis but require more processing time
+- end_time (optional): End time in ISO format (YYYY-MM-DDTHH:MM:SSZ) for historical analysis - defaults to current time for recent data analysis
+- start_time (optional): Start time in ISO format (YYYY-MM-DDTHH:MM:SSZ) - automatically calculated from duration and end_time if not provided
 
 Use this tool for:
-- Baseline OVN database health monitoring and size tracking
-- Overall cluster pod health assessment and capacity planning
-- Initial cluster state verification before detailed performance analysis
-- OVN database growth monitoring and storage capacity planning
-- Quick cluster health status checks and operational dashboards
-- Pre-troubleshooting baseline data collection
-- Establishing baseline metrics for performance comparison
+- Identifying node-level resource bottlenecks and capacity constraints before they impact applications
+- Capacity planning and resource allocation optimization based on historical usage patterns
+- Performance monitoring and trend analysis for proactive infrastructure management
+- Load balancing analysis to identify unevenly distributed workloads across nodes
+- Infrastructure health monitoring and operational dashboard integration
+- Pre-maintenance planning by identifying high-resource utilization nodes
+- Cost optimization analysis by understanding actual vs. allocated resource usage
+- Troubleshooting cluster performance issues through node-level resource correlation
 
-This tool provides foundational OVN infrastructure data that is essential for understanding cluster health before diving into detailed performance metrics."""
+The tool provides comprehensive node-level visibility essential for effective OpenShift cluster resource management and operational excellence."""
 )
-async def query_ovn_basic_info(request: OVNBasicInfoRequest) -> Dict[str, Any]:
+
+async def query_cluster_node_usage(request: MetricsRequest) -> Dict[str, Any]:
     """
-    Query fundamental OVN database information and cluster-wide pod status metrics
-    for baseline monitoring and health assessment.
+    Get comprehensive cluster node resource usage metrics including CPU utilization, 
+    memory consumption, and network utilization across all worker, control plane, 
+    and infrastructure nodes grouped by role.
     
-    Provides essential OVN infrastructure metrics including database sizes and pod health status.
+    Provides both instant snapshots and duration-based node performance metrics with 
+    statistical analysis for capacity planning and performance monitoring.
     """
     global prometheus_client, auth_manager
     try:
         if not prometheus_client or not auth_manager:
             await initialize_components()
+            
+        # Initialize the node usage collector
+        collector = nodeUsageCollector(prometheus_client, auth_manager)
         
-        result = {
+        logger.info(f"Collecting node usage data for duration: {request.duration}")
+        
+        # Add timeout to prevent hanging during node usage collection
+        usage_data = await asyncio.wait_for(
+            collector.collect_usage_data(
+                duration=request.duration,
+                end_time=request.end_time
+            ),
+            timeout=45.0  # Reasonable timeout for node metrics collection
+        )
+        
+        # Log collection summary for operational visibility
+        total_nodes = sum(len(group['nodes']) for group in usage_data.get('groups', {}).values())
+        top_cpu_count = len(usage_data.get('top_usage', {}).get('cpu', []))
+        top_memory_count = len(usage_data.get('top_usage', {}).get('memory', []))
+        
+        logger.info(f"Node usage collection completed - Total nodes: {total_nodes}, "
+                   f"Top CPU consumers: {top_cpu_count}, Top memory consumers: {top_memory_count}")
+        
+        return usage_data
+        
+    except asyncio.TimeoutError:
+        return {
+            "error": "Timeout collecting node usage metrics - cluster may be experiencing issues or have many nodes",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timeout_seconds": 45,
+            "suggestion": "Try reducing the duration parameter or check cluster node responsiveness"
+        }
+    except Exception as e:
+        logger.error(f"Error collecting node usage metrics: {e}")
+        return {
+            "error": str(e), 
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tool_name": "query_cluster_node_usage"
+        }
+
+@app.tool(
+    name="analyze_cluster_status",
+    description="""Perform comprehensive cluster status analysis with health scoring, performance alerts, and actionable recommendations. This tool analyzes collected cluster information to provide detailed health assessments, identify potential issues, and generate strategic recommendations for cluster optimization.
+
+CLUSTER HEALTH ASSESSMENT:
+- Overall cluster health score (0-100) based on component availability and performance
+- Component-level health analysis including nodes, operators, and machine config pools
+- Critical issue identification with severity-based alerting (CRITICAL, HIGH, MEDIUM, LOW)
+- Health trend analysis and performance degradation detection
+
+NODE GROUP ANALYSIS:
+- Master, worker, and infrastructure node group health scoring
+- Node availability analysis (Ready vs NotReady states)
+- Scheduling status evaluation (SchedulingDisabled detection)
+- Resource capacity analysis including CPU cores and memory allocation per node group
+- Problematic node identification with specific node names for immediate attention
+
+CLUSTER OPERATOR HEALTH:
+- Cluster operator availability assessment with estimated total operator count
+- Unavailable operator identification by name for targeted troubleshooting  
+- Operator health percentage calculation based on availability ratios
+- Critical operator failure detection requiring immediate intervention
+
+MACHINE CONFIG POOL ANALYSIS:
+- MCP status evaluation (Updated, Updating, Degraded states)
+- Configuration synchronization health across node pools
+- Update progress monitoring and degradation detection
+- Pool-specific health scoring for maintenance planning
+
+RESOURCE UTILIZATION INSIGHTS:
+- Pod density analysis across cluster nodes for capacity planning
+- Service-to-pod ratios indicating application architecture patterns
+- Namespace distribution analysis for workload organization assessment
+- Secret and ConfigMap density metrics for resource management optimization
+
+NETWORK POLICY ANALYSIS:
+- Network security posture assessment through policy distribution
+- NetworkPolicy, AdminNetworkPolicy, and EgressFirewall analysis
+- Network complexity scoring based on policy types and counts
+- User-defined network configuration impact analysis
+
+PERFORMANCE ALERTS:
+- Automated alert generation based on predefined thresholds and best practices
+- Severity-based categorization (CRITICAL for master node issues, HIGH for operator failures)
+- Resource-specific alerts with current vs threshold value comparisons
+- Component-specific alerting for targeted remediation efforts
+
+ACTIONABLE RECOMMENDATIONS:
+- Priority-based recommendations starting with critical issues requiring immediate attention
+- Node-specific remediation guidance for NotReady or degraded nodes
+- Cluster operator restoration recommendations with specific operator names
+- Machine config pool remediation guidance for configuration issues
+- Resource optimization suggestions based on utilization patterns
+
+ANALYSIS METADATA:
+- Analysis execution timestamp and duration for performance tracking
+- Total items analyzed for scope validation and coverage assessment
+- Collection type identification for correlation with data sources
+- Analysis completeness indicators and success metrics
+
+Parameters:
+- include_detailed_analysis (default: true): Include comprehensive component-level analysis with health scoring, detailed breakdowns, and statistical analysis for each cluster component
+- generate_report (default: true): Generate human-readable summary report in addition to structured JSON data for management reporting and operational documentation
+
+Use this tool for:
+- Proactive cluster health monitoring and early issue detection before service impact
+- Post-maintenance validation ensuring all cluster components are functioning properly
+- Capacity planning analysis based on current resource utilization and distribution patterns
+- Operational readiness assessment before critical deployments or maintenance windows
+- Troubleshooting cluster issues through comprehensive component health analysis
+- Executive reporting on cluster operational health and infrastructure stability
+- Compliance reporting demonstrating cluster health monitoring and issue resolution processes
+- Strategic planning for cluster upgrades, expansions, or optimization initiatives
+
+This tool transforms raw cluster information into actionable intelligence, enabling proactive cluster management and informed decision-making for infrastructure operations."""
+)
+async def analyze_cluster_status_tool(request: AnalyzeClusterStatusRequest) -> Dict[str, Any]:
+    """
+    Perform comprehensive cluster status analysis with health scoring, performance alerts,
+    and actionable recommendations based on collected cluster information.
+    
+    Transforms raw cluster data into actionable intelligence for proactive cluster management.
+    """
+    try:
+        logger.info("Starting comprehensive cluster status analysis...")
+        
+        # First collect current cluster information
+        collector = ClusterInfoCollector()
+        
+        # Add timeout for cluster data collection
+        cluster_info = await asyncio.wait_for(
+            collector.collect_cluster_info(),
+            timeout=60.0
+        )
+        
+        # Convert to dictionary format for analysis
+        cluster_data = collector.to_dict(cluster_info)
+        
+        logger.info(f"Cluster data collected - Total nodes: {cluster_data.get('total_nodes', 0)}, "
+                   f"Unavailable operators: {len(cluster_data.get('unavailable_cluster_operators', []))}")
+        
+        # Perform analysis using the imported function
+        analysis_result = await asyncio.wait_for(
+            analyze_cluster_status_module(cluster_data),
+            timeout=30.0
+        )
+        
+        # Add analysis execution metadata
+        analysis_result['execution_metadata'] = {
+            'tool_name': 'analyze_cluster_status',
+            'parameters_applied': {
+                'include_detailed_analysis': request.include_detailed_analysis,
+                'generate_report': request.generate_report
+            },
+            'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
+            'cluster_data_freshness': cluster_data.get('collection_timestamp'),
+            'total_alerts_generated': len(analysis_result.get('alerts', [])),
+            'recommendations_count': len(analysis_result.get('recommendations', []))
+        }
+        
+        # Generate human-readable report if requested
+        if request.generate_report:
+            try:
+                # Use the analyzer to generate the report
+                analyzer = ClusterStatAnalyzer()
+                report_text = analyzer.generate_report(analysis_result)
+                analysis_result['human_readable_report'] = report_text
+                logger.info("Human-readable report generated successfully")
+            except Exception as report_error:
+                logger.warning(f"Failed to generate human-readable report: {report_error}")
+                analysis_result['report_generation_error'] = str(report_error)
+        
+        # Apply filtering based on request parameters
+        if not request.include_detailed_analysis:
+            # Remove detailed breakdowns but keep summary data
+            simplified_result = {
+                'metadata': analysis_result.get('metadata', {}),
+                'cluster_health': analysis_result.get('cluster_health', {}),
+                'alerts_summary': {
+                    'total_alerts': len(analysis_result.get('alerts', [])),
+                    'critical_alerts': len([a for a in analysis_result.get('alerts', []) 
+                                          if a.get('severity') == 'CRITICAL']),
+                    'high_alerts': len([a for a in analysis_result.get('alerts', []) 
+                                      if a.get('severity') == 'HIGH'])
+                },
+                'recommendations': analysis_result.get('recommendations', []),
+                'execution_metadata': analysis_result.get('execution_metadata', {})
+            }
+            
+            if request.generate_report:
+                simplified_result['human_readable_report'] = analysis_result.get('human_readable_report')
+            
+            analysis_result = simplified_result
+            logger.info("Detailed analysis excluded from response")
+        
+        # Log analysis summary
+        health_score = analysis_result.get('cluster_health', {}).get('overall_score', 0)
+        total_alerts = len(analysis_result.get('alerts', []))
+        critical_alerts = len([a for a in analysis_result.get('alerts', []) 
+                              if a.get('severity') == 'CRITICAL'])
+        recommendations_count = len(analysis_result.get('recommendations', []))
+        
+        logger.info(f"Cluster status analysis completed - Health score: {health_score}/100, "
+                   f"Total alerts: {total_alerts}, Critical alerts: {critical_alerts}, "
+                   f"Recommendations: {recommendations_count}")
+        
+        return analysis_result
+        
+    except asyncio.TimeoutError:
+        return {
+            "error": "Timeout during cluster status analysis - cluster may be experiencing issues or have extensive resources",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timeout_details": "Either cluster data collection (60s) or analysis (30s) timed out",
+            "suggestion": "Check cluster responsiveness and try again with simplified analysis"
+        }
+    except Exception as e:
+        logger.error(f"Error during cluster status analysis: {e}")
+        return {
+            "error": str(e), 
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tool_name": "analyze_cluster_status"
+        }
+
+@app.tool(
+    name="query_prometheus_basic_info",
+    description="""Query basic OVN-Kubernetes infrastructure information including OVN database sizes and cluster-wide pod status from Prometheus metrics. This tool provides essential baseline metrics for OVN-K cluster health monitoring and capacity planning.
+
+CORE METRICS COLLECTED:
+
+OVN DATABASE METRICS (when include_db_metrics=True):
+- OVN Northbound database size in bytes with maximum values across all instances
+- OVN Southbound database size in bytes with maximum values across all instances
+- Database size metrics help monitor OVN control plane storage requirements and growth patterns
+- Instance labels and metadata for identifying specific database instances and their locations
+- Critical for detecting database bloat, storage capacity planning, and performance optimization
+
+POD STATUS METRICS (when include_pod_status=True):
+- Cluster-wide pod counts grouped by phase (Running, Pending, Failed, Succeeded, Unknown)
+- Total pod count across all namespaces for capacity monitoring and resource utilization analysis  
+- Pod distribution analysis showing cluster workload patterns and potential scheduling issues
+- Phase-specific counts help identify stuck pods, resource constraints, and cluster health issues
+- Essential for capacity planning, troubleshooting deployment issues, and operational monitoring
+
+CUSTOM METRICS (when custom_metrics specified):
+- Support for additional Prometheus queries specified as metric_name -> query_string pairs
+- Maximum value extraction for custom metrics with full label preservation
+- Flexible extension point for collecting specific OVN-K or cluster metrics not covered by default collection
+- Custom metrics enable targeted monitoring for specific use cases, troubleshooting scenarios, or performance analysis
+
+OPERATIONAL METADATA:
+- Query execution timestamps for data freshness verification and correlation with other monitoring data
+- Error handling and reporting for individual metric collection failures without failing entire operation
+- Structured JSON output format suitable for integration with monitoring dashboards and automation systems
+- Query type identification (instant vs range) and measurement units for proper data interpretation
+
+Parameters:
+- include_pod_status (default: true): Collect cluster-wide pod phase distribution and total counts for workload monitoring
+- include_db_metrics (default: true): Collect OVN Northbound and Southbound database size metrics for storage monitoring  
+- custom_metrics (optional): Dictionary of additional Prometheus queries in format {"metric_name": "prometheus_query"} for extended monitoring
+
+Use this tool for:
+- Baseline cluster health monitoring and establishing normal operational parameters
+- OVN database growth tracking and storage capacity planning for long-term infrastructure planning
+- Quick cluster status overview combining networking infrastructure and workload distribution
+- Troubleshooting cluster-wide issues by understanding pod distribution patterns and database health
+- Capacity planning analysis using both infrastructure (database) and workload (pod) metrics
+- Integration with monitoring dashboards requiring core OVN-K infrastructure metrics
+- Operational health checks before and after maintenance activities or configuration changes
+- Performance baseline establishment for trending analysis and anomaly detection over time
+
+The tool provides essential OVN-K infrastructure visibility combining both control plane (database) and data plane (pod status) metrics for comprehensive cluster monitoring and operational awareness."""
+)
+async def query_prometheus_basic_info(request: PrometheusBasicInfoRequest) -> Dict[str, Any]:
+    """
+    Query basic OVN-Kubernetes infrastructure information including OVN database sizes
+    and cluster-wide pod status from Prometheus metrics.
+    
+    Provides essential baseline metrics for OVN-K cluster health monitoring and capacity planning.
+    """
+    global prometheus_client, auth_manager
+    
+    try:
+        if not prometheus_client or not auth_manager:
+            await initialize_components()
+        
+        logger.info("Starting basic OVN infrastructure information collection...")
+        
+        results = {
             "collection_timestamp": datetime.now(timezone.utc).isoformat(),
-            "metrics_collected": []
+            "tool_name": "query_prometheus_basic_info"
         }
         
         # Collect OVN database metrics if requested
         if request.include_db_metrics:
             try:
-                logger.info("Collecting OVN database metrics...")
+                logger.debug("Collecting OVN database size metrics...")
+                
                 collector = ovnBasicInfoCollector(
                     auth_manager.prometheus_url, 
                     auth_manager.prometheus_token
                 )
                 
-                # Use custom metrics if provided, otherwise use defaults
-                metrics_to_collect = request.custom_metrics
+                # Use default metrics if no custom metrics specified for DB collection
+                db_metrics = None if request.custom_metrics is None else {}
                 
-                db_metrics = await asyncio.wait_for(
-                    collector.collect_max_values(metrics_to_collect),
-                    timeout=30.0
+                # Add timeout to prevent hanging
+                db_results = await asyncio.wait_for(
+                    collector.collect_max_values(db_metrics),
+                    timeout=15.0
                 )
                 
-                result["ovn_database_metrics"] = db_metrics
-                result["metrics_collected"].append("ovn_database_metrics")
+                results["ovn_database_metrics"] = db_results
                 logger.info("OVN database metrics collected successfully")
                 
             except asyncio.TimeoutError:
-                result["ovn_database_metrics"] = {
-                    "error": "Timeout collecting OVN database metrics"
-                }
                 logger.warning("Timeout collecting OVN database metrics")
-            except Exception as e:
-                result["ovn_database_metrics"] = {
-                    "error": f"Failed to collect OVN database metrics: {str(e)}"
+                results["ovn_database_metrics"] = {
+                    "error": "Timeout collecting database metrics",
+                    "timeout_seconds": 15
                 }
+            except Exception as e:
                 logger.error(f"Error collecting OVN database metrics: {e}")
+                results["ovn_database_metrics"] = {"error": str(e)}
         
-        # Collect pod status information if requested
+        # Collect pod status metrics if requested  
         if request.include_pod_status:
             try:
-                logger.info("Collecting cluster-wide pod status...")
+                logger.debug("Collecting cluster-wide pod status metrics...")
                 
-                pod_status = await asyncio.wait_for(
+                # Add timeout to prevent hanging
+                pod_status_results = await asyncio.wait_for(
                     get_pod_phase_counts(
                         auth_manager.prometheus_url,
                         auth_manager.prometheus_token
                     ),
-                    timeout=30.0
+                    timeout=15.0
                 )
                 
-                result["pod_status_metrics"] = pod_status
-                result["metrics_collected"].append("pod_status_metrics")
-                logger.info("Pod status metrics collected successfully")
+                results["pod_status_metrics"] = pod_status_results
+                logger.info(f"Pod status metrics collected - Total pods: {pod_status_results.get('total_pods', 0)}")
                 
             except asyncio.TimeoutError:
-                result["pod_status_metrics"] = {
-                    "error": "Timeout collecting pod status metrics"
-                }
                 logger.warning("Timeout collecting pod status metrics")
-            except Exception as e:
-                result["pod_status_metrics"] = {
-                    "error": f"Failed to collect pod status metrics: {str(e)}"
+                results["pod_status_metrics"] = {
+                    "error": "Timeout collecting pod status metrics",
+                    "timeout_seconds": 15
                 }
+            except Exception as e:
                 logger.error(f"Error collecting pod status metrics: {e}")
+                results["pod_status_metrics"] = {"error": str(e)}
         
-        # Add summary information
-        result["summary"] = {
-            "total_metrics_types": len(result["metrics_collected"]),
-            "collection_success": len([k for k in result.keys() if k.endswith("_metrics") and "error" not in result[k]]),
-            "collection_errors": len([k for k in result.keys() if k.endswith("_metrics") and "error" in result[k]]),
+        # Collect custom metrics if specified
+        if request.custom_metrics:
+            try:
+                logger.debug(f"Collecting {len(request.custom_metrics)} custom metrics...")
+                
+                collector = ovnBasicInfoCollector(
+                    auth_manager.prometheus_url,
+                    auth_manager.prometheus_token
+                )
+                
+                # Add timeout to prevent hanging
+                custom_results = await asyncio.wait_for(
+                    collector.collect_max_values(request.custom_metrics),
+                    timeout=20.0
+                )
+                
+                results["custom_metrics"] = custom_results
+                logger.info(f"Custom metrics collected: {list(request.custom_metrics.keys())}")
+                
+            except asyncio.TimeoutError:
+                logger.warning("Timeout collecting custom metrics")
+                results["custom_metrics"] = {
+                    "error": "Timeout collecting custom metrics", 
+                    "timeout_seconds": 20
+                }
+            except Exception as e:
+                logger.error(f"Error collecting custom metrics: {e}")
+                results["custom_metrics"] = {"error": str(e)}
+        
+        # Add collection summary metadata
+        results["collection_metadata"] = {
+            "parameters_applied": {
+                "include_pod_status": request.include_pod_status,
+                "include_db_metrics": request.include_db_metrics,
+                "custom_metrics_count": len(request.custom_metrics) if request.custom_metrics else 0
+            },
+            "metrics_collected": len([k for k in results.keys() if k.endswith("_metrics")]),
+            "collection_success": not any("error" in str(v) for v in results.values() if isinstance(v, dict))
         }
         
-        logger.info(f"OVN basic info collection completed: {result['summary']}")
-        return result
+        # Log collection summary
+        metrics_collected = []
+        if request.include_db_metrics:
+            metrics_collected.append("OVN databases")
+        if request.include_pod_status:
+            metrics_collected.append("pod status")  
+        if request.custom_metrics:
+            metrics_collected.append(f"{len(request.custom_metrics)} custom metrics")
+        
+        logger.info(f"Basic OVN info collection completed - Collected: {', '.join(metrics_collected)}")
+        
+        return results
         
     except Exception as e:
-        logger.error(f"Error in OVN basic info collection: {e}")
+        logger.error(f"Error in basic OVN info collection: {e}")
         return {
-            "error": str(e), 
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tool_name": "query_prometheus_basic_info"
         }
-
-
-@app.tool(
-    name="query_kube_api_metrics",
-    description="""Query Kubernetes API server performance metrics including request rates, response times, error rates, and resource consumption. This tool is essential for monitoring cluster control plane health and performance, providing insights into API server latency and throughput.
-
-Parameters:  
-- duration (default: "5m"): Query duration using Prometheus time format (e.g., "5m", "1h", "1d")
-- start_time (optional): Start time in ISO format (YYYY-MM-DDTHH:MM:SSZ) for historical analysis
-- end_time (optional): End time in ISO format (YYYY-MM-DDTHH:MM:SSZ) for historical analysis
-
-Returns comprehensive API server metrics including:
-- Read-only API call latency (LIST/GET operations) with p99 percentiles
-- Mutating API call latency (POST/PUT/DELETE/PATCH operations) with p99 percentiles  
-- Request rates per verb and resource type
-- Error rates by HTTP status code and operation type
-- Current inflight requests and queue depths
-- etcd request duration metrics for backend storage performance
-- Overall health scoring and performance alerts
-
-Use this tool to diagnose API server performance issues, identify slow operations, monitor control plane health, or troubleshoot cluster responsiveness problems."""
-)
-async def query_kube_api_metrics(request: MetricsRequest) -> Dict[str, Any]:
-    """
-    Query Kubernetes API server performance metrics including request rates, 
-    response times, error rates, and resource consumption.
-    
-    Essential for monitoring cluster control plane health and performance.
-    """
-    global prometheus_client
-    try:
-        if not prometheus_client:
-            await initialize_components()
-        
-        kube_api_metrics = KubeAPIMetrics(prometheus_client)
-        
-        # Add timeout to prevent hanging
-        result = await asyncio.wait_for(
-            kube_api_metrics.get_metrics(request.duration, request.start_time, request.end_time),
-            timeout=30.0
-        )
-        return result
-    except asyncio.TimeoutError:
-        return {"error": "Timeout querying Kube API metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        logger.error(f"Error querying Kube API metrics: {e}")
-        return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-
 
 @app.tool(
     name="query_ovnk_pods_metrics",
@@ -859,7 +1270,7 @@ Returns container-level metrics including:
 
 Use this tool for deep-dive container analysis, identifying which specific containers within OVN-K pods are consuming the most resources, or troubleshooting container-level performance issues."""
 )
-async def query_ovnk_containers_metrics(request: PODsRequest) -> Dict[str, Any]:
+async def query_ovnk_containers_metrics(request: PODsContainerRequest) -> Dict[str, Any]:
     """
     Query detailed container-level metrics within OVN-Kubernetes pods including
     per-container CPU, memory usage, and resource limits utilization.
@@ -968,7 +1379,7 @@ Returns Multus-specific metrics including:
 
 Use this tool to monitor multi-network performance, troubleshoot secondary network interface issues, analyze Multus resource consumption, or validate multi-network configuration efficiency."""
 )
-async def query_multus_metrics(request: PODsRequest) -> Dict[str, Any]:
+async def query_multus_metrics(request: PODsMultusRequest) -> Dict[str, Any]:
     """
     Query Multus CNI metrics including network attachment processing times,
     resource usage, and network interface management performance.
@@ -999,52 +1410,212 @@ async def query_multus_metrics(request: PODsRequest) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error querying Multus metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
-    
 
 @app.tool(
     name="query_ovnk_sync_duration_seconds_metrics",
-    description="""Query OVN-Kubernetes synchronization duration metrics including controller sync times, resource reconciliation durations, and performance bottlenecks. This tool is critical for identifying performance issues in OVN-K control plane operations.
+    description="""Query comprehensive OVN-Kubernetes synchronization duration metrics including controller ready times, node synchronization performance, resource reconciliation durations, and service processing rates. This tool provides critical visibility into OVN-K control plane performance, sync bottlenecks, and operational efficiency.
+
+COMPREHENSIVE SYNC METRICS COLLECTED:
+
+CONTROLLER READINESS METRICS:
+- ovnkube_controller_ready_duration_seconds: Time required for OVN-K controllers to achieve ready state after startup, restart, or configuration changes
+- Top 10 longest controller ready durations with pod-to-node mapping for infrastructure correlation
+- Controller startup performance analysis identifying slow-starting controllers and potential configuration issues
+- Ready state trend analysis for capacity planning and maintenance window optimization
+
+NODE READINESS METRICS:
+- ovnkube_node_ready_duration_seconds: Time required for OVN-K node agents to synchronize and reach operational state
+- Top 10 longest node ready durations with node location mapping for geographic or infrastructure correlation
+- Node-level sync performance assessment identifying problematic nodes requiring attention
+- Network infrastructure readiness analysis for troubleshooting connectivity and configuration issues
+
+CONTROLLER SYNC DURATION METRICS:
+- ovnkube_controller_sync_duration_seconds: Resource-specific synchronization times including pods, services, network policies, and ingress resources
+- Top 20 longest sync durations with detailed resource breakdown (resource type, name, namespace)
+- Per-resource synchronization performance enabling identification of problematic resources or resource types
+- Sync duration trend analysis with statistical aggregation (min/avg/max) for performance baseline establishment
+- Resource-specific bottleneck identification for targeted optimization and troubleshooting
+
+SERVICE PROCESSING RATE METRICS:
+- ovnkube_controller_sync_service_total rate: Service synchronization throughput measured in operations per second
+- Top 10 highest service processing rates indicating controller load and throughput capacity
+- Service sync performance trends and processing efficiency analysis
+- Throughput capacity assessment for service-heavy workload planning and optimization
+
+STATISTICAL ANALYSIS AND AGGREGATION:
+- Instant queries: Current snapshot with top performers and immediate performance indicators
+- Duration queries: Statistical analysis with min/avg/max values, trend identification, and performance degradation detection
+- Cross-component performance correlation enabling holistic control plane health assessment
+- Resource utilization efficiency metrics and optimization opportunity identification
+
+RESOURCE IDENTIFICATION AND MAPPING:
+- Detailed resource information extraction including resource name, type (Pod, Service, NetworkPolicy), and namespace
+- Pod-to-node mapping for correlating sync performance with underlying infrastructure
+- Resource-specific performance patterns enabling targeted troubleshooting and optimization
+- Cross-namespace sync performance analysis for multi-tenant environment monitoring
+
+PERFORMANCE THRESHOLDS AND ALERTING:
+- Automatic identification of unusually long sync durations requiring immediate attention
+- Performance baseline establishment through historical trend analysis
+- Sync duration threshold monitoring for proactive performance management
+- Resource synchronization efficiency assessment with optimization recommendations
+
+OPERATIONAL METADATA:
+- Collection timestamp with UTC timezone for consistent time correlation across monitoring systems
+- Query execution metadata including data point counts, metric collection success rates, and error handling
+- Structured JSON output format compatible with monitoring dashboards, alerting systems, and automation tools
+- Performance analysis summary with overall maximum values, averages, and performance outliers
 
 Parameters:
-- duration (default: "5m"): Analysis time window using Prometheus format (e.g., "5m", "1h", "1d", "7d")
-- start_time (optional): Historical query start time in ISO format (YYYY-MM-DDTHH:MM:SSZ)
-- end_time (optional): Historical query end time in ISO format (YYYY-MM-DDTHH:MM:SSZ)
+- query_type (default: "instant"): Query method - "instant" for current sync metrics snapshot or "duration" for time-range trend analysis
+- duration (optional): Required for duration queries - time window using Prometheus format ("5m", "30m", "1h", "6h", "24h")
+- timestamp (optional): Specific time for instant historical queries in ISO format (YYYY-MM-DDTHH:MM:SSZ)
+- end_time (optional): End time for duration queries in ISO format, defaults to current time
 
-Returns comprehensive sync duration analysis including:
-- ovnkube_controller_ready_duration_seconds metrics with top 10 longest durations
-- ovnkube_node_ready_duration_seconds for node-level sync performance
-- ovnkube_controller_sync_duration_seconds with resource-specific breakdown
-- Per-resource synchronization times (pods, services, network policies)
-- Resource type and namespace-specific sync performance
-- Sync duration trends and statistical analysis (min/avg/max)
-- Performance bottleneck identification by resource type
+OPERATIONAL USE CASES:
+- Performance troubleshooting: Identify sync bottlenecks causing application deployment delays or network policy application issues
+- Capacity planning: Analyze controller and node sync performance trends for infrastructure scaling decisions
+- Incident response: Correlate sync duration spikes with application performance issues or network connectivity problems
+- Maintenance planning: Establish performance baselines and identify optimal maintenance windows based on sync load patterns
+- Resource optimization: Identify resource types or namespaces with consistently high sync durations requiring configuration optimization
+- Health monitoring: Continuous monitoring of OVN-K control plane performance for proactive issue detection
+- Compliance reporting: Document sync performance metrics for SLA compliance and performance audit requirements
+- Troubleshooting automation: Programmatic identification of sync performance issues for automated alerting and remediation
 
-Use this tool to diagnose OVN-K control plane performance issues, identify slow resource synchronization, troubleshoot network policy application delays, or monitor overall controller responsiveness."""
+This tool is essential for maintaining optimal OVN-Kubernetes control plane performance and ensuring efficient network resource management in OpenShift clusters."""
 )
-async def query_ovnk_sync_duration_seconds_metrics(request: MetricsRequest) -> Dict[str, Any]:
+async def query_ovnk_sync_duration_seconds_metrics(request: OVNKSyncDurationRequest) -> Dict[str, Any]:
     """
-    Query OVN-Kubernetes synchronization duration metrics including controller sync times,
-    resource reconciliation durations, and performance bottlenecks.
+    Query comprehensive OVN-Kubernetes synchronization duration metrics including controller 
+    ready times, node synchronization performance, resource reconciliation durations, 
+    and service processing rates.
     
-    Critical for identifying performance issues in OVN-K control plane operations.
+    Provides critical visibility into OVN-K control plane performance, sync bottlenecks, 
+    and operational efficiency.
     """
     global prometheus_client
     try:
         if not prometheus_client:
             await initialize_components()
         
+        # Initialize the OVN sync duration collector
         collector = OVNSyncDurationCollector(prometheus_client)
+        
+        # Determine query type and execute appropriate collection method
+        if request.query_type == "instant":
+            logger.info("Collecting instant OVN sync duration metrics...")
+            
+            # Add timeout to prevent hanging during instant collection
+            result = await asyncio.wait_for(
+                collector.collect_comprehensive_metrics(request.timestamp),
+                timeout=30.0
+            )
+            
+            # Log collection summary
+            overall_summary = result.get('overall_summary', {})
+            metrics_collected = overall_summary.get('metrics_collected', 0)
+            total_data_points = overall_summary.get('total_data_points', 0)
+            
+            logger.info(f"Instant sync metrics collection completed - "
+                       f"Metrics collected: {metrics_collected}, "
+                       f"Total data points: {total_data_points}")
+            
+        elif request.query_type == "duration":
+            if not request.duration:
+                return {
+                    "error": "Duration parameter is required for duration-based queries",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "suggestion": "Provide duration parameter (e.g., '5m', '1h', '6h') for time-range analysis"
+                }
+            
+            logger.info(f"Collecting OVN sync duration metrics for duration: {request.duration}")
+            
+            # Add timeout to prevent hanging during duration collection
+            result = await asyncio.wait_for(
+                collector.collect_duration_metrics(request.duration, request.end_time),
+                timeout=45.0
+            )
+            
+            # Log collection summary
+            overall_summary = result.get('overall_summary', {})
+            metrics_collected = overall_summary.get('metrics_collected', 0)
+            total_series = overall_summary.get('total_series', 0)
+            
+            logger.info(f"Duration sync metrics collection completed - "
+                       f"Metrics collected: {metrics_collected}, "
+                       f"Total time series: {total_series}")
+            
+        else:
+            return {
+                "error": f"Invalid query_type '{request.query_type}'. Must be 'instant' or 'duration'",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "valid_query_types": ["instant", "duration"]
+            }
+        
+        return result
+        
+    except asyncio.TimeoutError:
+        timeout_seconds = 30 if request.query_type == "instant" else 45
+        return {
+            "error": f"Timeout collecting OVN sync duration metrics - operation exceeded {timeout_seconds} seconds",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timeout_seconds": timeout_seconds,
+            "query_type": request.query_type,
+            "suggestion": "Cluster may be experiencing performance issues or have extensive OVN resources. Try shorter duration or check cluster responsiveness."
+        }
+    except Exception as e:
+        logger.error(f"Error querying OVN sync duration metrics: {e}")
+        return {
+            "error": str(e), 
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tool_name": "query_ovnk_sync_duration_seconds_metrics",
+            "query_type": request.query_type
+        }
+
+@app.tool(
+    name="query_kube_api_metrics",
+    description="""Query Kubernetes API server performance metrics including request rates, response times, error rates, and resource consumption. This tool is essential for monitoring cluster control plane health and performance, providing insights into API server latency and throughput.
+
+Parameters:  
+- duration (default: "5m"): Query duration using Prometheus time format (e.g., "5m", "1h", "1d")
+- start_time (optional): Start time in ISO format (YYYY-MM-DDTHH:MM:SSZ) for historical analysis
+- end_time (optional): End time in ISO format (YYYY-MM-DDTHH:MM:SSZ) for historical analysis
+
+Returns comprehensive API server metrics including:
+- Read-only API call latency (LIST/GET operations) with p99 percentiles
+- Mutating API call latency (POST/PUT/DELETE/PATCH operations) with p99 percentiles  
+- Request rates per verb and resource type
+- Error rates by HTTP status code and operation type
+- Current inflight requests and queue depths
+- etcd request duration metrics for backend storage performance
+- Overall health scoring and performance alerts
+
+Use this tool to diagnose API server performance issues, identify slow operations, monitor control plane health, or troubleshoot cluster responsiveness problems."""
+)
+async def query_kube_api_metrics(request: MetricsRequest) -> Dict[str, Any]:
+    """
+    Query Kubernetes API server performance metrics including request rates, 
+    response times, error rates, and resource consumption.
+    
+    Essential for monitoring cluster control plane health and performance.
+    """
+    global prometheus_client
+    try:
+        if not prometheus_client:
+            await initialize_components()
+        
+        kube_api_metrics = kubeAPICollector(prometheus_client)
         
         # Add timeout to prevent hanging
         result = await asyncio.wait_for(
-            collector.collect_sync_duration_seconds_metrics(request.duration),
+            kube_api_metrics.get_metrics(request.duration, request.start_time, request.end_time),
             timeout=30.0
         )
         return result
     except asyncio.TimeoutError:
-        return {"error": "Timeout collecting sync duration metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
+        return {"error": "Timeout querying Kube API metrics", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
-        logger.error(f"Error querying sync duration metrics: {e}")
+        logger.error(f"Error querying Kube API metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.tool(

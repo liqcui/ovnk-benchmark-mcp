@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional
 from .ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
 
 
-class KubeAPIMetrics:
+class kubeAPICollector:
     """Handles Kubernetes API server metrics queries"""
     
     def __init__(self, prometheus_client: PrometheusBaseQuery):
