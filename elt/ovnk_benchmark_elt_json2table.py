@@ -2032,7 +2032,7 @@ def _summarize_ovs_comprehensive(self, data: Dict[str, Any]) -> str:
     # Top performers
     if 'cpu_performance' in data and data['cpu_performance']:
         top_cpu = data['cpu_performance'][0]
-        summary.append(f"• Top CPU: {top_cpu['Component']} on {top_cpu['Node']} ({top_cpu['Max CPU (%)'])})")
+        summary.append(f"• Top CPU: {top_cpu['Component']} on {top_cpu['Node']} ({top_cpu['Max CPU (%)']}%)")
     
     if 'memory_performance' in data and data['memory_performance']:
         top_memory = data['memory_performance'][0]
