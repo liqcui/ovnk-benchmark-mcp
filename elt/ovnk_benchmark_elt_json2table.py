@@ -921,176 +921,176 @@ class PerformanceDataELT:
         
         return compact_dataframes
 
-def _extract_ovn_sync_duration(self, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract OVN sync duration metrics from ovnk_benchmark_prometheus_ovnk_sync.py output"""
-    structured = {
-        'sync_summary': [],
-        'controller_ready_top5': [],
-        'node_ready_top5': [],
-        'sync_duration_top5': [],
-        'service_rate_top5': []
-    }
-    
-    # Collection summary
-    structured['sync_summary'] = [
-        {'Property': 'Collection Type', 'Value': data.get('collection_type', 'instant')},
-        {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19]},
-        {'Property': 'Duration', 'Value': data.get('duration', 'N/A')},
-        {'Property': 'Timezone', 'Value': data.get('timezone', 'UTC')},
-        {'Property': 'Total Metrics', 'Value': data.get('overall_summary', {}).get('metrics_collected', 0)}
-    ]
-    
-    # Controller ready duration (top 5)
-    controller_ready = data.get('controller_ready_duration', {})
-    if 'error' not in controller_ready and 'top_10' in controller_ready:
-        for i, item in enumerate(controller_ready['top_10'][:5], 1):
-            readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
-            structured['controller_ready_top5'].append({
-                'Rank': i,
-                'Pod Name': item.get('pod_name', 'unknown'),
-                'Node': item.get('node_name', 'unknown'),
-                'Duration': f"{readable.get('value', 0)} {readable.get('unit', 's')}",
-                'Raw Value': f"{item.get('value', item.get('max_value', 0)):.4f}"
-            })
-    
-    # Node ready duration (top 5)
-    node_ready = data.get('node_ready_duration', {})
-    if 'error' not in node_ready and 'top_10' in node_ready:
-        for i, item in enumerate(node_ready['top_10'][:5], 1):
-            readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
-            structured['node_ready_top5'].append({
-                'Rank': i,
-                'Pod Name': item.get('pod_name', 'unknown'),
-                'Node': item.get('node_name', 'unknown'),
-                'Duration': f"{readable.get('value', 0)} {readable.get('unit', 's')}",
-                'Raw Value': f"{item.get('value', item.get('max_value', 0)):.4f}"
-            })
-    
-    # Sync duration (top 5 from top 20)
-    sync_duration = data.get('controller_sync_duration', {})
-    if 'error' not in sync_duration and 'top_20' in sync_duration:
-        for i, item in enumerate(sync_duration['top_20'][:5], 1):
-            readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
-            pod_resource = item.get('pod_resource_name', item.get('pod_name', 'unknown'))
-            # Truncate long resource names
-            if len(pod_resource) > 50:
-                pod_resource = pod_resource[:47] + '...'
-            
-            structured['sync_duration_top5'].append({
-                'Rank': i,
-                'Pod:Resource': pod_resource,
-                'Node': item.get('node_name', 'unknown'),
-                'Duration': f"{readable.get('value', 0)} {readable.get('unit', 's')}",
-                'Raw Value': f"{item.get('value', item.get('max_value', 0)):.4f}"
-            })
-    
-    # Service rate (top 5)
-    service_rate = data.get('controller_service_rate', {})
-    if 'error' not in service_rate and 'top_10' in service_rate:
-        for i, item in enumerate(service_rate['top_10'][:5], 1):
-            readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
-            structured['service_rate_top5'].append({
-                'Rank': i,
-                'Pod Name': item.get('pod_name', 'unknown'),
-                'Node': item.get('node_name', 'unknown'),
-                'Rate': f"{readable.get('value', 0)} {readable.get('unit', 'ops/sec')}",
-                'Raw Value': f"{item.get('value', item.get('max_value', 0)):.4f}"
-            })
-    
-    return structured
+    def _extract_ovn_sync_duration(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract OVN sync duration metrics from ovnk_benchmark_prometheus_ovnk_sync.py output"""
+        structured = {
+            'sync_summary': [],
+            'controller_ready_top5': [],
+            'node_ready_top5': [],
+            'sync_duration_top5': [],
+            'service_rate_top5': []
+        }
+        
+        # Collection summary
+        structured['sync_summary'] = [
+            {'Property': 'Collection Type', 'Value': data.get('collection_type', 'instant')},
+            {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19]},
+            {'Property': 'Duration', 'Value': data.get('duration', 'N/A')},
+            {'Property': 'Timezone', 'Value': data.get('timezone', 'UTC')},
+            {'Property': 'Total Metrics', 'Value': data.get('overall_summary', {}).get('metrics_collected', 0)}
+        ]
+        
+        # Controller ready duration (top 5)
+        controller_ready = data.get('controller_ready_duration', {})
+        if 'error' not in controller_ready and 'top_10' in controller_ready:
+            for i, item in enumerate(controller_ready['top_10'][:5], 1):
+                readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
+                structured['controller_ready_top5'].append({
+                    'Rank': i,
+                    'Pod Name': item.get('pod_name', 'unknown'),
+                    'Node': item.get('node_name', 'unknown'),
+                    'Duration': f"{readable.get('value', 0)} {readable.get('unit', 's')}",
+                    'Raw Value': f"{item.get('value', item.get('max_value', 0)):.4f}"
+                })
+        
+        # Node ready duration (top 5)
+        node_ready = data.get('node_ready_duration', {})
+        if 'error' not in node_ready and 'top_10' in node_ready:
+            for i, item in enumerate(node_ready['top_10'][:5], 1):
+                readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
+                structured['node_ready_top5'].append({
+                    'Rank': i,
+                    'Pod Name': item.get('pod_name', 'unknown'),
+                    'Node': item.get('node_name', 'unknown'),
+                    'Duration': f"{readable.get('value', 0)} {readable.get('unit', 's')}",
+                    'Raw Value': f"{item.get('value', item.get('max_value', 0)):.4f}"
+                })
+        
+        # Sync duration (top 5 from top 20)
+        sync_duration = data.get('controller_sync_duration', {})
+        if 'error' not in sync_duration and 'top_20' in sync_duration:
+            for i, item in enumerate(sync_duration['top_20'][:5], 1):
+                readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
+                pod_resource = item.get('pod_resource_name', item.get('pod_name', 'unknown'))
+                # Truncate long resource names
+                if len(pod_resource) > 50:
+                    pod_resource = pod_resource[:47] + '...'
+                
+                structured['sync_duration_top5'].append({
+                    'Rank': i,
+                    'Pod:Resource': pod_resource,
+                    'Node': item.get('node_name', 'unknown'),
+                    'Duration': f"{readable.get('value', 0)} {readable.get('unit', 's')}",
+                    'Raw Value': f"{item.get('value', item.get('max_value', 0)):.4f}"
+                })
+        
+        # Service rate (top 5)
+        service_rate = data.get('controller_service_rate', {})
+        if 'error' not in service_rate and 'top_10' in service_rate:
+            for i, item in enumerate(service_rate['top_10'][:5], 1):
+                readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
+                structured['service_rate_top5'].append({
+                    'Rank': i,
+                    'Pod Name': item.get('pod_name', 'unknown'),
+                    'Node': item.get('node_name', 'unknown'),
+                    'Rate': f"{readable.get('value', 0)} {readable.get('unit', 'ops/sec')}",
+                    'Raw Value': f"{item.get('value', item.get('max_value', 0)):.4f}"
+                })
+        
+        return structured
 
-def _extract_pod_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract pod usage metrics from ovnk_benchmark_prometheus_pods_usage.py output"""
-    structured = {
-        'usage_summary': [],
-        'top_cpu_pods': [],
-        'top_memory_pods': []
-    }
-    
-    # Usage collection summary
-    structured['usage_summary'] = [
-        {'Property': 'Collection Type', 'Value': data.get('collection_type', 'instant')},
-        {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19]},
-        {'Property': 'Total Analyzed', 'Value': data.get('total_analyzed', 0)},
-        {'Property': 'Include Containers', 'Value': 'Yes' if data.get('include_containers', False) else 'No'},
-        {'Property': 'Duration', 'Value': data.get('query_info', {}).get('duration', 'N/A')}
-    ]
-    
-    # Top 5 CPU usage
-    cpu_usage = data.get('top_5_cpu_usage', [])
-    for item in cpu_usage:
-        rank = item.get('rank', 0)
-        pod_name = item.get('pod_name', 'unknown')
-        node_name = item.get('node_name', 'unknown')
-        container_name = item.get('container_name', '')
+    def _extract_pod_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract pod usage metrics from ovnk_benchmark_prometheus_pods_usage.py output"""
+        structured = {
+            'usage_summary': [],
+            'top_cpu_pods': [],
+            'top_memory_pods': []
+        }
         
-        # Format pod display name
-        if container_name and container_name != 'unknown':
-            pod_display = f"{pod_name}:{container_name}"
-        else:
-            pod_display = pod_name
+        # Usage collection summary
+        structured['usage_summary'] = [
+            {'Property': 'Collection Type', 'Value': data.get('collection_type', 'instant')},
+            {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19]},
+            {'Property': 'Total Analyzed', 'Value': data.get('total_analyzed', 0)},
+            {'Property': 'Include Containers', 'Value': 'Yes' if data.get('include_containers', False) else 'No'},
+            {'Property': 'Duration', 'Value': data.get('query_info', {}).get('duration', 'N/A')}
+        ]
         
-        # Truncate long names
-        if len(pod_display) > 45:
-            pod_display = pod_display[:42] + '...'
+        # Top 5 CPU usage
+        cpu_usage = data.get('top_5_cpu_usage', [])
+        for item in cpu_usage:
+            rank = item.get('rank', 0)
+            pod_name = item.get('pod_name', 'unknown')
+            node_name = item.get('node_name', 'unknown')
+            container_name = item.get('container_name', '')
+            
+            # Format pod display name
+            if container_name and container_name != 'unknown':
+                pod_display = f"{pod_name}:{container_name}"
+            else:
+                pod_display = pod_name
+            
+            # Truncate long names
+            if len(pod_display) > 45:
+                pod_display = pod_display[:42] + '...'
+            
+            # Get CPU metric value
+            cpu_value = 'N/A'
+            metrics = item.get('metrics', {})
+            for metric_name, metric_data in metrics.items():
+                if 'cpu' in metric_name.lower():
+                    if data.get('collection_type') == 'instant':
+                        cpu_value = f"{metric_data.get('value', 0):.2f}%"
+                    else:
+                        cpu_value = f"{metric_data.get('max', 0):.2f}%"
+                    break
+            
+            structured['top_cpu_pods'].append({
+                'Rank': rank,
+                'Pod[:Container]': pod_display,
+                'Node': node_name,
+                'CPU Usage': cpu_value,
+                'Namespace': item.get('namespace', 'unknown')
+            })
         
-        # Get CPU metric value
-        cpu_value = 'N/A'
-        metrics = item.get('metrics', {})
-        for metric_name, metric_data in metrics.items():
-            if 'cpu' in metric_name.lower():
-                if data.get('collection_type') == 'instant':
-                    cpu_value = f"{metric_data.get('value', 0):.2f}%"
-                else:
-                    cpu_value = f"{metric_data.get('max', 0):.2f}%"
-                break
+        # Top 5 Memory usage  
+        memory_usage = data.get('top_5_memory_usage', [])
+        for item in memory_usage:
+            rank = item.get('rank', 0)
+            pod_name = item.get('pod_name', 'unknown')
+            node_name = item.get('node_name', 'unknown')
+            container_name = item.get('container_name', '')
+            
+            # Format pod display name
+            if container_name and container_name != 'unknown':
+                pod_display = f"{pod_name}:{container_name}"
+            else:
+                pod_display = pod_name
+            
+            # Truncate long names
+            if len(pod_display) > 45:
+                pod_display = pod_display[:42] + '...'
+            
+            # Get memory metric value
+            memory_value = 'N/A'
+            metrics = item.get('metrics', {})
+            for metric_name, metric_data in metrics.items():
+                if 'memory' in metric_name.lower():
+                    if data.get('collection_type') == 'instant':
+                        memory_value = f"{metric_data.get('value', 0)} {metric_data.get('unit', 'B')}"
+                    else:
+                        memory_value = f"{metric_data.get('max', 0)} {metric_data.get('unit', 'B')}"
+                    break
+            
+            structured['top_memory_pods'].append({
+                'Rank': rank,
+                'Pod[:Container]': pod_display,
+                'Node': node_name,
+                'Memory Usage': memory_value,
+                'Namespace': item.get('namespace', 'unknown')
+            })
         
-        structured['top_cpu_pods'].append({
-            'Rank': rank,
-            'Pod[:Container]': pod_display,
-            'Node': node_name,
-            'CPU Usage': cpu_value,
-            'Namespace': item.get('namespace', 'unknown')
-        })
-    
-    # Top 5 Memory usage  
-    memory_usage = data.get('top_5_memory_usage', [])
-    for item in memory_usage:
-        rank = item.get('rank', 0)
-        pod_name = item.get('pod_name', 'unknown')
-        node_name = item.get('node_name', 'unknown')
-        container_name = item.get('container_name', '')
-        
-        # Format pod display name
-        if container_name and container_name != 'unknown':
-            pod_display = f"{pod_name}:{container_name}"
-        else:
-            pod_display = pod_name
-        
-        # Truncate long names
-        if len(pod_display) > 45:
-            pod_display = pod_display[:42] + '...'
-        
-        # Get memory metric value
-        memory_value = 'N/A'
-        metrics = item.get('metrics', {})
-        for metric_name, metric_data in metrics.items():
-            if 'memory' in metric_name.lower():
-                if data.get('collection_type') == 'instant':
-                    memory_value = f"{metric_data.get('value', 0)} {metric_data.get('unit', 'B')}"
-                else:
-                    memory_value = f"{metric_data.get('max', 0)} {metric_data.get('unit', 'B')}"
-                break
-        
-        structured['top_memory_pods'].append({
-            'Rank': rank,
-            'Pod[:Container]': pod_display,
-            'Node': node_name,
-            'Memory Usage': memory_value,
-            'Namespace': item.get('namespace', 'unknown')
-        })
-    
-    return structured
+        return structured
 
 
 # Summary generation functions
