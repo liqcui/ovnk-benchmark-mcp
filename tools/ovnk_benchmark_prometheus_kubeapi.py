@@ -590,4 +590,3 @@ class kubeAPICollector:
                     'end_time': end_time
                 }
             }
-                '
