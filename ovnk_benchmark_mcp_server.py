@@ -412,8 +412,6 @@ async def initialize_components():
         
         storage = PrometheusStorage()
         await storage.initialize()
-        
-        cluster_analyzer = ClusterStatAnalyzer()
             
         logger.info("All components initialized successfully")
     except Exception as e:
@@ -1554,66 +1552,23 @@ async def perform_general_cluster_status_check(request: GeneralClusterStatusRequ
     This tool provides essential cluster health monitoring and operational status verification
     distinct from performance analysis tools.
     """
-    global cluster_analyzer, auth_manager
+    global auth_manager
     try:
-        if not cluster_analyzer or not auth_manager:
+        if not auth_manager:
             await initialize_components()
         
         logger.info("Starting general cluster status check and health assessment...")
         
-        # Perform cluster status analysis with timeout
-        analysis_result = await asyncio.wait_for(
-            cluster_analyzer.analyze_cluster_status(
-                include_detailed_analysis=request.include_detailed_analysis,
-                health_check_scope=request.health_check_scope,
-                performance_baseline_comparison=request.performance_baseline_comparison
-            ),
-            timeout=90.0  # Extended timeout for comprehensive health assessment
-        )
+        # Collect cluster information
+        cluster_data = await collect_cluster_information()
         
-        # Check if analysis completed successfully
-        if 'error' in analysis_result:
-            return {
-                'error': f"Cluster status analysis failed: {analysis_result['error']}",
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'tool_name': 'perform_general_cluster_status_check'
-            }
+        analyzer = ClusterStatAnalyzer()
+        analysis_result = analyzer.analyze_metrics_data(cluster_data)
         
-        # Generate summary report if requested
-        if request.generate_summary_report:
-            try:
-                summary_report = cluster_analyzer.generate_health_summary_report(analysis_result)
-                analysis_result['executive_summary_report'] = summary_report
-                logger.info("Executive summary report generated successfully")
-            except Exception as report_error:
-                logger.warning(f"Failed to generate summary report: {report_error}")
-                analysis_result['summary_report_error'] = str(report_error)
+        # Generate and display report
+        report = analyzer.generate_report(analysis_result)
         
-        # Add tool-specific metadata
-        analysis_result['tool_metadata'] = {
-            'tool_name': 'perform_general_cluster_status_check',
-            'parameters_applied': {
-                'include_detailed_analysis': request.include_detailed_analysis,
-                'generate_summary_report': request.generate_summary_report,
-                'health_check_scope': request.health_check_scope,
-                'performance_baseline_comparison': request.performance_baseline_comparison
-            },
-            'assessment_completion_time': datetime.now(timezone.utc).isoformat(),
-            'analysis_type': 'general_health_assessment'
-        }
-        
-        # Log health assessment summary
-        overall_health = analysis_result.get('overall_health_score', 'unknown')
-        critical_issues = len(analysis_result.get('critical_issues', []))
-        warning_issues = len(analysis_result.get('warning_issues', []))
-        components_assessed = len(analysis_result.get('component_health_scores', {}))
-        
-        logger.info(f"General cluster status check completed - "
-                   f"Overall health: {overall_health}, "
-                   f"Critical issues: {critical_issues}, "
-                   f"Warning issues: {warning_issues}, "
-                   f"Components assessed: {components_assessed}")
-        
+        # Return the analysis result as JSON/dict
         return analysis_result
         
     except asyncio.TimeoutError:
