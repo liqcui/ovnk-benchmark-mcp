@@ -56,6 +56,8 @@ class PerformanceDataELT:
                 extracted['structured_data'] = self._extract_prometheus_data(mcp_results)
             elif extracted['data_type'] == 'cluster_status':
                 extracted['structured_data'] = self._extract_cluster_status(mcp_results)
+            elif extracted['data_type'] == 'cluster_status_analysis':
+                extracted['structured_data'] = self._extract_cluster_status_analysis(mcp_results)                                
             elif extracted['data_type'] == 'ovn_sync_duration':
                 extracted['structured_data'] = self._extract_ovn_sync_duration(mcp_results)
             elif extracted['data_type'] == 'pod_usage':
@@ -63,7 +65,8 @@ class PerformanceDataELT:
             elif extracted['data_type'] == 'ovs_usage':
                 extracted['structured_data'] = self._extract_ovs_usage(mcp_results)
             elif extracted['data_type'] == 'ovs_comprehensive':
-                extracted['structured_data'] = self._extract_ovs_comprehensive(mcp_results) 
+                extracted['structured_data'] = self._extract_ovs_comprehensive(mcp_results)
+
             else:
                 extracted['structured_data'] = self._extract_generic_data(mcp_results)
             
@@ -115,7 +118,16 @@ class PerformanceDataELT:
         # Check for node usage data
         if 'groups' in data and 'metadata' in data and 'top_usage' in data:
             return 'node_usage'
-        
+
+        # Check for cluster status analysis (from ovnk_benchmark_analysis_cluster_stat.py)
+        if ('metadata' in data and 'cluster_health' in data and 'node_groups' in data and 
+            'alerts' in data and 'recommendations' in data):
+            # Further verify it's the analysis output by checking metadata structure
+            metadata = data.get('metadata', {})
+            if ('analysis_timestamp' in metadata and 'collection_type' in metadata and 
+                metadata.get('collection_type') == 'cluster_status'):
+                return 'cluster_status_analysis'
+
         # Legacy checks
         if 'version' in data and 'identity' in data:
             return 'cluster_info'
@@ -615,311 +627,121 @@ class PerformanceDataELT:
             })
         
         return structured
-    
-    def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-        """Transform structured data into pandas DataFrames with column limits"""
-        dataframes = {}
+
+    def _extract_cluster_status_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract cluster status analysis results from ovnk_benchmark_analysis_cluster_stat.py output"""
+        structured = {
+            'analysis_overview': [],
+            'cluster_health_summary': [],
+            'node_groups_health': [],
+            'resource_utilization': [],
+            'critical_alerts': [],
+            'top_recommendations': []
+        }
         
-        try:
-            for key, value in structured_data.items():
-                if isinstance(value, list) and value:
-                    df = pd.DataFrame(value)
-                    
-                    # Limit columns to max_columns
-                    if len(df.columns) > self.max_columns:
-                        # Keep most important columns
-                        priority_cols = ['name', 'status', 'value', 'count', 'property']
-                        
-                        # Find priority columns that exist
-                        keep_cols = []
-                        for col in df.columns:
-                            col_lower = col.lower()
-                            if any(priority in col_lower for priority in priority_cols):
-                                keep_cols.append(col)
-                        
-                        # Add remaining columns up to limit
-                        remaining_cols = [col for col in df.columns if col not in keep_cols]
-                        while len(keep_cols) < self.max_columns and remaining_cols:
-                            keep_cols.append(remaining_cols.pop(0))
-                        
-                        df = df[keep_cols[:self.max_columns]]
-                    
-                    dataframes[key] = df
-                    
-                elif isinstance(value, dict):
-                    # Handle nested dictionaries
-                    for nested_key, nested_value in value.items():
-                        if isinstance(nested_value, list) and nested_value:
-                            df = pd.DataFrame(nested_value)
-                            
-                            # Apply column limit
-                            if len(df.columns) > self.max_columns:
-                                df = df.iloc[:, :self.max_columns]
-                            
-                            dataframes[f"{key}_{nested_key}"] = df
+        # Analysis Overview (metadata)
+        metadata = data.get('metadata', {})
+        cluster_health = data.get('cluster_health', {})
         
-        except Exception as e:
-            logger.error(f"Failed to transform to DataFrames: {e}")
+        structured['analysis_overview'] = [
+            {'Property': 'Analysis Type', 'Value': metadata.get('collection_type', 'cluster_status')},
+            {'Property': 'Analysis Time', 'Value': metadata.get('analysis_timestamp', 'Unknown')[:19]},
+            {'Property': 'Duration', 'Value': metadata.get('duration', 'N/A')},
+            {'Property': 'Items Analyzed', 'Value': metadata.get('total_items_analyzed', 0)},
+            {'Property': 'Overall Score', 'Value': f"{cluster_health.get('overall_score', 0)}/100"}
+        ]
         
-        return dataframes
-    
-    def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
-        """Generate HTML tables from DataFrames with improved styling"""
-        html_tables = {}
+        # Cluster Health Summary
+        structured['cluster_health_summary'] = [
+            {'Health Metric': 'Overall Score', 'Value': f"{cluster_health.get('overall_score', 0)}/100"},
+            {'Health Metric': 'Health Level', 'Value': cluster_health.get('health_level', 'unknown').upper()},
+            {'Health Metric': 'Critical Issues', 'Value': cluster_health.get('critical_issues_count', 0)},
+            {'Health Metric': 'Warning Issues', 'Value': cluster_health.get('warning_issues_count', 0)},
+            {'Health Metric': 'Healthy Items', 'Value': cluster_health.get('healthy_items_count', 0)}
+        ]
         
-        try:
-            for name, df in dataframes.items():
-                if not df.empty:
-                    # Create styled HTML table
-                    html = df.to_html(
-                        index=False,
-                        classes='table table-striped table-bordered table-sm',
-                        escape=False,
-                        table_id=f"table-{name.replace('_', '-')}",
-                        border=1
-                    )
-                    
-                    # Clean up HTML (remove newlines and extra whitespace)
-                    html = re.sub(r'\s+', ' ', html.replace('\n', ' ').replace('\r', ''))
-                    html = html.strip()
-                    
-                    # Add responsive wrapper
-                    html = f'<div class="table-responsive">{html}</div>'
-                    
-                    html_tables[name] = html
-        
-        except Exception as e:
-            logger.error(f"Failed to generate HTML tables: {e}")
-        
-        return html_tables
-    
-    def generate_brief_summary(self, structured_data: Dict[str, Any], data_type: str) -> str:
-        """Generate a brief textual summary of the data"""
-        try:
-            if data_type == 'cluster_info':
-                return self._summarize_cluster_info(structured_data)
-            elif data_type == 'prometheus_basic_info':
-                return self._summarize_prometheus_basic_info(structured_data)
-            elif data_type == 'kube_api_metrics':
-                return self._summarize_kube_api_metrics(structured_data)
-            elif data_type == 'node_usage':
-                return self._summarize_node_usage(structured_data)
-            elif data_type == 'pod_status':
-                return self._summarize_pod_status(structured_data)
-            elif data_type == 'cluster_status':
-                return self._summarize_cluster_status(structured_data)
-            elif data_type == 'ovn_sync_duration':
-                return self._summarize_ovn_sync_duration(structured_data)
-            elif data_type == 'pod_usage':
-                return self._summarize_pod_usage(structured_data)
-            elif data_type == 'ovs_usage':
-                return self._summarize_ovs_usage(structured_data)
-            elif data_type == 'ovs_comprehensive':
-                return self._summarize_ovs_comprehensive(structured_data)                              
-            else:
-                return self._summarize_generic(structured_data)
-        
-        except Exception as e:
-            logger.error(f"Failed to generate summary: {e}")
-            return f"Summary generation failed: {str(e)}"
-    
-    def _summarize_cluster_info(self, data: Dict[str, Any]) -> str:
-        """Generate cluster info summary"""
-        summary = ["Cluster Information Summary:"]
-        
-        if 'cluster_overview' in data:
-            for item in data['cluster_overview']:
-                summary.append(f"• {item['Property']}: {item['Value']}")
-        
-        if 'node_summary' in data:
-            summary.append(" Node Distribution:")
-            for item in data['node_summary']:
-                summary.append(f"• {item['Role']}: {item['Count']} nodes ({item['Status']})")
-        
-        if 'cluster_health' in data:
-            health_items = data['cluster_health']
-            unavailable_ops = next((item['Count/Status'] for item in health_items if item['Health Indicator'] == 'Unavailable Operators'), 0)
-            if unavailable_ops > 0:
-                summary.append(f" Warning: {unavailable_ops} cluster operators unavailable")
-        
-        return " ".join(summary)
-    
-    def _summarize_prometheus_basic_info(self, data: Dict[str, Any]) -> str:
-        """Generate Prometheus basic info summary"""
-        summary = ["OVN Database Summary:"]
-        
-        if 'database_sizes' in data:
-            for db in data['database_sizes']:
-                status_indicator = "✓" if db['Status'] == 'Available' else "✗"
-                summary.append(f"• {db['Database']}: {db['Max Size']} {status_indicator}")
-        
-        return " ".join(summary)
-    
-    def _summarize_kube_api_metrics(self, data: Dict[str, Any]) -> str:
-        """Generate Kubernetes API metrics summary"""
-        summary = ["API Server Performance Summary:"]
-        
-        if 'api_summary' in data:
-            for item in data['api_summary']:
-                if item['Property'] in ['Overall Health', 'Health Status']:
-                    summary.append(f"• {item['Property']}: {item['Value']}")
-        
-        if 'latency_metrics' in data:
-            summary.append(" Latency Performance:")
-            for item in data['latency_metrics']:
-                summary.append(f"• {item['Operation Type']}: {item['Max P99 (s)']}s max ({item['Status']})")
-        
-        return " ".join(summary)
-    
-    def _summarize_node_usage(self, data: Dict[str, Any]) -> str:
-        """Generate node usage summary"""
-        summary = ["Node Usage Summary:"]
-        
-        if 'group_summary' in data:
-            total_nodes = sum(item['Node Count'] for item in data['group_summary'])
-            summary.append(f"• Total Nodes Analyzed: {total_nodes}")
+        # Node Groups Health (limit to 5 columns for readability)
+        node_groups = data.get('node_groups', {})
+        for group_type, group_data in node_groups.items():
+            resource_summary = group_data.get('resource_summary', {})
             
-            for item in data['group_summary']:
-                if item['Node Count'] > 0:
-                    summary.append(f"• {item['Role']}: {item['Node Count']} nodes, CPU max {item['CPU Max (%)']}%")
+            structured['node_groups_health'].append({
+                'Node Type': group_type.title(),
+                'Total': group_data.get('total_nodes', 0),
+                'Ready': group_data.get('ready_nodes', 0),
+                'Health Score': f"{group_data.get('health_score', 0):.1f}%",
+                'CPU Cores': resource_summary.get('total_cpu_cores', 0)
+            })
         
-        if 'top_cpu_nodes' in data and data['top_cpu_nodes']:
-            top_cpu = data['top_cpu_nodes'][0]
-            summary.append(f" Highest CPU: {top_cpu['Node Name']} ({top_cpu['CPU Max (%)']}%)")
+        # Resource Utilization Summary
+        resource_util = data.get('resource_utilization', {})
+        network_analysis = data.get('network_policy_analysis', {})
         
-        return " ".join(summary)
-    
-    def _summarize_pod_status(self, data: Dict[str, Any]) -> str:
-        """Generate pod status summary"""
-        summary = ["Pod Status Summary:"]
+        structured['resource_utilization'] = [
+            {'Resource Metric': 'Pod Density', 'Value': resource_util.get('pod_density', 0)},
+            {'Resource Metric': 'Namespaces', 'Value': resource_util.get('namespace_distribution', 0)},
+            {'Resource Metric': 'Service/Pod Ratio', 'Value': resource_util.get('service_to_pod_ratio', 0)},
+            {'Resource Metric': 'Network Policies', 'Value': network_analysis.get('total_network_resources', 0)},
+            {'Resource Metric': 'Network Complexity', 'Value': f"{network_analysis.get('network_complexity_score', 0)}/100"}
+        ]
         
-        if 'pod_overview' in data:
-            total_pods = next((item['Value'] for item in data['pod_overview'] if item['Metric'] == 'Total Pods'), 0)
-            summary.append(f"• Total Pods: {total_pods}")
+        # Critical Alerts (top 5 most severe)
+        alerts = data.get('alerts', [])
+        critical_alerts = [alert for alert in alerts if alert.get('severity', '').upper() in ['CRITICAL', 'HIGH']]
         
-        if 'phase_distribution' in data:
-            running_pods = next((item for item in data['phase_distribution'] if item['Phase'] == 'Running'), None)
-            if running_pods:
-                summary.append(f"• Running: {running_pods['Count']} ({running_pods['Percentage']})")
+        for i, alert in enumerate(critical_alerts[:5], 1):
+            # Truncate long messages for readability
+            message = alert.get('message', 'No message')
+            if len(message) > 60:
+                message = message[:57] + '...'
             
-            # Check for problematic phases
-            problem_phases = ['Failed', 'Pending', 'Unknown']
-            for item in data['phase_distribution']:
-                if item['Phase'] in problem_phases and int(item['Count']) > 0:
-                    summary.append(f"• {item['Phase']}: {item['Count']} pods")
+            structured['critical_alerts'].append({
+                'Priority': i,
+                'Severity': alert.get('severity', 'unknown').upper(),
+                'Component': alert.get('component_name', 'unknown'),
+                'Issue': message,
+                'Current': f"{alert.get('current_value', 0)} {alert.get('unit', '')}"
+            })
         
-        return " ".join(summary)
-    
-    def _summarize_cluster_status(self, data: Dict[str, Any]) -> str:
-        """Generate cluster status summary"""
-        summary = ["Cluster Status Analysis:"]
-        
-        if 'executive_summary' in data:
-            for item in data['executive_summary']:
-                if item['Property'] in ['Cluster Status', 'Health Score', 'Critical Issues']:
-                    summary.append(f"• {item['Property']}: {item['Value']}")
-        
-        if 'critical_issues' in data:
-            critical_count = len(data['critical_issues'])
-            if critical_count > 0:
-                summary.append(f" {critical_count} critical issues found")
-                top_issue = data['critical_issues'][0]
-                summary.append(f"• Top Issue: [{top_issue['Component']}] {top_issue['Issue'][:50]}...")
-        
-        return " ".join(summary)
-    
-    def _summarize_generic(self, data: Dict[str, Any]) -> str:
-        """Generate generic summary"""
-        summary = ["Data Summary:"]
-        
-        if 'key_value_pairs' in data:
-            summary.append(f"• Total properties: {len(data['key_value_pairs'])}")
+        # Top Recommendations (limit to 5 for readability)
+        recommendations = data.get('recommendations', [])
+        for i, recommendation in enumerate(recommendations[:5], 1):
+            # Truncate long recommendations
+            rec_text = recommendation
+            if len(rec_text) > 80:
+                rec_text = rec_text[:77] + '...'
             
-            # Show first few important properties
-            for item in data['key_value_pairs'][:3]:
-                value_preview = str(item['Value'])[:30] + "..." if len(str(item['Value'])) > 30 else str(item['Value'])
-                summary.append(f"• {item['Property']}: {value_preview}")
+            structured['top_recommendations'].append({
+                'Priority': i,
+                'Recommendation': rec_text
+            })
         
-        return " ".join(summary)
-    
-    def create_compact_tables(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-        """Create compact tables optimized for readability with 2-5 columns"""
-        compact_dataframes = {}
+        # Additional tables for comprehensive view (2-column format)
         
-        for table_name, table_data in structured_data.items():
-            if isinstance(table_data, list) and table_data:
-                df = pd.DataFrame(table_data)
-                
-                if df.empty:
-                    continue
-                
-                # Create compact version based on table type
-                if 'overview' in table_name or 'summary' in table_name:
-                    # For overview/summary tables, use 2 columns: Property-Value format
-                    if len(df.columns) > 2:
-                        # Try to find property-value pattern
-                        prop_col = None
-                        val_col = None
-                        
-                        for col in df.columns:
-                            col_lower = col.lower()
-                            if any(word in col_lower for word in ['property', 'metric', 'indicator', 'name']):
-                                prop_col = col
-                            elif any(word in col_lower for word in ['value', 'count', 'status', 'result']):
-                                val_col = col
-                        
-                        if prop_col and val_col:
-                            compact_df = df[[prop_col, val_col]].copy()
-                            compact_df.columns = ['Property', 'Value']
-                        else:
-                            # Take first 2 columns
-                            compact_df = df.iloc[:, :2].copy()
-                    else:
-                        compact_df = df.copy()
-                
-                elif 'top' in table_name or 'latency' in table_name:
-                    # For ranking/performance tables, use 3-4 columns
-                    important_cols = []
-                    
-                    # Look for rank/index column
-                    for col in df.columns:
-                        if any(word in col.lower() for word in ['rank', 'index', 'priority', '#']):
-                            important_cols.append(col)
-                            break
-                    
-                    # Look for name/identifier column
-                    for col in df.columns:
-                        if col not in important_cols and any(word in col.lower() for word in ['name', 'resource', 'operation', 'label']):
-                            important_cols.append(col)
-                            break
-                    
-                    # Look for value columns
-                    for col in df.columns:
-                        if col not in important_cols and any(word in col.lower() for word in ['value', 'latency', 'rate', 'usage', 'max', 'avg']):
-                            important_cols.append(col)
-                            if len(important_cols) >= 4:
-                                break
-                    
-                    # Fill remaining slots
-                    for col in df.columns:
-                        if col not in important_cols:
-                            important_cols.append(col)
-                            if len(important_cols) >= 4:
-                                break
-                    
-                    compact_df = df[important_cols[:4]].copy()
-                
-                else:
-                    # For other tables, use up to 5 columns
-                    compact_df = df.iloc[:, :self.max_columns].copy()
-                
-                # Limit rows to prevent overly long tables
-                if len(compact_df) > 15:
-                    compact_df = compact_df.head(15)
-                
-                compact_dataframes[table_name] = compact_df
+        # Cluster Operators Summary
+        operators_summary = data.get('cluster_operators_summary', {})
+        if operators_summary:
+            structured['operators_status'] = [
+                {'Operator Metric': 'Total Operators', 'Value': operators_summary.get('total_operators_estimated', 0)},
+                {'Operator Metric': 'Available', 'Value': operators_summary.get('available_operators', 0)},
+                {'Operator Metric': 'Unavailable', 'Value': operators_summary.get('unavailable_operators', 0)},
+                {'Operator Metric': 'Availability %', 'Value': f"{operators_summary.get('availability_percentage', 0)}%"},
+                {'Operator Metric': 'Health Status', 'Value': operators_summary.get('health_status', 'unknown').upper()}
+            ]
         
-        return compact_dataframes
+        # MCP Summary
+        mcp_summary = data.get('mcp_summary', {})
+        if mcp_summary:
+            status_dist = mcp_summary.get('status_distribution', {})
+            structured['mcp_status'] = [
+                {'MCP Metric': 'Total Pools', 'Value': mcp_summary.get('total_pools', 0)},
+                {'MCP Metric': 'Health Score', 'Value': f"{mcp_summary.get('health_score', 0):.1f}/100"},
+                {'MCP Metric': 'Updated Pools', 'Value': status_dist.get('Updated', 0)},
+                {'MCP Metric': 'Degraded Pools', 'Value': status_dist.get('Degraded', 0)},
+                {'MCP Metric': 'Health Status', 'Value': mcp_summary.get('health_status', 'unknown').upper()}
+            ]
+        
+        return structured
 
     def _extract_ovn_sync_duration(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract OVN sync duration metrics from ovnk_benchmark_prometheus_ovnk_sync.py output"""
@@ -1091,66 +913,6 @@ class PerformanceDataELT:
             })
         
         return structured
-
-    # Summary generation functions
-    def _summarize_ovn_sync_duration(self, data: Dict[str, Any]) -> str:
-        """Generate OVN sync duration summary"""
-        summary = ["OVN Sync Duration Analysis:"]
-        
-        if 'sync_summary' in data:
-            collection_type = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Collection Type'), 'unknown')
-            total_metrics = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Total Metrics'), 0)
-            summary.append(f"• Collection: {collection_type} ({total_metrics} metrics)")
-        
-        # Report top performers from each category
-        categories = [
-            ('controller_ready_top5', 'Controller Ready'),
-            ('node_ready_top5', 'Node Ready'),
-            ('sync_duration_top5', 'Sync Duration'),
-            ('service_rate_top5', 'Service Rate')
-        ]
-        
-        for table_name, category_name in categories:
-            if table_name in data and data[table_name]:
-                top_item = data[table_name][0]
-                if table_name == 'sync_duration_top5':
-                    identifier = top_item.get('Pod:Resource', 'unknown')
-                else:
-                    identifier = top_item.get('Pod Name', 'unknown')
-                
-                if table_name == 'service_rate_top5':
-                    value = top_item.get('Rate', 'N/A')
-                else:
-                    value = top_item.get('Duration', 'N/A')
-                
-                summary.append(f"• Top {category_name}: {identifier} ({value})")
-        
-        return " ".join(summary)
-
-    def _summarize_pod_usage(self, data: Dict[str, Any]) -> str:
-        """Generate pod usage summary"""
-        summary = ["Pod Usage Analysis:"]
-        
-        if 'usage_summary' in data:
-            collection_type = next((item['Value'] for item in data['usage_summary'] if item['Property'] == 'Collection Type'), 'unknown')
-            total_analyzed = next((item['Value'] for item in data['usage_summary'] if item['Property'] == 'Total Analyzed'), 0)
-            summary.append(f"• Collection: {collection_type} ({total_analyzed} pods analyzed)")
-        
-        # Top CPU consumer
-        if 'top_cpu_pods' in data and data['top_cpu_pods']:
-            top_cpu = data['top_cpu_pods'][0]
-            pod_name = top_cpu.get('Pod[:Container]', 'unknown')
-            cpu_usage = top_cpu.get('CPU Usage', 'N/A')
-            summary.append(f"• Top CPU: {pod_name} ({cpu_usage})")
-        
-        # Top Memory consumer
-        if 'top_memory_pods' in data and data['top_memory_pods']:
-            top_memory = data['top_memory_pods'][0]
-            pod_name = top_memory.get('Pod[:Container]', 'unknown')
-            memory_usage = top_memory.get('Memory Usage', 'N/A')
-            summary.append(f"• Top Memory: {pod_name} ({memory_usage})")
-        
-        return " ".join(summary)
 
     def _extract_ovs_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract OVS usage metrics from ovnk_benchmark_prometheus_ovnk_ovs.py output"""
@@ -1523,6 +1285,229 @@ class PerformanceDataELT:
         
         return structured
 
+  # Summary generation functions
+    def _summarize_cluster_info(self, data: Dict[str, Any]) -> str:
+        """Generate cluster info summary"""
+        summary = ["Cluster Information Summary:"]
+        
+        if 'cluster_overview' in data:
+            for item in data['cluster_overview']:
+                summary.append(f"• {item['Property']}: {item['Value']}")
+        
+        if 'node_summary' in data:
+            summary.append(" Node Distribution:")
+            for item in data['node_summary']:
+                summary.append(f"• {item['Role']}: {item['Count']} nodes ({item['Status']})")
+        
+        if 'cluster_health' in data:
+            health_items = data['cluster_health']
+            unavailable_ops = next((item['Count/Status'] for item in health_items if item['Health Indicator'] == 'Unavailable Operators'), 0)
+            if unavailable_ops > 0:
+                summary.append(f" Warning: {unavailable_ops} cluster operators unavailable")
+        
+        return " ".join(summary)
+    
+    def _summarize_prometheus_basic_info(self, data: Dict[str, Any]) -> str:
+        """Generate Prometheus basic info summary"""
+        summary = ["OVN Database Summary:"]
+        
+        if 'database_sizes' in data:
+            for db in data['database_sizes']:
+                status_indicator = "✓" if db['Status'] == 'Available' else "✗"
+                summary.append(f"• {db['Database']}: {db['Max Size']} {status_indicator}")
+        
+        return " ".join(summary)
+    
+    def _summarize_kube_api_metrics(self, data: Dict[str, Any]) -> str:
+        """Generate Kubernetes API metrics summary"""
+        summary = ["API Server Performance Summary:"]
+        
+        if 'api_summary' in data:
+            for item in data['api_summary']:
+                if item['Property'] in ['Overall Health', 'Health Status']:
+                    summary.append(f"• {item['Property']}: {item['Value']}")
+        
+        if 'latency_metrics' in data:
+            summary.append(" Latency Performance:")
+            for item in data['latency_metrics']:
+                summary.append(f"• {item['Operation Type']}: {item['Max P99 (s)']}s max ({item['Status']})")
+        
+        return " ".join(summary)
+    
+    def _summarize_node_usage(self, data: Dict[str, Any]) -> str:
+        """Generate node usage summary"""
+        summary = ["Node Usage Summary:"]
+        
+        if 'group_summary' in data:
+            total_nodes = sum(item['Node Count'] for item in data['group_summary'])
+            summary.append(f"• Total Nodes Analyzed: {total_nodes}")
+            
+            for item in data['group_summary']:
+                if item['Node Count'] > 0:
+                    summary.append(f"• {item['Role']}: {item['Node Count']} nodes, CPU max {item['CPU Max (%)']}%")
+        
+        if 'top_cpu_nodes' in data and data['top_cpu_nodes']:
+            top_cpu = data['top_cpu_nodes'][0]
+            summary.append(f" Highest CPU: {top_cpu['Node Name']} ({top_cpu['CPU Max (%)']}%)")
+        
+        return " ".join(summary)
+    
+    def _summarize_pod_status(self, data: Dict[str, Any]) -> str:
+        """Generate pod status summary"""
+        summary = ["Pod Status Summary:"]
+        
+        if 'pod_overview' in data:
+            total_pods = next((item['Value'] for item in data['pod_overview'] if item['Metric'] == 'Total Pods'), 0)
+            summary.append(f"• Total Pods: {total_pods}")
+        
+        if 'phase_distribution' in data:
+            running_pods = next((item for item in data['phase_distribution'] if item['Phase'] == 'Running'), None)
+            if running_pods:
+                summary.append(f"• Running: {running_pods['Count']} ({running_pods['Percentage']})")
+            
+            # Check for problematic phases
+            problem_phases = ['Failed', 'Pending', 'Unknown']
+            for item in data['phase_distribution']:
+                if item['Phase'] in problem_phases and int(item['Count']) > 0:
+                    summary.append(f"• {item['Phase']}: {item['Count']} pods")
+        
+        return " ".join(summary)
+    
+    def _summarize_cluster_status(self, data: Dict[str, Any]) -> str:
+        """Generate cluster status summary"""
+        summary = ["Cluster Status Analysis:"]
+        
+        if 'executive_summary' in data:
+            for item in data['executive_summary']:
+                if item['Property'] in ['Cluster Status', 'Health Score', 'Critical Issues']:
+                    summary.append(f"• {item['Property']}: {item['Value']}")
+        
+        if 'critical_issues' in data:
+            critical_count = len(data['critical_issues'])
+            if critical_count > 0:
+                summary.append(f" {critical_count} critical issues found")
+                top_issue = data['critical_issues'][0]
+                summary.append(f"• Top Issue: [{top_issue['Component']}] {top_issue['Issue'][:50]}...")
+        
+        return " ".join(summary)
+    
+    def _summarize_generic(self, data: Dict[str, Any]) -> str:
+        """Generate generic summary"""
+        summary = ["Data Summary:"]
+        
+        if 'key_value_pairs' in data:
+            summary.append(f"• Total properties: {len(data['key_value_pairs'])}")
+            
+            # Show first few important properties
+            for item in data['key_value_pairs'][:3]:
+                value_preview = str(item['Value'])[:30] + "..." if len(str(item['Value'])) > 30 else str(item['Value'])
+                summary.append(f"• {item['Property']}: {value_preview}")
+        
+        return " ".join(summary)
+
+    def _summarize_cluster_status_analysis(self, data: Dict[str, Any]) -> str:
+        """Generate cluster status analysis summary"""
+        summary = ["Cluster Status Analysis Summary:"]
+        
+        # Overall health
+        if 'cluster_health_summary' in data:
+            health_items = data['cluster_health_summary']
+            overall_score = next((item['Value'] for item in health_items if item['Health Metric'] == 'Overall Score'), '0/100')
+            health_level = next((item['Value'] for item in health_items if item['Health Metric'] == 'Health Level'), 'UNKNOWN')
+            critical_count = next((item['Value'] for item in health_items if item['Health Metric'] == 'Critical Issues'), 0)
+            
+            summary.append(f"• Overall Health: {overall_score} ({health_level})")
+            if critical_count > 0:
+                summary.append(f"• Critical Issues: {critical_count}")
+        
+        # Node groups health
+        if 'node_groups_health' in data:
+            total_nodes = sum(item['Total'] for item in data['node_groups_health'])
+            ready_nodes = sum(item['Ready'] for item in data['node_groups_health'])
+            summary.append(f"• Nodes: {ready_nodes}/{total_nodes} ready")
+            
+            # Report any unhealthy node groups
+            for group in data['node_groups_health']:
+                if group['Ready'] < group['Total']:
+                    not_ready = group['Total'] - group['Ready']
+                    summary.append(f"• {group['Node Type']}: {not_ready} nodes not ready")
+        
+        # Critical alerts
+        if 'critical_alerts' in data and data['critical_alerts']:
+            alert_count = len(data['critical_alerts'])
+            summary.append(f"• Critical Alerts: {alert_count}")
+            
+            # Mention top critical issue
+            top_alert = data['critical_alerts'][0]
+            summary.append(f"• Top Issue: [{top_alert['Component']}] {top_alert['Issue']}")
+        
+        # Operators status
+        if 'operators_status' in data:
+            unavailable = next((item['Value'] for item in data['operators_status'] if item['Operator Metric'] == 'Unavailable'), 0)
+            if unavailable > 0:
+                summary.append(f"• Unavailable Operators: {unavailable}")
+        
+        return " ".join(summary) 
+
+    def _summarize_ovn_sync_duration(self, data: Dict[str, Any]) -> str:
+        """Generate OVN sync duration summary"""
+        summary = ["OVN Sync Duration Analysis:"]
+        
+        if 'sync_summary' in data:
+            collection_type = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Collection Type'), 'unknown')
+            total_metrics = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Total Metrics'), 0)
+            summary.append(f"• Collection: {collection_type} ({total_metrics} metrics)")
+        
+        # Report top performers from each category
+        categories = [
+            ('controller_ready_top5', 'Controller Ready'),
+            ('node_ready_top5', 'Node Ready'),
+            ('sync_duration_top5', 'Sync Duration'),
+            ('service_rate_top5', 'Service Rate')
+        ]
+        
+        for table_name, category_name in categories:
+            if table_name in data and data[table_name]:
+                top_item = data[table_name][0]
+                if table_name == 'sync_duration_top5':
+                    identifier = top_item.get('Pod:Resource', 'unknown')
+                else:
+                    identifier = top_item.get('Pod Name', 'unknown')
+                
+                if table_name == 'service_rate_top5':
+                    value = top_item.get('Rate', 'N/A')
+                else:
+                    value = top_item.get('Duration', 'N/A')
+                
+                summary.append(f"• Top {category_name}: {identifier} ({value})")
+        
+        return " ".join(summary)
+
+    def _summarize_pod_usage(self, data: Dict[str, Any]) -> str:
+        """Generate pod usage summary"""
+        summary = ["Pod Usage Analysis:"]
+        
+        if 'usage_summary' in data:
+            collection_type = next((item['Value'] for item in data['usage_summary'] if item['Property'] == 'Collection Type'), 'unknown')
+            total_analyzed = next((item['Value'] for item in data['usage_summary'] if item['Property'] == 'Total Analyzed'), 0)
+            summary.append(f"• Collection: {collection_type} ({total_analyzed} pods analyzed)")
+        
+        # Top CPU consumer
+        if 'top_cpu_pods' in data and data['top_cpu_pods']:
+            top_cpu = data['top_cpu_pods'][0]
+            pod_name = top_cpu.get('Pod[:Container]', 'unknown')
+            cpu_usage = top_cpu.get('CPU Usage', 'N/A')
+            summary.append(f"• Top CPU: {pod_name} ({cpu_usage})")
+        
+        # Top Memory consumer
+        if 'top_memory_pods' in data and data['top_memory_pods']:
+            top_memory = data['top_memory_pods'][0]
+            pod_name = top_memory.get('Pod[:Container]', 'unknown')
+            memory_usage = top_memory.get('Memory Usage', 'N/A')
+            summary.append(f"• Top Memory: {pod_name} ({memory_usage})")
+        
+        return " ".join(summary)
+
     def _summarize_ovs_usage(self, data: Dict[str, Any]) -> str:
         """Generate OVS usage summary"""
         summary = ["OVS Usage Analysis:"]
@@ -1597,9 +1582,194 @@ class PerformanceDataELT:
         
         return " ".join(summary)
 
+    def create_compact_tables(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+        """Create compact tables optimized for readability with 2-5 columns"""
+        compact_dataframes = {}
+        
+        for table_name, table_data in structured_data.items():
+            if isinstance(table_data, list) and table_data:
+                df = pd.DataFrame(table_data)
+                
+                if df.empty:
+                    continue
+                
+                # Create compact version based on table type
+                if 'overview' in table_name or 'summary' in table_name:
+                    # For overview/summary tables, use 2 columns: Property-Value format
+                    if len(df.columns) > 2:
+                        # Try to find property-value pattern
+                        prop_col = None
+                        val_col = None
+                        
+                        for col in df.columns:
+                            col_lower = col.lower()
+                            if any(word in col_lower for word in ['property', 'metric', 'indicator', 'name']):
+                                prop_col = col
+                            elif any(word in col_lower for word in ['value', 'count', 'status', 'result']):
+                                val_col = col
+                        
+                        if prop_col and val_col:
+                            compact_df = df[[prop_col, val_col]].copy()
+                            compact_df.columns = ['Property', 'Value']
+                        else:
+                            # Take first 2 columns
+                            compact_df = df.iloc[:, :2].copy()
+                    else:
+                        compact_df = df.copy()
+                
+                elif 'top' in table_name or 'latency' in table_name:
+                    # For ranking/performance tables, use 3-4 columns
+                    important_cols = []
+                    
+                    # Look for rank/index column
+                    for col in df.columns:
+                        if any(word in col.lower() for word in ['rank', 'index', 'priority', '#']):
+                            important_cols.append(col)
+                            break
+                    
+                    # Look for name/identifier column
+                    for col in df.columns:
+                        if col not in important_cols and any(word in col.lower() for word in ['name', 'resource', 'operation', 'label']):
+                            important_cols.append(col)
+                            break
+                    
+                    # Look for value columns
+                    for col in df.columns:
+                        if col not in important_cols and any(word in col.lower() for word in ['value', 'latency', 'rate', 'usage', 'max', 'avg']):
+                            important_cols.append(col)
+                            if len(important_cols) >= 4:
+                                break
+                    
+                    # Fill remaining slots
+                    for col in df.columns:
+                        if col not in important_cols:
+                            important_cols.append(col)
+                            if len(important_cols) >= 4:
+                                break
+                    
+                    compact_df = df[important_cols[:4]].copy()
+                
+                else:
+                    # For other tables, use up to 5 columns
+                    compact_df = df.iloc[:, :self.max_columns].copy()
+                
+                # Limit rows to prevent overly long tables
+                if len(compact_df) > 15:
+                    compact_df = compact_df.head(15)
+                
+                compact_dataframes[table_name] = compact_df
+        
+        return compact_dataframes
 
-
-
+    def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+        """Transform structured data into pandas DataFrames with column limits"""
+        dataframes = {}
+        
+        try:
+            for key, value in structured_data.items():
+                if isinstance(value, list) and value:
+                    df = pd.DataFrame(value)
+                    
+                    # Limit columns to max_columns
+                    if len(df.columns) > self.max_columns:
+                        # Keep most important columns
+                        priority_cols = ['name', 'status', 'value', 'count', 'property']
+                        
+                        # Find priority columns that exist
+                        keep_cols = []
+                        for col in df.columns:
+                            col_lower = col.lower()
+                            if any(priority in col_lower for priority in priority_cols):
+                                keep_cols.append(col)
+                        
+                        # Add remaining columns up to limit
+                        remaining_cols = [col for col in df.columns if col not in keep_cols]
+                        while len(keep_cols) < self.max_columns and remaining_cols:
+                            keep_cols.append(remaining_cols.pop(0))
+                        
+                        df = df[keep_cols[:self.max_columns]]
+                    
+                    dataframes[key] = df
+                    
+                elif isinstance(value, dict):
+                    # Handle nested dictionaries
+                    for nested_key, nested_value in value.items():
+                        if isinstance(nested_value, list) and nested_value:
+                            df = pd.DataFrame(nested_value)
+                            
+                            # Apply column limit
+                            if len(df.columns) > self.max_columns:
+                                df = df.iloc[:, :self.max_columns]
+                            
+                            dataframes[f"{key}_{nested_key}"] = df
+        
+        except Exception as e:
+            logger.error(f"Failed to transform to DataFrames: {e}")
+        
+        return dataframes
+    
+    def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
+        """Generate HTML tables from DataFrames with improved styling"""
+        html_tables = {}
+        
+        try:
+            for name, df in dataframes.items():
+                if not df.empty:
+                    # Create styled HTML table
+                    html = df.to_html(
+                        index=False,
+                        classes='table table-striped table-bordered table-sm',
+                        escape=False,
+                        table_id=f"table-{name.replace('_', '-')}",
+                        border=1
+                    )
+                    
+                    # Clean up HTML (remove newlines and extra whitespace)
+                    html = re.sub(r'\s+', ' ', html.replace('\n', ' ').replace('\r', ''))
+                    html = html.strip()
+                    
+                    # Add responsive wrapper
+                    html = f'<div class="table-responsive">{html}</div>'
+                    
+                    html_tables[name] = html
+        
+        except Exception as e:
+            logger.error(f"Failed to generate HTML tables: {e}")
+        
+        return html_tables
+    
+    def generate_brief_summary(self, structured_data: Dict[str, Any], data_type: str) -> str:
+        """Generate a brief textual summary of the data"""
+        try:
+            if data_type == 'cluster_info':
+                return self._summarize_cluster_info(structured_data)
+            elif data_type == 'prometheus_basic_info':
+                return self._summarize_prometheus_basic_info(structured_data)
+            elif data_type == 'kube_api_metrics':
+                return self._summarize_kube_api_metrics(structured_data)
+            elif data_type == 'node_usage':
+                return self._summarize_node_usage(structured_data)
+            elif data_type == 'pod_status':
+                return self._summarize_pod_status(structured_data)
+            elif data_type == 'cluster_status':
+                return self._summarize_cluster_status(structured_data)
+            elif data_type == 'cluster_status_analysis':
+                return self._summarize_cluster_status_analysis(structured_data)                
+            elif data_type == 'ovn_sync_duration':
+                return self._summarize_ovn_sync_duration(structured_data)
+            elif data_type == 'pod_usage':
+                return self._summarize_pod_usage(structured_data)
+            elif data_type == 'ovs_usage':
+                return self._summarize_ovs_usage(structured_data)
+            elif data_type == 'ovs_comprehensive':
+                return self._summarize_ovs_comprehensive(structured_data)                              
+            else:
+                return self._summarize_generic(structured_data)
+        
+        except Exception as e:
+            logger.error(f"Failed to generate summary: {e}")
+            return f"Summary generation failed: {str(e)}"
+    
 # Enhanced module functions
 def extract_and_transform_mcp_results(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
     """Extract and transform MCP results into tables and summaries"""
@@ -1638,7 +1808,6 @@ def extract_and_transform_mcp_results(mcp_results: Dict[str, Any]) -> Dict[str, 
     except Exception as e:
         logger.error(f"Failed to extract and transform MCP results: {e}")
         return {'error': str(e)}
-
 
 def format_results_as_table(results: Dict[str, Any], compact: bool = True) -> str:
     """Format results as HTML table string"""
@@ -1690,7 +1859,6 @@ def format_results_as_table(results: Dict[str, Any], compact: bool = True) -> st
     except Exception as e:
         logger.error(f"Failed to format results as table: {e}")
         return f"<div class='alert alert-danger'>Error: {str(e)}</div>"
-
 
 def convert_json_to_tables(json_data: Union[Dict[str, Any], str], 
                           table_format: str = "both",
@@ -1802,7 +1970,6 @@ def convert_json_to_tables(json_data: Union[Dict[str, Any], str],
             'metadata': {'conversion_failed': True}
         }
 
-
 def convert_cluster_info_to_tables(cluster_info_json: Union[Dict[str, Any], str]) -> Dict[str, str]:
     """
     Specialized converter for cluster info JSON (from ovnk_benchmark_openshift_cluster_info.py)
@@ -1816,7 +1983,6 @@ def convert_cluster_info_to_tables(cluster_info_json: Union[Dict[str, Any], str]
         return {'error': result['error']}
     
     return result.get('html', {})
-
 
 def convert_prometheus_basic_to_tables(prometheus_json: Union[Dict[str, Any], str]) -> Dict[str, str]:
     """
@@ -1832,7 +1998,6 @@ def convert_prometheus_basic_to_tables(prometheus_json: Union[Dict[str, Any], st
     
     return result.get('html', {})
 
-
 def convert_kube_api_to_tables(kube_api_json: Union[Dict[str, Any], str]) -> Dict[str, str]:
     """
     Specialized converter for Kubernetes API metrics JSON (from ovnk_benchmark_prometheus_kubeapi.py)
@@ -1847,7 +2012,6 @@ def convert_kube_api_to_tables(kube_api_json: Union[Dict[str, Any], str]) -> Dic
     
     return result.get('html', {})
 
-
 def generate_brief_results(results: Dict[str, Any]) -> str:
     """Generate brief text summary of results"""
     try:
@@ -1861,7 +2025,6 @@ def generate_brief_results(results: Dict[str, Any]) -> str:
     except Exception as e:
         logger.error(f"Failed to generate brief results: {e}")
         return f"Error: {str(e)}"
-
 
 def convert_dict_to_simple_table(data: Dict[str, Any], 
                                 table_format: str = "both") -> Dict[str, Any]:
@@ -1935,7 +2098,6 @@ def convert_dict_to_simple_table(data: Dict[str, Any],
             'metadata': {'conversion_failed': True}
         }
 
-
 def auto_detect_and_convert_to_tables(data: Union[Dict[str, Any], str],
                                      table_format: str = "both",
                                      compact: bool = True) -> Dict[str, Any]:
@@ -1997,7 +2159,6 @@ def auto_detect_and_convert_to_tables(data: Union[Dict[str, Any], str],
             'metadata': {'conversion_failed': True}
         }
 
-
 def json_to_html_table(json_data: Union[Dict[str, Any], str], compact: bool = True) -> str:
     """Convert JSON data to HTML table format with compact option"""
     result = convert_json_to_tables(json_data, "html", compact)
@@ -2027,7 +2188,6 @@ def json_to_html_table(json_data: Union[Dict[str, Any], str], compact: bool = Tr
         output_parts.append(html_table)
     
     return ' '.join(output_parts)
-
 
 def json_to_tabular_data(json_data: Union[Dict[str, Any], str], compact: bool = True) -> List[Dict[str, Any]]:
     """Convert JSON data to tabular format with compact option"""
