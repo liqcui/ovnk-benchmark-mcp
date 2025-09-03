@@ -123,15 +123,23 @@ class ClusterInfoRequest(BaseModel):
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-class AnalyzeClusterStatusRequest(BaseModel):
-    """Request model for cluster status analysis with detailed health assessment"""
+class GeneralClusterStatusRequest(BaseModel):
+    """Request model for general cluster status check and health assessment"""
     include_detailed_analysis: bool = Field(
         default=True,
-        description="Whether to include detailed component analysis with health scoring, recommendations, and performance alerts"
+        description="Whether to include detailed component analysis with health scoring, performance metrics breakdown, recommendations, and alerts for each cluster component"
     )
-    generate_report: bool = Field(
-        default=True,
-        description="Whether to generate a human-readable summary report in addition to structured analysis data"
+    generate_summary_report: bool = Field(
+        default=True, 
+        description="Whether to generate a human-readable executive summary report with key findings, risk assessment, and prioritized action items in addition to structured analysis data"
+    )
+    health_check_scope: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list to limit health check scope to specific areas: ['operators', 'nodes', 'networking', 'storage', 'mcps']. If not specified, performs comprehensive health assessment across all cluster components"
+    )
+    performance_baseline_comparison: bool = Field(
+        default=False,
+        description="Whether to include comparison against performance baselines and historical trends when available for identifying performance degradation or improvement patterns"
     )
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
@@ -824,188 +832,6 @@ async def query_cluster_node_usage(request: MetricsRequest) -> Dict[str, Any]:
             "tool_name": "query_cluster_node_usage"
         }
 
-@app.tool(
-    name="analyze_cluster_general_health_status",
-    description="""Perform comprehensive cluster status analysis with health scoring, performance alerts, and actionable recommendations. This tool analyzes collected cluster information to provide detailed health assessments, identify potential issues, and generate strategic recommendations for cluster optimization.
-
-CLUSTER HEALTH ASSESSMENT:
-- Overall cluster health score (0-100) based on component availability and performance
-- Component-level health analysis including nodes, operators, and machine config pools
-- Critical issue identification with severity-based alerting (CRITICAL, HIGH, MEDIUM, LOW)
-- Health trend analysis and performance degradation detection
-
-NODE GROUP ANALYSIS:
-- Master, worker, and infrastructure node group health scoring
-- Node availability analysis (Ready vs NotReady states)
-- Scheduling status evaluation (SchedulingDisabled detection)
-- Resource capacity analysis including CPU cores and memory allocation per node group
-- Problematic node identification with specific node names for immediate attention
-
-CLUSTER OPERATOR HEALTH:
-- Cluster operator availability assessment with estimated total operator count
-- Unavailable operator identification by name for targeted troubleshooting  
-- Operator health percentage calculation based on availability ratios
-- Critical operator failure detection requiring immediate intervention
-
-MACHINE CONFIG POOL ANALYSIS:
-- MCP status evaluation (Updated, Updating, Degraded states)
-- Configuration synchronization health across node pools
-- Update progress monitoring and degradation detection
-- Pool-specific health scoring for maintenance planning
-
-RESOURCE UTILIZATION INSIGHTS:
-- Pod density analysis across cluster nodes for capacity planning
-- Service-to-pod ratios indicating application architecture patterns
-- Namespace distribution analysis for workload organization assessment
-- Secret and ConfigMap density metrics for resource management optimization
-
-NETWORK POLICY ANALYSIS:
-- Network security posture assessment through policy distribution
-- NetworkPolicy, AdminNetworkPolicy, and EgressFirewall analysis
-- Network complexity scoring based on policy types and counts
-- User-defined network configuration impact analysis
-
-PERFORMANCE ALERTS:
-- Automated alert generation based on predefined thresholds and best practices
-- Severity-based categorization (CRITICAL for master node issues, HIGH for operator failures)
-- Resource-specific alerts with current vs threshold value comparisons
-- Component-specific alerting for targeted remediation efforts
-
-ACTIONABLE RECOMMENDATIONS:
-- Priority-based recommendations starting with critical issues requiring immediate attention
-- Node-specific remediation guidance for NotReady or degraded nodes
-- Cluster operator restoration recommendations with specific operator names
-- Machine config pool remediation guidance for configuration issues
-- Resource optimization suggestions based on utilization patterns
-
-ANALYSIS METADATA:
-- Analysis execution timestamp and duration for performance tracking
-- Total items analyzed for scope validation and coverage assessment
-- Collection type identification for correlation with data sources
-- Analysis completeness indicators and success metrics
-
-Parameters:
-- include_detailed_analysis (default: true): Include comprehensive component-level analysis with health scoring, detailed breakdowns, and statistical analysis for each cluster component
-- generate_report (default: true): Generate human-readable summary report in addition to structured JSON data for management reporting and operational documentation
-
-Use this tool for:
-- Proactive cluster health monitoring and early issue detection before service impact
-- Post-maintenance validation ensuring all cluster components are functioning properly
-- Capacity planning analysis based on current resource utilization and distribution patterns
-- Operational readiness assessment before critical deployments or maintenance windows
-- Troubleshooting cluster issues through comprehensive component health analysis
-- Executive reporting on cluster operational health and infrastructure stability
-- Compliance reporting demonstrating cluster health monitoring and issue resolution processes
-- Strategic planning for cluster upgrades, expansions, or optimization initiatives
-
-This tool transforms raw cluster information into actionable intelligence, enabling proactive cluster management and informed decision-making for infrastructure operations."""
-)
-async def analyze_cluster_general_health_status(request: AnalyzeClusterStatusRequest) -> Dict[str, Any]:
-    """
-    Perform comprehensive cluster overal status analysis with health scoring, performance alerts,
-    and actionable recommendations based on collected cluster information.
-    
-    Transforms raw cluster data into actionable intelligence for proactive cluster management.
-    """
-    try:
-        logger.info("Starting comprehensive cluster status analysis...")
-        
-        # First collect current cluster information
-        collector = ClusterInfoCollector()
-        
-        # Add timeout for cluster data collection
-        cluster_info = await asyncio.wait_for(
-            collector.collect_cluster_info(),
-            timeout=60.0
-        )
-        
-        # Convert to dictionary format for analysis
-        cluster_data = collector.to_dict(cluster_info)
-        
-        logger.info(f"Cluster data collected - Total nodes: {cluster_data.get('total_nodes', 0)}, "
-                   f"Unavailable operators: {len(cluster_data.get('unavailable_cluster_operators', []))}")
-        
-        # Perform analysis using the imported function
-        analysis_result = await asyncio.wait_for(
-            analyze_cluster_status_module(cluster_data),
-            timeout=30.0
-        )
-        
-        # Add analysis execution metadata
-        analysis_result['execution_metadata'] = {
-            'tool_name': 'analyze_cluster_status',
-            'parameters_applied': {
-                'include_detailed_analysis': request.include_detailed_analysis,
-                'generate_report': request.generate_report
-            },
-            'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
-            'cluster_data_freshness': cluster_data.get('collection_timestamp'),
-            'total_alerts_generated': len(analysis_result.get('alerts', [])),
-            'recommendations_count': len(analysis_result.get('recommendations', []))
-        }
-        
-        # Generate human-readable report if requested
-        if request.generate_report:
-            try:
-                # Use the analyzer to generate the report
-                analyzer = ClusterStatAnalyzer()
-                report_text = analyzer.generate_report(analysis_result)
-                analysis_result['human_readable_report'] = report_text
-                logger.info("Human-readable report generated successfully")
-            except Exception as report_error:
-                logger.warning(f"Failed to generate human-readable report: {report_error}")
-                analysis_result['report_generation_error'] = str(report_error)
-        
-        # Apply filtering based on request parameters
-        if not request.include_detailed_analysis:
-            # Remove detailed breakdowns but keep summary data
-            simplified_result = {
-                'metadata': analysis_result.get('metadata', {}),
-                'cluster_health': analysis_result.get('cluster_health', {}),
-                'alerts_summary': {
-                    'total_alerts': len(analysis_result.get('alerts', [])),
-                    'critical_alerts': len([a for a in analysis_result.get('alerts', []) 
-                                          if a.get('severity') == 'CRITICAL']),
-                    'high_alerts': len([a for a in analysis_result.get('alerts', []) 
-                                      if a.get('severity') == 'HIGH'])
-                },
-                'recommendations': analysis_result.get('recommendations', []),
-                'execution_metadata': analysis_result.get('execution_metadata', {})
-            }
-            
-            if request.generate_report:
-                simplified_result['human_readable_report'] = analysis_result.get('human_readable_report')
-            
-            analysis_result = simplified_result
-            logger.info("Detailed analysis excluded from response")
-        
-        # Log analysis summary
-        health_score = analysis_result.get('cluster_health', {}).get('overall_score', 0)
-        total_alerts = len(analysis_result.get('alerts', []))
-        critical_alerts = len([a for a in analysis_result.get('alerts', []) 
-                              if a.get('severity') == 'CRITICAL'])
-        recommendations_count = len(analysis_result.get('recommendations', []))
-        
-        logger.info(f"Cluster status analysis completed - Health score: {health_score}/100, "
-                   f"Total alerts: {total_alerts}, Critical alerts: {critical_alerts}, "
-                   f"Recommendations: {recommendations_count}")
-        
-        return analysis_result
-        
-    except asyncio.TimeoutError:
-        return {
-            "error": "Timeout during cluster status analysis - cluster may be experiencing issues or have extensive resources",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "timeout_details": "Either cluster data collection (60s) or analysis (30s) timed out",
-            "suggestion": "Check cluster responsiveness and try again with simplified analysis"
-        }
-    except Exception as e:
-        logger.error(f"Error during cluster status analysis: {e}")
-        return {
-            "error": str(e), 
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tool_name": "analyze_cluster_status"
-        }
 
 @app.tool(
     name="query_prometheus_basic_info",
@@ -1617,6 +1443,195 @@ async def query_kube_api_metrics(request: MetricsRequest) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error querying Kube API metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@app.tool(
+    name="perform_general_cluster_status_check",
+    description="""Perform comprehensive general cluster status check and health assessment including cluster operator status, node health, Machine Config Pool (MCP) status, networking components health, and overall cluster operational readiness. This tool provides essential cluster health monitoring and operational status verification distinct from performance analysis tools.
+
+CORE HEALTH ASSESSMENTS:
+
+CLUSTER OPERATOR STATUS:
+- Complete inventory of all cluster operators with availability and health status
+- Identification of unavailable, degraded, or progressing operators requiring attention
+- Operator dependency analysis and impact assessment for failed or degraded operators
+- Version consistency checks and upgrade status monitoring across all operators
+- Critical operator failure detection with immediate remediation recommendations
+
+NODE HEALTH EVALUATION:
+- Node readiness status (Ready/NotReady/SchedulingDisabled) across all cluster nodes
+- Node role distribution analysis (master/worker/infra) with capacity assessment
+- Node resource capacity and allocatable resources for capacity planning
+- Hardware health indicators including CPU, memory, and disk capacity status
+- Node condition analysis (DiskPressure, MemoryPressure, PIDPressure, NetworkUnavailable)
+- Node age analysis and lifecycle management recommendations
+
+MACHINE CONFIG POOL (MCP) STATUS:
+- MCP health status (Updated/Updating/Degraded) for all node pools
+- Configuration synchronization progress and update completion status
+- Failed update identification with rollback recommendations when applicable
+- Node configuration consistency verification across pools
+- Update queue analysis and maintenance window optimization recommendations
+
+NETWORKING COMPONENT HEALTH:
+- OVN-Kubernetes component operational status and readiness verification
+- Network policy enforcement health and configuration validation
+- DNS resolution functionality and service discovery health checks
+- Ingress controller status and traffic routing operational verification
+- CNI plugin health and network interface provisioning capability assessment
+
+STORAGE SYSTEM HEALTH:
+- Persistent volume provisioning capability and storage class availability
+- Storage operator health and CSI driver operational status verification
+- Volume attachment health and mounting success rate analysis
+- Storage capacity monitoring and expansion capability assessment
+
+OVERALL CLUSTER READINESS:
+- Cluster API responsiveness and control plane health verification
+- etcd cluster health and data consistency validation
+- Authentication and authorization system operational status
+- Resource quota utilization and namespace-level health assessment
+- Certificate validity and expiration monitoring for security components
+
+AUTOMATED HEALTH SCORING:
+- Component-level health scores (0-100) with weighted importance for overall impact
+- Overall cluster health score combining all component assessments
+- Risk categorization (Critical/High/Medium/Low) with severity impact analysis
+- Health trend analysis when baseline data is available for comparison
+- Predictive health alerts for components showing degradation patterns
+
+ACTIONABLE RECOMMENDATIONS:
+- Immediate action items for critical health issues requiring urgent attention
+- Preventive maintenance recommendations for warning-level health issues
+- Capacity planning guidance based on current utilization and growth trends
+- Configuration optimization suggestions for improved stability and performance
+- Maintenance window planning with priority-based remediation schedules
+
+EXECUTIVE REPORTING:
+- Executive summary suitable for management stakeholders and operational reporting
+- Key performance indicators (KPIs) for cluster operational health and readiness
+- Risk assessment summary with business impact analysis and mitigation strategies
+- Compliance status reporting for operational SLAs and availability requirements
+- Historical health trend summary when baseline comparison data is available
+
+OPERATIONAL METADATA:
+- Health check execution timestamp and data freshness verification
+- Assessment scope and coverage details for audit and compliance purposes
+- Component response times and data collection success rates
+- Integration compatibility for monitoring dashboards and alerting systems
+- Structured JSON output format for automation and programmatic consumption
+
+Parameters:
+- include_detailed_analysis (default: true): Include comprehensive component-level health analysis with detailed metrics, scoring, and specific recommendations for each cluster component
+- generate_summary_report (default: true): Generate executive summary report with key findings, prioritized action items, and business impact assessment for stakeholder communication
+- health_check_scope (optional): Limit assessment to specific areas (['operators', 'nodes', 'networking', 'storage', 'mcps']) for focused health checks or faster execution
+- performance_baseline_comparison (default: false): Include historical baseline comparison when available to identify health trends, degradation patterns, or improvement verification
+
+DISTINCTION FROM PERFORMANCE TOOLS:
+- Focus on operational health and readiness rather than detailed performance metrics
+- Emphasizes cluster component availability and functional status over resource utilization
+- Provides immediate operational actionability rather than deep performance analysis
+- Suitable for daily health monitoring and operational readiness verification
+- Complements performance analysis tools with foundational health assessment
+
+Use this tool for:
+- Daily operational health monitoring and cluster readiness verification
+- Pre-maintenance health assessment and go/no-go decision support
+- Post-deployment health validation and operational readiness confirmation
+- Incident response initial assessment and scope determination for cluster issues
+- Compliance reporting and operational SLA monitoring for availability requirements
+- Change management health verification before and after configuration changes
+- Executive reporting on infrastructure health and operational status
+- Automated health monitoring integration with alerting and dashboard systems
+
+This tool provides essential cluster health visibility focusing on operational readiness and component availability, making it ideal for operations teams and daily health monitoring workflows."""
+)
+async def perform_general_cluster_status_check(request: GeneralClusterStatusRequest) -> Dict[str, Any]:
+    """
+    Perform comprehensive general cluster status check and health assessment including
+    cluster operator status, node health, MCP status, networking components health,
+    and overall cluster operational readiness.
+    
+    This tool provides essential cluster health monitoring and operational status verification
+    distinct from performance analysis tools.
+    """
+    global cluster_analyzer, auth_manager
+    try:
+        if not cluster_analyzer or not auth_manager:
+            await initialize_components()
+        
+        logger.info("Starting general cluster status check and health assessment...")
+        
+        # Perform cluster status analysis with timeout
+        analysis_result = await asyncio.wait_for(
+            cluster_analyzer.analyze_cluster_status(
+                include_detailed_analysis=request.include_detailed_analysis,
+                health_check_scope=request.health_check_scope,
+                performance_baseline_comparison=request.performance_baseline_comparison
+            ),
+            timeout=90.0  # Extended timeout for comprehensive health assessment
+        )
+        
+        # Check if analysis completed successfully
+        if 'error' in analysis_result:
+            return {
+                'error': f"Cluster status analysis failed: {analysis_result['error']}",
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'tool_name': 'perform_general_cluster_status_check'
+            }
+        
+        # Generate summary report if requested
+        if request.generate_summary_report:
+            try:
+                summary_report = cluster_analyzer.generate_health_summary_report(analysis_result)
+                analysis_result['executive_summary_report'] = summary_report
+                logger.info("Executive summary report generated successfully")
+            except Exception as report_error:
+                logger.warning(f"Failed to generate summary report: {report_error}")
+                analysis_result['summary_report_error'] = str(report_error)
+        
+        # Add tool-specific metadata
+        analysis_result['tool_metadata'] = {
+            'tool_name': 'perform_general_cluster_status_check',
+            'parameters_applied': {
+                'include_detailed_analysis': request.include_detailed_analysis,
+                'generate_summary_report': request.generate_summary_report,
+                'health_check_scope': request.health_check_scope,
+                'performance_baseline_comparison': request.performance_baseline_comparison
+            },
+            'assessment_completion_time': datetime.now(timezone.utc).isoformat(),
+            'analysis_type': 'general_health_assessment'
+        }
+        
+        # Log health assessment summary
+        overall_health = analysis_result.get('overall_health_score', 'unknown')
+        critical_issues = len(analysis_result.get('critical_issues', []))
+        warning_issues = len(analysis_result.get('warning_issues', []))
+        components_assessed = len(analysis_result.get('component_health_scores', {}))
+        
+        logger.info(f"General cluster status check completed - "
+                   f"Overall health: {overall_health}, "
+                   f"Critical issues: {critical_issues}, "
+                   f"Warning issues: {warning_issues}, "
+                   f"Components assessed: {components_assessed}")
+        
+        return analysis_result
+        
+    except asyncio.TimeoutError:
+        return {
+            'error': 'Timeout during cluster status check - cluster may be experiencing significant issues',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'timeout_seconds': 90,
+            'suggestion': 'Check cluster API responsiveness and component availability',
+            'tool_name': 'perform_general_cluster_status_check'
+        }
+    except Exception as e:
+        logger.error(f"Error in general cluster status check: {e}")
+        return {
+            'error': str(e),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'tool_name': 'perform_general_cluster_status_check'
+        }
+
 
 @app.tool(
     name="analyze_ovnk_comprehensive_performance",

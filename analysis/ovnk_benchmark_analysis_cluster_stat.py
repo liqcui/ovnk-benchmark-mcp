@@ -451,30 +451,6 @@ class ClusterStatAnalyzer(BasePerformanceAnalyzer):
             lines.append("")
         
         return "\n".join(lines)
-    
-    def save_analysis_results(self, analysis_result: Dict[str, Any], 
-                            output_prefix: str = "cluster_status_analysis") -> bool:
-        """Save analysis results to JSON and text files"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # Save JSON
-            json_filename = f"{output_prefix}_{timestamp}.json"
-            with open(json_filename, 'w') as f:
-                json.dump(analysis_result, f, indent=2, default=str)
-            
-            # Save text report
-            text_filename = f"{output_prefix}_{timestamp}.txt"
-            report_text = self.generate_report(analysis_result)
-            with open(text_filename, 'w') as f:
-                f.write(report_text)
-            
-            logger.info(f"Analysis results saved to {json_filename} and {text_filename}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to save analysis results: {e}")
-            return False
 
 
 # Convenience functions
@@ -489,14 +465,6 @@ async def generate_cluster_status_report(cluster_data: Dict[str, Any]) -> str:
     analyzer = ClusterStatAnalyzer()
     analysis_result = analyzer.analyze_metrics_data(cluster_data)
     return analyzer.generate_report(analysis_result)
-
-
-async def analyze_and_save_cluster_status(cluster_data: Dict[str, Any], 
-                                        output_prefix: str = "cluster_analysis") -> bool:
-    """Analyze cluster status and save results to files"""
-    analyzer = ClusterStatAnalyzer()
-    analysis_result = analyzer.analyze_metrics_data(cluster_data)
-    return analyzer.save_analysis_results(analysis_result, output_prefix)
 
 
 if __name__ == "__main__":
@@ -519,11 +487,12 @@ if __name__ == "__main__":
             report = analyzer.generate_report(analysis_result)
             print(report)
             
-            # Save results
-            success = analyzer.save_analysis_results(analysis_result)
-            print(f"Results saved: {success}")
+            # Return the analysis result as JSON/dict
+            print("\nAnalysis completed successfully!")
+            return analysis_result
             
         except Exception as e:
             print(f"Error: {e}")
+            return None
     
     asyncio.run(main())
