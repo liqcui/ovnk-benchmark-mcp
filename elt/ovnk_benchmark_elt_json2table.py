@@ -1092,66 +1092,65 @@ class PerformanceDataELT:
         
         return structured
 
+    # Summary generation functions
+    def _summarize_ovn_sync_duration(self, data: Dict[str, Any]) -> str:
+        """Generate OVN sync duration summary"""
+        summary = ["OVN Sync Duration Analysis:"]
+        
+        if 'sync_summary' in data:
+            collection_type = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Collection Type'), 'unknown')
+            total_metrics = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Total Metrics'), 0)
+            summary.append(f"• Collection: {collection_type} ({total_metrics} metrics)")
+        
+        # Report top performers from each category
+        categories = [
+            ('controller_ready_top5', 'Controller Ready'),
+            ('node_ready_top5', 'Node Ready'),
+            ('sync_duration_top5', 'Sync Duration'),
+            ('service_rate_top5', 'Service Rate')
+        ]
+        
+        for table_name, category_name in categories:
+            if table_name in data and data[table_name]:
+                top_item = data[table_name][0]
+                if table_name == 'sync_duration_top5':
+                    identifier = top_item.get('Pod:Resource', 'unknown')
+                else:
+                    identifier = top_item.get('Pod Name', 'unknown')
+                
+                if table_name == 'service_rate_top5':
+                    value = top_item.get('Rate', 'N/A')
+                else:
+                    value = top_item.get('Duration', 'N/A')
+                
+                summary.append(f"• Top {category_name}: {identifier} ({value})")
+        
+        return " ".join(summary)
 
-# Summary generation functions
-def _summarize_ovn_sync_duration(self, data: Dict[str, Any]) -> str:
-    """Generate OVN sync duration summary"""
-    summary = ["OVN Sync Duration Analysis:"]
-    
-    if 'sync_summary' in data:
-        collection_type = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Collection Type'), 'unknown')
-        total_metrics = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Total Metrics'), 0)
-        summary.append(f"• Collection: {collection_type} ({total_metrics} metrics)")
-    
-    # Report top performers from each category
-    categories = [
-        ('controller_ready_top5', 'Controller Ready'),
-        ('node_ready_top5', 'Node Ready'),
-        ('sync_duration_top5', 'Sync Duration'),
-        ('service_rate_top5', 'Service Rate')
-    ]
-    
-    for table_name, category_name in categories:
-        if table_name in data and data[table_name]:
-            top_item = data[table_name][0]
-            if table_name == 'sync_duration_top5':
-                identifier = top_item.get('Pod:Resource', 'unknown')
-            else:
-                identifier = top_item.get('Pod Name', 'unknown')
-            
-            if table_name == 'service_rate_top5':
-                value = top_item.get('Rate', 'N/A')
-            else:
-                value = top_item.get('Duration', 'N/A')
-            
-            summary.append(f"• Top {category_name}: {identifier} ({value})")
-    
-    return " ".join(summary)
-
-def _summarize_pod_usage(self, data: Dict[str, Any]) -> str:
-    """Generate pod usage summary"""
-    summary = ["Pod Usage Analysis:"]
-    
-    if 'usage_summary' in data:
-        collection_type = next((item['Value'] for item in data['usage_summary'] if item['Property'] == 'Collection Type'), 'unknown')
-        total_analyzed = next((item['Value'] for item in data['usage_summary'] if item['Property'] == 'Total Analyzed'), 0)
-        summary.append(f"• Collection: {collection_type} ({total_analyzed} pods analyzed)")
-    
-    # Top CPU consumer
-    if 'top_cpu_pods' in data and data['top_cpu_pods']:
-        top_cpu = data['top_cpu_pods'][0]
-        pod_name = top_cpu.get('Pod[:Container]', 'unknown')
-        cpu_usage = top_cpu.get('CPU Usage', 'N/A')
-        summary.append(f"• Top CPU: {pod_name} ({cpu_usage})")
-    
-    # Top Memory consumer
-    if 'top_memory_pods' in data and data['top_memory_pods']:
-        top_memory = data['top_memory_pods'][0]
-        pod_name = top_memory.get('Pod[:Container]', 'unknown')
-        memory_usage = top_memory.get('Memory Usage', 'N/A')
-        summary.append(f"• Top Memory: {pod_name} ({memory_usage})")
-    
-    return " ".join(summary)
+    def _summarize_pod_usage(self, data: Dict[str, Any]) -> str:
+        """Generate pod usage summary"""
+        summary = ["Pod Usage Analysis:"]
+        
+        if 'usage_summary' in data:
+            collection_type = next((item['Value'] for item in data['usage_summary'] if item['Property'] == 'Collection Type'), 'unknown')
+            total_analyzed = next((item['Value'] for item in data['usage_summary'] if item['Property'] == 'Total Analyzed'), 0)
+            summary.append(f"• Collection: {collection_type} ({total_analyzed} pods analyzed)")
+        
+        # Top CPU consumer
+        if 'top_cpu_pods' in data and data['top_cpu_pods']:
+            top_cpu = data['top_cpu_pods'][0]
+            pod_name = top_cpu.get('Pod[:Container]', 'unknown')
+            cpu_usage = top_cpu.get('CPU Usage', 'N/A')
+            summary.append(f"• Top CPU: {pod_name} ({cpu_usage})")
+        
+        # Top Memory consumer
+        if 'top_memory_pods' in data and data['top_memory_pods']:
+            top_memory = data['top_memory_pods'][0]
+            pod_name = top_memory.get('Pod[:Container]', 'unknown')
+            memory_usage = top_memory.get('Memory Usage', 'N/A')
+            summary.append(f"• Top Memory: {pod_name} ({memory_usage})")
+        
+        return " ".join(summary)
 
 
 # Enhanced module functions
