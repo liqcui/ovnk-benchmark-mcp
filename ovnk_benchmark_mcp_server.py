@@ -825,7 +825,7 @@ async def query_cluster_node_usage(request: MetricsRequest) -> Dict[str, Any]:
         }
 
 @app.tool(
-    name="analyze_cluster_overal_health_status",
+    name="analyze_cluster_general_health_status",
     description="""Perform comprehensive cluster status analysis with health scoring, performance alerts, and actionable recommendations. This tool analyzes collected cluster information to provide detailed health assessments, identify potential issues, and generate strategic recommendations for cluster optimization.
 
 CLUSTER HEALTH ASSESSMENT:
@@ -900,7 +900,7 @@ Use this tool for:
 
 This tool transforms raw cluster information into actionable intelligence, enabling proactive cluster management and informed decision-making for infrastructure operations."""
 )
-async def analyze_cluster_overal_health_status(request: AnalyzeClusterStatusRequest) -> Dict[str, Any]:
+async def analyze_cluster_general_health_status(request: AnalyzeClusterStatusRequest) -> Dict[str, Any]:
     """
     Perform comprehensive cluster overal status analysis with health scoring, performance alerts,
     and actionable recommendations based on collected cluster information.
