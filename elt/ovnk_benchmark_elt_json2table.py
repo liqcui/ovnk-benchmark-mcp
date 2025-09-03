@@ -747,10 +747,10 @@ class PerformanceDataELT:
         """Extract OVN sync duration metrics from ovnk_benchmark_prometheus_ovnk_sync.py output"""
         structured = {
             'sync_summary': [],
-            'controller_ready_top5': [],
-            'node_ready_top5': [],
-            'sync_duration_top5': [],
-            'service_rate_top5': []
+            'controller_ready_duration_top5': [],
+            'node_ready_duration_top5': [],
+            'controller_sync_duration_top5': [],
+            'controller_sync_service_total_top5': []
         }
         
         # Collection summary
@@ -767,7 +767,7 @@ class PerformanceDataELT:
         if 'error' not in controller_ready and 'top_10' in controller_ready:
             for i, item in enumerate(controller_ready['top_10'][:5], 1):
                 readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
-                structured['controller_ready_top5'].append({
+                structured['controller_ready_duration_top5'].append({
                     'Rank': i,
                     'Pod Name': item.get('pod_name', 'unknown'),
                     'Node': item.get('node_name', 'unknown'),
@@ -780,7 +780,7 @@ class PerformanceDataELT:
         if 'error' not in node_ready and 'top_10' in node_ready:
             for i, item in enumerate(node_ready['top_10'][:5], 1):
                 readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
-                structured['node_ready_top5'].append({
+                structured['node_ready_duration_top5'].append({
                     'Rank': i,
                     'Pod Name': item.get('pod_name', 'unknown'),
                     'Node': item.get('node_name', 'unknown'),
@@ -798,7 +798,7 @@ class PerformanceDataELT:
                 if len(pod_resource) > 50:
                     pod_resource = pod_resource[:47] + '...'
                 
-                structured['sync_duration_top5'].append({
+                structured['controller_sync_duration_top5'].append({
                     'Rank': i,
                     'Pod:Resource': pod_resource,
                     'Node': item.get('node_name', 'unknown'),
@@ -811,7 +811,7 @@ class PerformanceDataELT:
         if 'error' not in service_rate and 'top_10' in service_rate:
             for i, item in enumerate(service_rate['top_10'][:5], 1):
                 readable = item.get('readable_value', {}) if data.get('collection_type') == 'instant' else item.get('readable_max', {})
-                structured['service_rate_top5'].append({
+                structured['controller_sync_service_total_top5'].append({
                     'Rank': i,
                     'Pod Name': item.get('pod_name', 'unknown'),
                     'Node': item.get('node_name', 'unknown'),
@@ -1460,21 +1460,21 @@ class PerformanceDataELT:
         
         # Report top performers from each category
         categories = [
-            ('controller_ready_top5', 'Controller Ready-ovnkube_controller_ready_duration_seconds'),
-            ('node_ready_top5', 'Node Ready-ovnkube_node_ready_duration_seconds'),
-            ('sync_duration_top5', 'Sync Duration-ovnkube_controller_sync_duration_seconds-'),
-            ('service_rate_top5', 'Service Rate-ovnkube_controller_sync_service_total-')
+            ('controller_ready_duration_top5', 'Controller Ready-ovnkube_controller_ready_duration_seconds'),
+            ('node_ready_duration_top5', 'Node Ready-ovnkube_node_ready_duration_seconds'),
+            ('controller_sync_duration_top5', 'Sync Duration-ovnkube_controller_sync_duration_seconds-'),
+            ('controller_sync_service_total_top5', 'Service Rate-ovnkube_controller_sync_service_total')
         ]
         
         for table_name, category_name in categories:
             if table_name in data and data[table_name]:
                 top_item = data[table_name][0]
-                if table_name == 'sync_duration_top5':
+                if table_name == 'controller_sync_duration_top5':
                     identifier = top_item.get('Pod:Resource', 'unknown')
                 else:
                     identifier = top_item.get('Pod Name', 'unknown')
                 
-                if table_name == 'service_rate_top5':
+                if table_name == 'controller_sync_service_total_top5':
                     value = top_item.get('Rate', 'N/A')
                 else:
                     value = top_item.get('Duration', 'N/A')
