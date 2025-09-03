@@ -1152,6 +1152,453 @@ class PerformanceDataELT:
         
         return " ".join(summary)
 
+    def _extract_ovs_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract OVS usage metrics from ovnk_benchmark_prometheus_ovnk_ovs.py output"""
+        structured = {
+            'collection_summary': [],
+            'cpu_usage_summary': [],
+            'memory_usage_summary': [],
+            'ovs_vswitchd_top5': [],
+            'ovsdb_server_top5': [],
+            'ovs_memory_top5': [],
+            'dp_flows_summary': [],
+            'bridge_flows_summary': [],
+            'connection_metrics_summary': []
+        }
+        
+        # Collection summary
+        structured['collection_summary'] = [
+            {'Property': 'Collection Type', 'Value': data.get('collection_type', 'unknown')},
+            {'Property': 'Collection Time', 'Value': data.get('timestamp', 'Unknown')[:19]},
+            {'Property': 'Query Type', 'Value': 'Range' if 'range' in data.get('collection_type', '') else 'Instant'}
+        ]
+        
+        # CPU Usage Summary
+        cpu_data = data.get('cpu_usage', {})
+        if 'error' not in cpu_data:
+            vswitchd_count = len(cpu_data.get('ovs_vswitchd_cpu', []))
+            ovsdb_count = len(cpu_data.get('ovsdb_server_cpu', []))
+            
+            structured['cpu_usage_summary'] = [
+                {'Component': 'OVS vSwitchd', 'Node Count': vswitchd_count, 'Status': 'Available'},
+                {'Component': 'OVSDB Server', 'Node Count': ovsdb_count, 'Status': 'Available'}
+            ]
+            
+            # Top 5 OVS vSwitchd CPU usage
+            vswitchd_top = cpu_data.get('summary', {}).get('ovs_vswitchd_top10', [])
+            for i, item in enumerate(vswitchd_top[:5], 1):
+                structured['ovs_vswitchd_top5'].append({
+                    'Rank': i,
+                    'Node': item.get('node_name', 'unknown'),
+                    'Max CPU (%)': f"{item.get('max', 0):.2f}",
+                    'Avg CPU (%)': f"{item.get('avg', 0):.2f}"
+                })
+            
+            # Top 5 OVSDB Server CPU usage
+            ovsdb_top = cpu_data.get('summary', {}).get('ovsdb_server_top10', [])
+            for i, item in enumerate(ovsdb_top[:5], 1):
+                structured['ovsdb_server_top5'].append({
+                    'Rank': i,
+                    'Node': item.get('node_name', 'unknown'),
+                    'Max CPU (%)': f"{item.get('max', 0):.2f}",
+                    'Avg CPU (%)': f"{item.get('avg', 0):.2f}"
+                })
+        else:
+            structured['cpu_usage_summary'] = [
+                {'Component': 'CPU Usage', 'Status': 'Error', 'Message': cpu_data.get('error', 'Unknown error')}
+            ]
+        
+        # Memory Usage Summary
+        memory_data = data.get('memory_usage', {})
+        if 'error' not in memory_data:
+            db_count = len(memory_data.get('ovs_db_memory', []))
+            vswitchd_mem_count = len(memory_data.get('ovs_vswitchd_memory', []))
+            
+            structured['memory_usage_summary'] = [
+                {'Component': 'OVS DB', 'Pod Count': db_count, 'Status': 'Available'},
+                {'Component': 'OVS vSwitchd', 'Pod Count': vswitchd_mem_count, 'Status': 'Available'}
+            ]
+            
+            # Top 5 Memory consumers (combine both types)
+            all_memory = []
+            
+            # Add OVS DB memory
+            for item in memory_data.get('summary', {}).get('ovs_db_top10', []):
+                all_memory.append({
+                    'Type': 'OVS DB',
+                    'Pod': item.get('pod_name', 'unknown'),
+                    'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
+                    'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
+                })
+            
+            # Add OVS vSwitchd memory
+            for item in memory_data.get('summary', {}).get('ovs_vswitchd_top10', []):
+                all_memory.append({
+                    'Type': 'vSwitchd',
+                    'Pod': item.get('pod_name', 'unknown'),
+                    'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
+                    'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
+                })
+            
+            # Sort by max memory and take top 5
+            try:
+                all_memory.sort(key=lambda x: float(x['Max Memory'].split()[0]), reverse=True)
+            except:
+                pass  # Keep original order if parsing fails
+            
+            for i, item in enumerate(all_memory[:5], 1):
+                structured['ovs_memory_top5'].append({
+                    'Rank': i,
+                    'Type': item['Type'],
+                    'Pod': item['Pod'],
+                    'Max Memory': item['Max Memory'],
+                    'Avg Memory': item['Avg Memory']
+                })
+        else:
+            structured['memory_usage_summary'] = [
+                {'Component': 'Memory Usage', 'Status': 'Error', 'Message': memory_data.get('error', 'Unknown error')}
+            ]
+        
+        # DP Flows Summary
+        dp_flows = data.get('dp_flows', {})
+        if 'error' not in dp_flows:
+            flow_count = len(dp_flows.get('data', []))
+            top_flows = dp_flows.get('top_10', [])
+            
+            structured['dp_flows_summary'] = [
+                {'Metric': 'Total Instances', 'Value': flow_count},
+                {'Metric': 'Top Flow Count', 'Value': f"{top_flows[0].get('max', 0):.0f} flows" if top_flows else 'N/A'},
+                {'Metric': 'Metric Name', 'Value': dp_flows.get('metric', 'ovs_vswitchd_dp_flows_total')}
+            ]
+        else:
+            structured['dp_flows_summary'] = [
+                {'Metric': 'DP Flows', 'Status': 'Error', 'Message': dp_flows.get('error', 'Unknown error')}
+            ]
+        
+        # Bridge Flows Summary
+        bridge_flows = data.get('bridge_flows', {})
+        if 'error' not in bridge_flows:
+            br_int_count = len(bridge_flows.get('br_int_flows', []))
+            br_ex_count = len(bridge_flows.get('br_ex_flows', []))
+            
+            # Get top flows for each bridge
+            br_int_top = bridge_flows.get('top_10', {}).get('br_int', [])
+            br_ex_top = bridge_flows.get('top_10', {}).get('br_ex', [])
+            
+            structured['bridge_flows_summary'] = [
+                {'Bridge': 'br-int', 'Instance Count': br_int_count, 'Top Flows': f"{br_int_top[0].get('max', 0):.0f}" if br_int_top else 'N/A'},
+                {'Bridge': 'br-ex', 'Instance Count': br_ex_count, 'Top Flows': f"{br_ex_top[0].get('max', 0):.0f}" if br_ex_top else 'N/A'}
+            ]
+        else:
+            structured['bridge_flows_summary'] = [
+                {'Bridge': 'Bridge Flows', 'Status': 'Error', 'Message': bridge_flows.get('error', 'Unknown error')}
+            ]
+        
+        # Connection Metrics Summary
+        conn_metrics = data.get('connection_metrics', {})
+        if 'error' not in conn_metrics:
+            metrics_data = conn_metrics.get('connection_metrics', {})
+            
+            for metric_name, metric_info in metrics_data.items():
+                if 'error' not in metric_info:
+                    structured['connection_metrics_summary'].append({
+                        'Metric': metric_name.replace('_', ' ').title(),
+                        'Max': f"{metric_info.get('max', 0):.0f}",
+                        'Avg': f"{metric_info.get('avg', 0):.0f}",
+                        'Unit': metric_info.get('unit', 'count')
+                    })
+                else:
+                    structured['connection_metrics_summary'].append({
+                        'Metric': metric_name.replace('_', ' ').title(),
+                        'Status': 'Error',
+                        'Message': metric_info.get('error', 'Unknown error')[:50]
+                    })
+        
+        return structured
+
+    def _extract_node_usage_enhanced(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Enhanced extraction for node usage metrics from ovnk_benchmark_prometheus_nodes_usage.py output"""
+        structured = {
+            'collection_summary': [],
+            'node_group_overview': [],
+            'top_cpu_nodes': [],
+            'top_memory_nodes': [],
+            'network_activity_summary': []
+        }
+        
+        # Collection summary
+        metadata = data.get('metadata', {})
+        structured['collection_summary'] = [
+            {'Property': 'Query Duration', 'Value': metadata.get('duration', 'Unknown')},
+            {'Property': 'Collection Time', 'Value': metadata.get('query_time', 'Unknown')[:19]},
+            {'Property': 'Start Time', 'Value': metadata.get('start_time', 'Unknown')[:19]},
+            {'Property': 'End Time', 'Value': metadata.get('end_time', 'Unknown')[:19]},
+            {'Property': 'Timezone', 'Value': metadata.get('timezone', 'UTC')}
+        ]
+        
+        # Node group overview (enhanced with network data)
+        groups = data.get('groups', {})
+        for role, group_data in groups.items():
+            if group_data.get('nodes'):
+                summary = group_data.get('summary', {})
+                cpu_summary = summary.get('cpu_usage', {})
+                memory_summary = summary.get('memory_usage', {})
+                network_rx_summary = summary.get('network_rx', {})
+                network_tx_summary = summary.get('network_tx', {})
+                
+                # Format network values (convert bytes/s to MB/s if needed)
+                net_rx_max = network_rx_summary.get('max', 0)
+                net_tx_max = network_tx_summary.get('max', 0)
+                
+                # Convert to MB/s for readability
+                rx_mbps = f"{net_rx_max / (1024*1024):.1f}" if net_rx_max and net_rx_max > 0 else "0.0"
+                tx_mbps = f"{net_tx_max / (1024*1024):.1f}" if net_tx_max and net_tx_max > 0 else "0.0"
+                
+                structured['node_group_overview'].append({
+                    'Role': role.title(),
+                    'Node Count': group_data.get('count', 0),
+                    'CPU Avg (%)': f"{cpu_summary.get('avg', 0):.1f}" if cpu_summary.get('avg') is not None else 'N/A',
+                    'CPU Max (%)': f"{cpu_summary.get('max', 0):.1f}" if cpu_summary.get('max') is not None else 'N/A',
+                    'Memory Max (MB)': f"{memory_summary.get('max', 0):.0f}" if memory_summary.get('max') is not None else 'N/A'
+                })
+        
+        # Top CPU usage nodes (enhanced with more details)
+        top_cpu = data.get('top_usage', {}).get('cpu', [])
+        for i, node in enumerate(top_cpu[:5], 1):
+            structured['top_cpu_nodes'].append({
+                'Rank': i,
+                'Node Name': node.get('name', 'unknown'),
+                'CPU Max (%)': f"{node.get('cpu_max', 0):.1f}",
+                'CPU Avg (%)': f"{node.get('cpu_avg', 0):.1f}",
+                'Instance': node.get('instance', 'unknown').split(':')[0]  # Show just hostname part
+            })
+        
+        # Top memory usage nodes (enhanced with more details)
+        top_memory = data.get('top_usage', {}).get('memory', [])
+        for i, node in enumerate(top_memory[:5], 1):
+            structured['top_memory_nodes'].append({
+                'Rank': i,
+                'Node Name': node.get('name', 'unknown'),
+                'Memory Max (MB)': f"{node.get('memory_max', 0):.0f}",
+                'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}",
+                'Instance': node.get('instance', 'unknown').split(':')[0]
+            })
+        
+        # Network activity summary (new section for network metrics)
+        worker_group = groups.get('worker', {})
+        if worker_group.get('summary'):
+            worker_summary = worker_group['summary']
+            network_rx = worker_summary.get('network_rx', {})
+            network_tx = worker_summary.get('network_tx', {})
+            
+            structured['network_activity_summary'] = [
+                {'Metric': 'Worker RX Max (MB/s)', 'Value': f"{(network_rx.get('max', 0) or 0) / (1024*1024):.2f}"},
+                {'Metric': 'Worker RX Avg (MB/s)', 'Value': f"{(network_rx.get('avg', 0) or 0) / (1024*1024):.2f}"},
+                {'Metric': 'Worker TX Max (MB/s)', 'Value': f"{(network_tx.get('max', 0) or 0) / (1024*1024):.2f}"},
+                {'Metric': 'Worker TX Avg (MB/s)', 'Value': f"{(network_tx.get('avg', 0) or 0) / (1024*1024):.2f}"}
+            ]
+        
+        return structured
+
+    def _extract_ovs_comprehensive(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract comprehensive OVS metrics from collect_all_ovs_metrics output"""
+        structured = {
+            'ovs_overview': [],
+            'cpu_performance': [],
+            'memory_performance': [],
+            'flow_metrics': [],
+            'connection_health': []
+        }
+        
+        # OVS Overview
+        structured['ovs_overview'] = [
+            {'Property': 'Collection Type', 'Value': data.get('collection_type', 'unknown')},
+            {'Property': 'Collection Time', 'Value': data.get('timestamp', 'Unknown')[:19]},
+            {'Property': 'CPU Metrics', 'Value': 'Available' if data.get('cpu_usage', {}).get('error') is None else 'Error'},
+            {'Property': 'Memory Metrics', 'Value': 'Available' if data.get('memory_usage', {}).get('error') is None else 'Error'},
+            {'Property': 'Flow Metrics', 'Value': 'Available' if data.get('dp_flows', {}).get('error') is None else 'Error'}
+        ]
+        
+        # CPU Performance (top performers from both components)
+        cpu_data = data.get('cpu_usage', {})
+        if 'error' not in cpu_data:
+            # Combine top performers from both components
+            all_cpu_performers = []
+            
+            # Add vSwitchd top performers
+            for item in cpu_data.get('summary', {}).get('ovs_vswitchd_top10', [])[:3]:
+                all_cpu_performers.append({
+                    'Component': 'vSwitchd',
+                    'Node': item.get('node_name', 'unknown'),
+                    'Max CPU (%)': f"{item.get('max', 0):.2f}",
+                    'Performance': 'High' if item.get('max', 0) > 50 else 'Normal'
+                })
+            
+            # Add OVSDB top performers
+            for item in cpu_data.get('summary', {}).get('ovsdb_server_top10', [])[:2]:
+                all_cpu_performers.append({
+                    'Component': 'OVSDB',
+                    'Node': item.get('node_name', 'unknown'),
+                    'Max CPU (%)': f"{item.get('max', 0):.2f}",
+                    'Performance': 'High' if item.get('max', 0) > 30 else 'Normal'
+                })
+            
+            structured['cpu_performance'] = all_cpu_performers[:5]
+        
+        # Memory Performance (top 5 across all components)
+        memory_data = data.get('memory_usage', {})
+        if 'error' not in memory_data:
+            all_memory_performers = []
+            
+            # Add DB memory consumers
+            for item in memory_data.get('summary', {}).get('ovs_db_top10', [])[:3]:
+                all_memory_performers.append({
+                    'Component': 'OVS DB',
+                    'Pod': item.get('pod_name', 'unknown'),
+                    'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
+                    'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
+                })
+            
+            # Add vSwitchd memory consumers
+            for item in memory_data.get('summary', {}).get('ovs_vswitchd_top10', [])[:2]:
+                all_memory_performers.append({
+                    'Component': 'vSwitchd',
+                    'Pod': item.get('pod_name', 'unknown'),
+                    'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
+                    'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
+                })
+            
+            structured['memory_performance'] = all_memory_performers[:5]
+        
+        # Flow Metrics Summary
+        dp_flows = data.get('dp_flows', {})
+        bridge_flows = data.get('bridge_flows', {})
+        
+        flow_summary = []
+        
+        # DP Flows
+        if 'error' not in dp_flows:
+            top_dp = dp_flows.get('top_10', [])
+            if top_dp:
+                flow_summary.append({
+                    'Flow Type': 'DP Flows',
+                    'Top Instance': top_dp[0].get('instance', 'unknown'),
+                    'Max Flows': f"{top_dp[0].get('max', 0):.0f}"
+                })
+        
+        # Bridge Flows
+        if 'error' not in bridge_flows:
+            br_int_top = bridge_flows.get('top_10', {}).get('br_int', [])
+            br_ex_top = bridge_flows.get('top_10', {}).get('br_ex', [])
+            
+            if br_int_top:
+                flow_summary.append({
+                    'Flow Type': 'br-int',
+                    'Top Instance': br_int_top[0].get('instance', 'unknown'),
+                    'Max Flows': f"{br_int_top[0].get('max', 0):.0f}"
+                })
+            
+            if br_ex_top:
+                flow_summary.append({
+                    'Flow Type': 'br-ex',
+                    'Top Instance': br_ex_top[0].get('instance', 'unknown'),
+                    'Max Flows': f"{br_ex_top[0].get('max', 0):.0f}"
+                })
+        
+        structured['flow_metrics'] = flow_summary[:5]
+        
+        # Connection Health
+        conn_metrics = data.get('connection_metrics', {})
+        if 'error' not in conn_metrics:
+            metrics_data = conn_metrics.get('connection_metrics', {})
+            
+            for metric_name, metric_info in list(metrics_data.items())[:5]:
+                if 'error' not in metric_info:
+                    structured['connection_health'].append({
+                        'Connection Metric': metric_name.replace('_', ' ').title(),
+                        'Max Count': f"{metric_info.get('max', 0):.0f}",
+                        'Avg Count': f"{metric_info.get('avg', 0):.0f}",
+                        'Status': 'Healthy' if metric_info.get('max', 0) == 0 or 'overflow' not in metric_name else 'Check'
+                    })
+        
+        return structured
+
+    def _summarize_ovs_usage(self, data: Dict[str, Any]) -> str:
+        """Generate OVS usage summary"""
+        summary = ["OVS Usage Analysis:"]
+        
+        collection_type = data.get('collection_type', 'unknown')
+        summary.append(f"• Collection: {collection_type}")
+        
+        # CPU summary
+        if 'cpu_usage_summary' in data and data['cpu_usage_summary']:
+            vswitchd_status = next((item for item in data['cpu_usage_summary'] if item['Component'] == 'OVS vSwitchd'), {})
+            if vswitchd_status.get('Status') == 'Available':
+                summary.append(f"• CPU Monitoring: {vswitchd_status['Node Count']} nodes")
+        
+        # Top CPU performer
+        if 'ovs_vswitchd_top5' in data and data['ovs_vswitchd_top5']:
+            top_cpu = data['ovs_vswitchd_top5'][0]
+            summary.append(f"• Top CPU: {top_cpu['Node']} ({top_cpu['Max CPU (%)']}%)")
+        
+        # Top memory consumer
+        if 'ovs_memory_top5' in data and data['ovs_memory_top5']:
+            top_memory = data['ovs_memory_top5'][0]
+            summary.append(f"• Top Memory: {top_memory['Pod']} ({top_memory['Max Memory']})")
+        
+        # Flow metrics
+        if 'dp_flows_summary' in data and data['dp_flows_summary']:
+            dp_info = next((item for item in data['dp_flows_summary'] if item['Metric'] == 'Top Flow Count'), {})
+            if dp_info:
+                summary.append(f"• Top DP Flows: {dp_info['Value']}")
+        
+        return " ".join(summary)
+
+    def _summarize_ovs_comprehensive(self, data: Dict[str, Any]) -> str:
+        """Generate comprehensive OVS metrics summary"""
+        summary = ["Comprehensive OVS Analysis:"]
+        
+        # Overview status
+        if 'ovs_overview' in data:
+            overview = data['ovs_overview']
+            cpu_status = next((item['Value'] for item in overview if item['Property'] == 'CPU Metrics'), 'Unknown')
+            memory_status = next((item['Value'] for item in overview if item['Property'] == 'Memory Metrics'), 'Unknown')
+            flow_status = next((item['Value'] for item in overview if item['Property'] == 'Flow Metrics'), 'Unknown')
+            
+            status_indicators = []
+            if cpu_status == 'Available':
+                status_indicators.append("CPU✓")
+            if memory_status == 'Available':
+                status_indicators.append("Memory✓")
+            if flow_status == 'Available':
+                status_indicators.append("Flows✓")
+            
+            summary.append(f"• Metrics: {', '.join(status_indicators)}")
+        
+        # Top performers
+        if 'cpu_performance' in data and data['cpu_performance']:
+            top_cpu = data['cpu_performance'][0]
+            summary.append(f"• Top CPU: {top_cpu['Component']} on {top_cpu['Node']} ({top_cpu['Max CPU (%)']}%)")
+        
+        if 'memory_performance' in data and data['memory_performance']:
+            top_memory = data['memory_performance'][0]
+            summary.append(f"• Top Memory: {top_memory['Component']} {top_memory['Pod']} ({top_memory['Max Memory']})")
+        
+        # Flow activity
+        if 'flow_metrics' in data and data['flow_metrics']:
+            flow_types = [item['Flow Type'] for item in data['flow_metrics']]
+            summary.append(f"• Flow Types: {', '.join(flow_types[:3])}")
+        
+        # Connection health
+        if 'connection_health' in data:
+            healthy_count = sum(1 for item in data['connection_health'] if item.get('Status') == 'Healthy')
+            total_count = len(data['connection_health'])
+            summary.append(f"• Connection Health: {healthy_count}/{total_count} healthy")
+        
+        return " ".join(summary)
+
+
+
 
 # Enhanced module functions
 def extract_and_transform_mcp_results(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -1605,451 +2052,6 @@ def json_to_tabular_data(json_data: Union[Dict[str, Any], str], compact: bool = 
     
     return table_list
 
-def _extract_ovs_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract OVS usage metrics from ovnk_benchmark_prometheus_ovnk_ovs.py output"""
-    structured = {
-        'collection_summary': [],
-        'cpu_usage_summary': [],
-        'memory_usage_summary': [],
-        'ovs_vswitchd_top5': [],
-        'ovsdb_server_top5': [],
-        'ovs_memory_top5': [],
-        'dp_flows_summary': [],
-        'bridge_flows_summary': [],
-        'connection_metrics_summary': []
-    }
-    
-    # Collection summary
-    structured['collection_summary'] = [
-        {'Property': 'Collection Type', 'Value': data.get('collection_type', 'unknown')},
-        {'Property': 'Collection Time', 'Value': data.get('timestamp', 'Unknown')[:19]},
-        {'Property': 'Query Type', 'Value': 'Range' if 'range' in data.get('collection_type', '') else 'Instant'}
-    ]
-    
-    # CPU Usage Summary
-    cpu_data = data.get('cpu_usage', {})
-    if 'error' not in cpu_data:
-        vswitchd_count = len(cpu_data.get('ovs_vswitchd_cpu', []))
-        ovsdb_count = len(cpu_data.get('ovsdb_server_cpu', []))
-        
-        structured['cpu_usage_summary'] = [
-            {'Component': 'OVS vSwitchd', 'Node Count': vswitchd_count, 'Status': 'Available'},
-            {'Component': 'OVSDB Server', 'Node Count': ovsdb_count, 'Status': 'Available'}
-        ]
-        
-        # Top 5 OVS vSwitchd CPU usage
-        vswitchd_top = cpu_data.get('summary', {}).get('ovs_vswitchd_top10', [])
-        for i, item in enumerate(vswitchd_top[:5], 1):
-            structured['ovs_vswitchd_top5'].append({
-                'Rank': i,
-                'Node': item.get('node_name', 'unknown'),
-                'Max CPU (%)': f"{item.get('max', 0):.2f}",
-                'Avg CPU (%)': f"{item.get('avg', 0):.2f}"
-            })
-        
-        # Top 5 OVSDB Server CPU usage
-        ovsdb_top = cpu_data.get('summary', {}).get('ovsdb_server_top10', [])
-        for i, item in enumerate(ovsdb_top[:5], 1):
-            structured['ovsdb_server_top5'].append({
-                'Rank': i,
-                'Node': item.get('node_name', 'unknown'),
-                'Max CPU (%)': f"{item.get('max', 0):.2f}",
-                'Avg CPU (%)': f"{item.get('avg', 0):.2f}"
-            })
-    else:
-        structured['cpu_usage_summary'] = [
-            {'Component': 'CPU Usage', 'Status': 'Error', 'Message': cpu_data.get('error', 'Unknown error')}
-        ]
-    
-    # Memory Usage Summary
-    memory_data = data.get('memory_usage', {})
-    if 'error' not in memory_data:
-        db_count = len(memory_data.get('ovs_db_memory', []))
-        vswitchd_mem_count = len(memory_data.get('ovs_vswitchd_memory', []))
-        
-        structured['memory_usage_summary'] = [
-            {'Component': 'OVS DB', 'Pod Count': db_count, 'Status': 'Available'},
-            {'Component': 'OVS vSwitchd', 'Pod Count': vswitchd_mem_count, 'Status': 'Available'}
-        ]
-        
-        # Top 5 Memory consumers (combine both types)
-        all_memory = []
-        
-        # Add OVS DB memory
-        for item in memory_data.get('summary', {}).get('ovs_db_top10', []):
-            all_memory.append({
-                'Type': 'OVS DB',
-                'Pod': item.get('pod_name', 'unknown'),
-                'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
-                'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
-            })
-        
-        # Add OVS vSwitchd memory
-        for item in memory_data.get('summary', {}).get('ovs_vswitchd_top10', []):
-            all_memory.append({
-                'Type': 'vSwitchd',
-                'Pod': item.get('pod_name', 'unknown'),
-                'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
-                'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
-            })
-        
-        # Sort by max memory and take top 5
-        try:
-            all_memory.sort(key=lambda x: float(x['Max Memory'].split()[0]), reverse=True)
-        except:
-            pass  # Keep original order if parsing fails
-        
-        for i, item in enumerate(all_memory[:5], 1):
-            structured['ovs_memory_top5'].append({
-                'Rank': i,
-                'Type': item['Type'],
-                'Pod': item['Pod'],
-                'Max Memory': item['Max Memory'],
-                'Avg Memory': item['Avg Memory']
-            })
-    else:
-        structured['memory_usage_summary'] = [
-            {'Component': 'Memory Usage', 'Status': 'Error', 'Message': memory_data.get('error', 'Unknown error')}
-        ]
-    
-    # DP Flows Summary
-    dp_flows = data.get('dp_flows', {})
-    if 'error' not in dp_flows:
-        flow_count = len(dp_flows.get('data', []))
-        top_flows = dp_flows.get('top_10', [])
-        
-        structured['dp_flows_summary'] = [
-            {'Metric': 'Total Instances', 'Value': flow_count},
-            {'Metric': 'Top Flow Count', 'Value': f"{top_flows[0].get('max', 0):.0f} flows" if top_flows else 'N/A'},
-            {'Metric': 'Metric Name', 'Value': dp_flows.get('metric', 'ovs_vswitchd_dp_flows_total')}
-        ]
-    else:
-        structured['dp_flows_summary'] = [
-            {'Metric': 'DP Flows', 'Status': 'Error', 'Message': dp_flows.get('error', 'Unknown error')}
-        ]
-    
-    # Bridge Flows Summary
-    bridge_flows = data.get('bridge_flows', {})
-    if 'error' not in bridge_flows:
-        br_int_count = len(bridge_flows.get('br_int_flows', []))
-        br_ex_count = len(bridge_flows.get('br_ex_flows', []))
-        
-        # Get top flows for each bridge
-        br_int_top = bridge_flows.get('top_10', {}).get('br_int', [])
-        br_ex_top = bridge_flows.get('top_10', {}).get('br_ex', [])
-        
-        structured['bridge_flows_summary'] = [
-            {'Bridge': 'br-int', 'Instance Count': br_int_count, 'Top Flows': f"{br_int_top[0].get('max', 0):.0f}" if br_int_top else 'N/A'},
-            {'Bridge': 'br-ex', 'Instance Count': br_ex_count, 'Top Flows': f"{br_ex_top[0].get('max', 0):.0f}" if br_ex_top else 'N/A'}
-        ]
-    else:
-        structured['bridge_flows_summary'] = [
-            {'Bridge': 'Bridge Flows', 'Status': 'Error', 'Message': bridge_flows.get('error', 'Unknown error')}
-        ]
-    
-    # Connection Metrics Summary
-    conn_metrics = data.get('connection_metrics', {})
-    if 'error' not in conn_metrics:
-        metrics_data = conn_metrics.get('connection_metrics', {})
-        
-        for metric_name, metric_info in metrics_data.items():
-            if 'error' not in metric_info:
-                structured['connection_metrics_summary'].append({
-                    'Metric': metric_name.replace('_', ' ').title(),
-                    'Max': f"{metric_info.get('max', 0):.0f}",
-                    'Avg': f"{metric_info.get('avg', 0):.0f}",
-                    'Unit': metric_info.get('unit', 'count')
-                })
-            else:
-                structured['connection_metrics_summary'].append({
-                    'Metric': metric_name.replace('_', ' ').title(),
-                    'Status': 'Error',
-                    'Message': metric_info.get('error', 'Unknown error')[:50]
-                })
-    
-    return structured
-
-def _extract_node_usage_enhanced(self, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Enhanced extraction for node usage metrics from ovnk_benchmark_prometheus_nodes_usage.py output"""
-    structured = {
-        'collection_summary': [],
-        'node_group_overview': [],
-        'top_cpu_nodes': [],
-        'top_memory_nodes': [],
-        'network_activity_summary': []
-    }
-    
-    # Collection summary
-    metadata = data.get('metadata', {})
-    structured['collection_summary'] = [
-        {'Property': 'Query Duration', 'Value': metadata.get('duration', 'Unknown')},
-        {'Property': 'Collection Time', 'Value': metadata.get('query_time', 'Unknown')[:19]},
-        {'Property': 'Start Time', 'Value': metadata.get('start_time', 'Unknown')[:19]},
-        {'Property': 'End Time', 'Value': metadata.get('end_time', 'Unknown')[:19]},
-        {'Property': 'Timezone', 'Value': metadata.get('timezone', 'UTC')}
-    ]
-    
-    # Node group overview (enhanced with network data)
-    groups = data.get('groups', {})
-    for role, group_data in groups.items():
-        if group_data.get('nodes'):
-            summary = group_data.get('summary', {})
-            cpu_summary = summary.get('cpu_usage', {})
-            memory_summary = summary.get('memory_usage', {})
-            network_rx_summary = summary.get('network_rx', {})
-            network_tx_summary = summary.get('network_tx', {})
-            
-            # Format network values (convert bytes/s to MB/s if needed)
-            net_rx_max = network_rx_summary.get('max', 0)
-            net_tx_max = network_tx_summary.get('max', 0)
-            
-            # Convert to MB/s for readability
-            rx_mbps = f"{net_rx_max / (1024*1024):.1f}" if net_rx_max and net_rx_max > 0 else "0.0"
-            tx_mbps = f"{net_tx_max / (1024*1024):.1f}" if net_tx_max and net_tx_max > 0 else "0.0"
-            
-            structured['node_group_overview'].append({
-                'Role': role.title(),
-                'Node Count': group_data.get('count', 0),
-                'CPU Avg (%)': f"{cpu_summary.get('avg', 0):.1f}" if cpu_summary.get('avg') is not None else 'N/A',
-                'CPU Max (%)': f"{cpu_summary.get('max', 0):.1f}" if cpu_summary.get('max') is not None else 'N/A',
-                'Memory Max (MB)': f"{memory_summary.get('max', 0):.0f}" if memory_summary.get('max') is not None else 'N/A'
-            })
-    
-    # Top CPU usage nodes (enhanced with more details)
-    top_cpu = data.get('top_usage', {}).get('cpu', [])
-    for i, node in enumerate(top_cpu[:5], 1):
-        structured['top_cpu_nodes'].append({
-            'Rank': i,
-            'Node Name': node.get('name', 'unknown'),
-            'CPU Max (%)': f"{node.get('cpu_max', 0):.1f}",
-            'CPU Avg (%)': f"{node.get('cpu_avg', 0):.1f}",
-            'Instance': node.get('instance', 'unknown').split(':')[0]  # Show just hostname part
-        })
-    
-    # Top memory usage nodes (enhanced with more details)
-    top_memory = data.get('top_usage', {}).get('memory', [])
-    for i, node in enumerate(top_memory[:5], 1):
-        structured['top_memory_nodes'].append({
-            'Rank': i,
-            'Node Name': node.get('name', 'unknown'),
-            'Memory Max (MB)': f"{node.get('memory_max', 0):.0f}",
-            'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}",
-            'Instance': node.get('instance', 'unknown').split(':')[0]
-        })
-    
-    # Network activity summary (new section for network metrics)
-    worker_group = groups.get('worker', {})
-    if worker_group.get('summary'):
-        worker_summary = worker_group['summary']
-        network_rx = worker_summary.get('network_rx', {})
-        network_tx = worker_summary.get('network_tx', {})
-        
-        structured['network_activity_summary'] = [
-            {'Metric': 'Worker RX Max (MB/s)', 'Value': f"{(network_rx.get('max', 0) or 0) / (1024*1024):.2f}"},
-            {'Metric': 'Worker RX Avg (MB/s)', 'Value': f"{(network_rx.get('avg', 0) or 0) / (1024*1024):.2f}"},
-            {'Metric': 'Worker TX Max (MB/s)', 'Value': f"{(network_tx.get('max', 0) or 0) / (1024*1024):.2f}"},
-            {'Metric': 'Worker TX Avg (MB/s)', 'Value': f"{(network_tx.get('avg', 0) or 0) / (1024*1024):.2f}"}
-        ]
-    
-    return structured
-
-def _extract_ovs_comprehensive(self, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract comprehensive OVS metrics from collect_all_ovs_metrics output"""
-    structured = {
-        'ovs_overview': [],
-        'cpu_performance': [],
-        'memory_performance': [],
-        'flow_metrics': [],
-        'connection_health': []
-    }
-    
-    # OVS Overview
-    structured['ovs_overview'] = [
-        {'Property': 'Collection Type', 'Value': data.get('collection_type', 'unknown')},
-        {'Property': 'Collection Time', 'Value': data.get('timestamp', 'Unknown')[:19]},
-        {'Property': 'CPU Metrics', 'Value': 'Available' if data.get('cpu_usage', {}).get('error') is None else 'Error'},
-        {'Property': 'Memory Metrics', 'Value': 'Available' if data.get('memory_usage', {}).get('error') is None else 'Error'},
-        {'Property': 'Flow Metrics', 'Value': 'Available' if data.get('dp_flows', {}).get('error') is None else 'Error'}
-    ]
-    
-    # CPU Performance (top performers from both components)
-    cpu_data = data.get('cpu_usage', {})
-    if 'error' not in cpu_data:
-        # Combine top performers from both components
-        all_cpu_performers = []
-        
-        # Add vSwitchd top performers
-        for item in cpu_data.get('summary', {}).get('ovs_vswitchd_top10', [])[:3]:
-            all_cpu_performers.append({
-                'Component': 'vSwitchd',
-                'Node': item.get('node_name', 'unknown'),
-                'Max CPU (%)': f"{item.get('max', 0):.2f}",
-                'Performance': 'High' if item.get('max', 0) > 50 else 'Normal'
-            })
-        
-        # Add OVSDB top performers
-        for item in cpu_data.get('summary', {}).get('ovsdb_server_top10', [])[:2]:
-            all_cpu_performers.append({
-                'Component': 'OVSDB',
-                'Node': item.get('node_name', 'unknown'),
-                'Max CPU (%)': f"{item.get('max', 0):.2f}",
-                'Performance': 'High' if item.get('max', 0) > 30 else 'Normal'
-            })
-        
-        structured['cpu_performance'] = all_cpu_performers[:5]
-    
-    # Memory Performance (top 5 across all components)
-    memory_data = data.get('memory_usage', {})
-    if 'error' not in memory_data:
-        all_memory_performers = []
-        
-        # Add DB memory consumers
-        for item in memory_data.get('summary', {}).get('ovs_db_top10', [])[:3]:
-            all_memory_performers.append({
-                'Component': 'OVS DB',
-                'Pod': item.get('pod_name', 'unknown'),
-                'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
-                'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
-            })
-        
-        # Add vSwitchd memory consumers
-        for item in memory_data.get('summary', {}).get('ovs_vswitchd_top10', [])[:2]:
-            all_memory_performers.append({
-                'Component': 'vSwitchd',
-                'Pod': item.get('pod_name', 'unknown'),
-                'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
-                'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
-            })
-        
-        structured['memory_performance'] = all_memory_performers[:5]
-    
-    # Flow Metrics Summary
-    dp_flows = data.get('dp_flows', {})
-    bridge_flows = data.get('bridge_flows', {})
-    
-    flow_summary = []
-    
-    # DP Flows
-    if 'error' not in dp_flows:
-        top_dp = dp_flows.get('top_10', [])
-        if top_dp:
-            flow_summary.append({
-                'Flow Type': 'DP Flows',
-                'Top Instance': top_dp[0].get('instance', 'unknown'),
-                'Max Flows': f"{top_dp[0].get('max', 0):.0f}"
-            })
-    
-    # Bridge Flows
-    if 'error' not in bridge_flows:
-        br_int_top = bridge_flows.get('top_10', {}).get('br_int', [])
-        br_ex_top = bridge_flows.get('top_10', {}).get('br_ex', [])
-        
-        if br_int_top:
-            flow_summary.append({
-                'Flow Type': 'br-int',
-                'Top Instance': br_int_top[0].get('instance', 'unknown'),
-                'Max Flows': f"{br_int_top[0].get('max', 0):.0f}"
-            })
-        
-        if br_ex_top:
-            flow_summary.append({
-                'Flow Type': 'br-ex',
-                'Top Instance': br_ex_top[0].get('instance', 'unknown'),
-                'Max Flows': f"{br_ex_top[0].get('max', 0):.0f}"
-            })
-    
-    structured['flow_metrics'] = flow_summary[:5]
-    
-    # Connection Health
-    conn_metrics = data.get('connection_metrics', {})
-    if 'error' not in conn_metrics:
-        metrics_data = conn_metrics.get('connection_metrics', {})
-        
-        for metric_name, metric_info in list(metrics_data.items())[:5]:
-            if 'error' not in metric_info:
-                structured['connection_health'].append({
-                    'Connection Metric': metric_name.replace('_', ' ').title(),
-                    'Max Count': f"{metric_info.get('max', 0):.0f}",
-                    'Avg Count': f"{metric_info.get('avg', 0):.0f}",
-                    'Status': 'Healthy' if metric_info.get('max', 0) == 0 or 'overflow' not in metric_name else 'Check'
-                })
-    
-    return structured
-
-def _summarize_ovs_usage(self, data: Dict[str, Any]) -> str:
-    """Generate OVS usage summary"""
-    summary = ["OVS Usage Analysis:"]
-    
-    collection_type = data.get('collection_type', 'unknown')
-    summary.append(f"• Collection: {collection_type}")
-    
-    # CPU summary
-    if 'cpu_usage_summary' in data and data['cpu_usage_summary']:
-        vswitchd_status = next((item for item in data['cpu_usage_summary'] if item['Component'] == 'OVS vSwitchd'), {})
-        if vswitchd_status.get('Status') == 'Available':
-            summary.append(f"• CPU Monitoring: {vswitchd_status['Node Count']} nodes")
-    
-    # Top CPU performer
-    if 'ovs_vswitchd_top5' in data and data['ovs_vswitchd_top5']:
-        top_cpu = data['ovs_vswitchd_top5'][0]
-        summary.append(f"• Top CPU: {top_cpu['Node']} ({top_cpu['Max CPU (%)']}%)")
-    
-    # Top memory consumer
-    if 'ovs_memory_top5' in data and data['ovs_memory_top5']:
-        top_memory = data['ovs_memory_top5'][0]
-        summary.append(f"• Top Memory: {top_memory['Pod']} ({top_memory['Max Memory']})")
-    
-    # Flow metrics
-    if 'dp_flows_summary' in data and data['dp_flows_summary']:
-        dp_info = next((item for item in data['dp_flows_summary'] if item['Metric'] == 'Top Flow Count'), {})
-        if dp_info:
-            summary.append(f"• Top DP Flows: {dp_info['Value']}")
-    
-    return " ".join(summary)
-
-def _summarize_ovs_comprehensive(self, data: Dict[str, Any]) -> str:
-    """Generate comprehensive OVS metrics summary"""
-    summary = ["Comprehensive OVS Analysis:"]
-    
-    # Overview status
-    if 'ovs_overview' in data:
-        overview = data['ovs_overview']
-        cpu_status = next((item['Value'] for item in overview if item['Property'] == 'CPU Metrics'), 'Unknown')
-        memory_status = next((item['Value'] for item in overview if item['Property'] == 'Memory Metrics'), 'Unknown')
-        flow_status = next((item['Value'] for item in overview if item['Property'] == 'Flow Metrics'), 'Unknown')
-        
-        status_indicators = []
-        if cpu_status == 'Available':
-            status_indicators.append("CPU✓")
-        if memory_status == 'Available':
-            status_indicators.append("Memory✓")
-        if flow_status == 'Available':
-            status_indicators.append("Flows✓")
-        
-        summary.append(f"• Metrics: {', '.join(status_indicators)}")
-    
-    # Top performers
-    if 'cpu_performance' in data and data['cpu_performance']:
-        top_cpu = data['cpu_performance'][0]
-        summary.append(f"• Top CPU: {top_cpu['Component']} on {top_cpu['Node']} ({top_cpu['Max CPU (%)']}%)")
-    
-    if 'memory_performance' in data and data['memory_performance']:
-        top_memory = data['memory_performance'][0]
-        summary.append(f"• Top Memory: {top_memory['Component']} {top_memory['Pod']} ({top_memory['Max Memory']})")
-    
-    # Flow activity
-    if 'flow_metrics' in data and data['flow_metrics']:
-        flow_types = [item['Flow Type'] for item in data['flow_metrics']]
-        summary.append(f"• Flow Types: {', '.join(flow_types[:3])}")
-    
-    # Connection health
-    if 'connection_health' in data:
-        healthy_count = sum(1 for item in data['connection_health'] if item.get('Status') == 'Healthy')
-        total_count = len(data['connection_health'])
-        summary.append(f"• Connection Health: {healthy_count}/{total_count} healthy")
-    
-    return " ".join(summary)
-
 # Validation and utility functions
 def validate_json_structure(data: Union[Dict[str, Any], str]) -> Dict[str, Any]:
     """Validate and analyze JSON structure for table conversion suitability"""
@@ -2104,7 +2106,6 @@ def validate_json_structure(data: Union[Dict[str, Any], str]) -> Dict[str, Any]:
             'conversion_recommendations': ["Check data format and try again"]
         }
 
-
 def _get_max_depth(data: Dict[str, Any], current_depth: int = 0) -> int:
     """Calculate maximum nesting depth of a dictionary"""
     if not isinstance(data, dict):
@@ -2122,7 +2123,6 @@ def _get_max_depth(data: Dict[str, Any], current_depth: int = 0) -> int:
                     max_depth = max(max_depth, depth)
     
     return max_depth
-
 
 def batch_convert_json_files(file_paths: List[str], 
                            output_format: str = "html",
@@ -2168,7 +2168,6 @@ def batch_convert_json_files(file_paths: List[str],
             }
     
     return results
-
 
 def create_dashboard_html(json_outputs: Dict[str, Union[Dict[str, Any], str]]) -> str:
     """
@@ -2254,7 +2253,6 @@ def create_dashboard_html(json_outputs: Dict[str, Union[Dict[str, Any], str]]) -
         logger.error(f"Failed to create dashboard HTML: {e}")
         return f"<div class='alert alert-danger'>Dashboard creation failed: {str(e)}</div>"
 
-
 def export_tables_to_csv(json_data: Union[Dict[str, Any], str], 
                         output_dir: str = ".", 
                         prefix: str = "ovnk_") -> Dict[str, str]:
@@ -2301,8 +2299,6 @@ def export_tables_to_csv(json_data: Union[Dict[str, Any], str],
     except Exception as e:
         logger.error(f"Error exporting tables to CSV: {e}")
         return {'error': str(e)}
-
-
 
 # Export main functions for external use
 __all__ = [
