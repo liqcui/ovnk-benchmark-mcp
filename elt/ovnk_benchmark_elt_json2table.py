@@ -1460,10 +1460,10 @@ class PerformanceDataELT:
         
         # Report top performers from each category
         categories = [
-            ('controller_ready_duration_top5', 'Controller Ready-ovnkube_controller_ready_duration_seconds'),
-            ('node_ready_duration_top5', 'Node Ready-ovnkube_node_ready_duration_seconds'),
-            ('controller_sync_duration_top5', 'Sync Duration-ovnkube_controller_sync_duration_seconds-'),
-            ('controller_sync_service_total_top5', 'Service Rate-ovnkube_controller_sync_service_total')
+            ('controller_ready_duration_top5', 'Controller Ready'),
+            ('node_ready_duration_top5', 'Node Ready'),
+            ('controller_sync_duration_top5', 'Sync Duration'),
+            ('controller_sync_service_total_top5', 'Service Rate')
         ]
         
         for table_name, category_name in categories:
