@@ -197,6 +197,15 @@ class PerformanceDataELT(EltUtility):
             else:
                 # Default transformation for other data types
                 dataframes = {}
+                for key, value in structured_data.items():
+                    if isinstance(value, list) and value:
+                        df = pd.DataFrame(value)
+                        if not df.empty:
+                            df = self.limit_dataframe_columns(df)
+                            dataframes[key] = df
+                return dataframes
+
+                dataframes = {}
                 
                 try:
                     for key, value in structured_data.items():
@@ -209,12 +218,32 @@ class PerformanceDataELT(EltUtility):
                                 dataframes[key] = df
                                 
                 except Exception as e:
-                    logger.error(f"Failed to transform cluster info to DataFrames: {e}")                
+                    logger.error(f"Failed to transform cluster info to DataFrames: {e}")
+                
                 return dataframes
 
         except Exception as e:
             logger.error(f"Failed to transform to DataFrames: {e}")
             return {}
+
+def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+    """Transform structured data into pandas DataFrames"""
+    dataframes = {}
+    
+    try:
+        for key, value in structured_data.items():
+            if isinstance(value, list) and value:
+                df = pd.DataFrame(value)
+                if not df.empty:
+                    # Apply column limiting for most tables, but not for node detail tables or node_distribution
+                    if 'detail' not in key and key != 'node_distribution':
+                        df = self.limit_dataframe_columns(df)
+                    dataframes[key] = df
+                    
+    except Exception as e:
+        logger.error(f"Failed to transform cluster info to DataFrames: {e}")
+    
+    return dataframes
 
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame], data_type: str) -> Dict[str, str]:
         """Generate HTML tables using specialized modules"""

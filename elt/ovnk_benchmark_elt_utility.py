@@ -143,16 +143,20 @@ class EltUtility:
             logger.error(f"Failed to generate HTML table for {table_name}: {e}")
             return f'<div class="alert alert-danger">Error generating table: {str(e)}</div>'
     
-    def limit_dataframe_columns(self, df: pd.DataFrame, max_cols: int = None) -> pd.DataFrame:
+    def limit_dataframe_columns(self, df: pd.DataFrame, max_cols: int = None, table_name: str = None) -> pd.DataFrame:
         """Limit DataFrame columns to maximum number"""
         if max_cols is None:
             max_cols = self.max_columns
+        
+        # Special handling for specific tables that should show all columns
+        if table_name == 'node_distribution':
+            return df  # Don't limit node distribution table
             
         if len(df.columns) <= max_cols:
             return df
         
         # Keep most important columns
-        priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node']
+        priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory']
         
         # Find priority columns that exist
         keep_cols = []
@@ -167,7 +171,7 @@ class EltUtility:
             keep_cols.append(remaining_cols.pop(0))
         
         return df[keep_cols[:max_cols]]
-    
+
     def create_property_value_table(self, data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Create a property-value table format"""
         return [{'Property': item.get('Property', ''), 'Value': str(item.get('Value', ''))} for item in data]

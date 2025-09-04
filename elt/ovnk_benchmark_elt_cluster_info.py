@@ -298,8 +298,8 @@ class ClusterInfoELT(EltUtility):
                 if isinstance(value, list) and value:
                     df = pd.DataFrame(value)
                     if not df.empty:
-                        # Apply column limiting for most tables, but not for node detail tables
-                        if 'detail' not in key:
+                        # Apply column limiting for most tables, but not for node detail tables or node_distribution
+                        if 'detail' not in key and key != 'node_distribution':
                             df = self.limit_dataframe_columns(df)
                         dataframes[key] = df
                         
