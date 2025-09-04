@@ -603,61 +603,110 @@ class PerformanceDataELT:
         return structured
     
     def _extract_node_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract node usage metrics from prometheus nodes usage output"""
+        """Extract node usage metrics from ovnk_benchmark_prometheus_nodes_usage.py output"""
         structured = {
-            'usage_summary': [],
-            'group_summary': [],
-            'top_cpu_nodes': [],
-            'top_memory_nodes': []
+            'usage_overview': [],
+            'controlplane_summary': [],
+            'infra_summary': [],
+            'worker_summary': [],
+            'top_cpu_workers': [],
+            'top_memory_workers': []
         }
         
-        # Usage summary from metadata
+        # Usage overview from metadata
         metadata = data.get('metadata', {})
-        structured['usage_summary'] = [
+        structured['usage_overview'] = [
             {'Property': 'Query Duration', 'Value': metadata.get('duration', 'Unknown')},
-            {'Property': 'Start Time', 'Value': metadata.get('start_time', 'Unknown')[:19]},
-            {'Property': 'End Time', 'Value': metadata.get('end_time', 'Unknown')[:19]},
-            {'Property': 'Collection Time', 'Value': metadata.get('query_time', 'Unknown')[:19]}
+            {'Property': 'Collection Time', 'Value': metadata.get('query_time', 'Unknown')[:19] if metadata.get('query_time') else 'Unknown'},
+            {'Property': 'Start Time', 'Value': metadata.get('start_time', 'Unknown')[:19] if metadata.get('start_time') else 'Unknown'},
+            {'Property': 'End Time', 'Value': metadata.get('end_time', 'Unknown')[:19] if metadata.get('end_time') else 'Unknown'},
+            {'Property': 'Timezone', 'Value': metadata.get('timezone', 'UTC')}
         ]
         
-        # Group summary (by node role)
+        # Process groups
         groups = data.get('groups', {})
-        for role, group_data in groups.items():
-            if group_data.get('nodes'):
-                summary = group_data.get('summary', {})
-                cpu_summary = summary.get('cpu_usage', {})
-                memory_summary = summary.get('memory_usage', {})
-                
-                structured['group_summary'].append({
-                    'Role': role.title(),
-                    'Node Count': group_data.get('count', 0),
-                    'CPU Avg (%)': f"{cpu_summary.get('avg', 0):.1f}" if cpu_summary.get('avg') is not None else 'N/A',
-                    'CPU Max (%)': f"{cpu_summary.get('max', 0):.1f}" if cpu_summary.get('max') is not None else 'N/A',
-                    'Memory Avg (MB)': f"{memory_summary.get('avg', 0):.0f}" if memory_summary.get('avg') is not None else 'N/A'
-                })
         
-        # Top CPU usage nodes
+        # Control Plane Summary (2-column format)
+        controlplane = groups.get('controlplane', {})
+        if controlplane.get('count', 0) > 0:
+            summary = controlplane.get('summary', {})
+            structured['controlplane_summary'] = [
+                {'Metric': 'Node Count', 'Value': controlplane.get('count', 0)},
+                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+            ]
+        else:
+            structured['controlplane_summary'] = [{'Status': 'No Control Plane nodes found', 'Count': 0}]
+        
+        # Infra Summary (2-column format)
+        infra = groups.get('infra', {})
+        if infra.get('count', 0) > 0:
+            summary = infra.get('summary', {})
+            structured['infra_summary'] = [
+                {'Metric': 'Node Count', 'Value': infra.get('count', 0)},
+                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+            ]
+        else:
+            structured['infra_summary'] = [{'Status': 'No Infrastructure nodes found', 'Count': 0}]
+        
+        # Worker Summary (2-column format)
+        worker = groups.get('worker', {})
+        if worker.get('count', 0) > 0:
+            summary = worker.get('summary', {})
+            structured['worker_summary'] = [
+                {'Metric': 'Node Count', 'Value': worker.get('count', 0)},
+                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+            ]
+        else:
+            structured['worker_summary'] = [{'Status': 'No Worker nodes found', 'Count': 0}]
+        
+        # Top 5 CPU usage workers (6-column format)
         top_cpu = data.get('top_usage', {}).get('cpu', [])
         for i, node in enumerate(top_cpu[:5], 1):
-            structured['top_cpu_nodes'].append({
+            structured['top_cpu_workers'].append({
                 'Rank': i,
-                'Node Name': node.get('name', 'unknown'),
-                'CPU Max (%)': f"{node.get('cpu_max', 0):.1f}",
-                'CPU Avg (%)': f"{node.get('cpu_avg', 0):.1f}"
+                'Node Name': self._truncate_node_name(node.get('name', 'unknown')),
+                'Instance': self._truncate_node_name(node.get('instance', 'unknown')),
+                'CPU Max (%)': f"{node.get('cpu_max', 0):.2f}",
+                'CPU Avg (%)': f"{node.get('cpu_avg', 0):.2f}",
+                'Role': 'Worker'
             })
         
-        # Top memory usage nodes
+        # Top 5 memory usage workers (6-column format)
         top_memory = data.get('top_usage', {}).get('memory', [])
         for i, node in enumerate(top_memory[:5], 1):
-            structured['top_memory_nodes'].append({
+            structured['top_memory_workers'].append({
                 'Rank': i,
-                'Node Name': node.get('name', 'unknown'),
+                'Node Name': self._truncate_node_name(node.get('name', 'unknown')),
+                'Instance': self._truncate_node_name(node.get('instance', 'unknown')),
                 'Memory Max (MB)': f"{node.get('memory_max', 0):.0f}",
-                'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}"
+                'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}",
+                'Role': 'Worker'
             })
         
+        # If no top usage data, add placeholder
+        if not structured['top_cpu_workers']:
+            structured['top_cpu_workers'] = [{'Status': 'No CPU usage data available', 'Nodes': 0}]
+        
+        if not structured['top_memory_workers']:
+            structured['top_memory_workers'] = [{'Status': 'No memory usage data available', 'Nodes': 0}]
+        
         return structured
-    
+
     def _extract_prometheus_basic_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract Prometheus basic info output"""
         structured = {
@@ -1618,22 +1667,39 @@ class PerformanceDataELT:
     
     def _summarize_node_usage(self, data: Dict[str, Any]) -> str:
         """Generate node usage summary"""
-        summary = ["Node Usage Summary:"]
+        summary = ["Node Usage Analysis:"]
         
-        if 'group_summary' in data:
-            total_nodes = sum(item['Node Count'] for item in data['group_summary'])
-            summary.append(f"• Total Nodes Analyzed: {total_nodes}")
-            
-            for item in data['group_summary']:
-                if item['Node Count'] > 0:
-                    summary.append(f"• {item['Role']}: {item['Node Count']} nodes, CPU max {item['CPU Max (%)']}%")
+        # Collection info
+        if 'usage_overview' in data:
+            duration = next((item['Value'] for item in data['usage_overview'] if item['Property'] == 'Query Duration'), 'Unknown')
+            summary.append(f"• Collection Duration: {duration}")
         
-        if 'top_cpu_nodes' in data and data['top_cpu_nodes']:
-            top_cpu = data['top_cpu_nodes'][0]
-            summary.append(f" Highest CPU: {top_cpu['Node Name']} ({top_cpu['CPU Max (%)']}%)")
+        # Node group summaries
+        group_summaries = [
+            ('controlplane_summary', 'Control Plane'),
+            ('infra_summary', 'Infrastructure'),
+            ('worker_summary', 'Worker')
+        ]
         
-        return " ".join(summary)
-    
+        for table_name, group_name in group_summaries:
+            if table_name in data and data[table_name]:
+                node_count = next((item['Value'] for item in data[table_name] if item['Metric'] == 'Node Count'), 0)
+                if node_count > 0:
+                    cpu_avg = next((item['Value'] for item in data[table_name] if item['Metric'] == 'CPU Avg (%)'), 'N/A')
+                    memory_avg = next((item['Value'] for item in data[table_name] if item['Metric'] == 'Memory Avg (GB)'), 'N/A')
+                    summary.append(f"• {group_name}: {node_count} nodes (CPU: {cpu_avg}%, Memory: {memory_avg}GB)")
+        
+        # Top resource consumers
+        if 'top_cpu_workers' in data and data['top_cpu_workers'] and 'Status' not in data['top_cpu_workers'][0]:
+            top_cpu_node = data['top_cpu_workers'][0]
+            summary.append(f"• Top CPU: {top_cpu_node.get('Node Name', 'unknown')} ({top_cpu_node.get('CPU Max (%)', 'N/A')}%)")
+        
+        if 'top_memory_workers' in data and data['top_memory_workers'] and 'Status' not in data['top_memory_workers'][0]:
+            top_memory_node = data['top_memory_workers'][0]
+            summary.append(f"• Top Memory: {top_memory_node.get('Node Name', 'unknown')} ({top_memory_node.get('Memory Max (MB)', 'N/A')}MB)")
+        
+        return " ".join(summary) 
+
     def _summarize_pod_status(self, data: Dict[str, Any]) -> str:
         """Generate pod status summary"""
         summary = ["Pod Status Summary:"]
