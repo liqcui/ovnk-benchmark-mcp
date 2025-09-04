@@ -31,7 +31,7 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from dotenv import load_dotenv
-from elt.ovnk_benchmark_elt_json2table import extract_and_transform_mcp_results,format_results_as_table
+from elt.ovnk_benchmark_elt_json2table import json_to_html_table
 
 import warnings
 # Suppress urllib3 deprecation warning triggered by kubernetes client using HTTPResponse.getheaders()
