@@ -46,109 +46,160 @@ class NodesUsageELT(EltUtility):
         controlplane = groups.get('controlplane', {})
         if controlplane.get('count', 0) > 0:
             summary = controlplane.get('summary', {})
+            cpu_usage = summary.get('cpu_usage', {})
+            memory_usage = summary.get('memory_usage', {})
+            network_rx = summary.get('network_rx', {})
+            network_tx = summary.get('network_tx', {})
+            
             structured['controlplane_summary'] = [
                 {'Metric': 'Node Count', 'Value': controlplane.get('count', 0)},
-                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
-                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
-                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
-                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
-                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
-                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+                {'Metric': 'CPU Avg (%)', 'Value': f"{cpu_usage.get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{cpu_usage.get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{memory_usage.get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{memory_usage.get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{network_rx.get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{network_tx.get('avg', 0)/1024/1024:.2f}"}
             ]
             
-            # Control Plane Nodes Detail (individual node metrics - no column limit)
+            # Control Plane Nodes Detail - Fixed key names
             cp_nodes = controlplane.get('nodes', [])
             for node in cp_nodes:
-                node_name = node.get('name', 'unknown')
+                node_name = node.get('node', node.get('name', 'unknown'))
                 instance = node.get('instance', 'unknown')
+                
+                # Handle different possible key formats
+                cpu_max = node.get('cpu_max', node.get('max_cpu', node.get('cpu_usage_max', 0)))
+                cpu_avg = node.get('cpu_avg', node.get('avg_cpu', node.get('cpu_usage_avg', 0)))
+                memory_max = node.get('memory_max', node.get('max_memory', node.get('memory_usage_max', 0)))
+                memory_avg = node.get('memory_avg', node.get('avg_memory', node.get('memory_usage_avg', 0)))
+                
+                # Network metrics - check multiple possible key formats
+                network_rx_max = node.get('network_rx_max', node.get('max_network_rx', node.get('network_receive_bytes_max', 0)))
+                network_rx_avg = node.get('network_rx_avg', node.get('avg_network_rx', node.get('network_receive_bytes_avg', 0)))
+                network_tx_max = node.get('network_tx_max', node.get('max_network_tx', node.get('network_transmit_bytes_max', 0)))
+                network_tx_avg = node.get('network_tx_avg', node.get('avg_network_tx', node.get('network_transmit_bytes_avg', 0)))
+                
                 structured['controlplane_nodes_detail'].append({
                     'Node Name': self.truncate_node_name(node_name, 35),
                     'Instance': self.truncate_node_name(instance, 35),
-                    'CPU Max (%)': f"{node.get('cpu_max', 0):.2f}",
-                    'CPU Avg (%)': f"{node.get('cpu_avg', 0):.2f}",
-                    'Memory Max (MB)': f"{node.get('memory_max', 0):.0f}",
-                    'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}",
-                    'Network RX Max (MB/s)': f"{node.get('network_rx_max', 0)/1024/1024:.2f}",
-                    'Network RX Avg (MB/s)': f"{node.get('network_rx_avg', 0)/1024/1024:.2f}",
-                    'Network TX Max (MB/s)': f"{node.get('network_tx_max', 0)/1024/1024:.2f}",
-                    'Network TX Avg (MB/s)': f"{node.get('network_tx_avg', 0)/1024/1024:.2f}",
+                    'CPU Max (%)': f"{cpu_max:.2f}",
+                    'CPU Avg (%)': f"{cpu_avg:.2f}",
+                    'Memory Max (MB)': f"{memory_max:.0f}",
+                    'Memory Avg (MB)': f"{memory_avg:.0f}",
+                    'Network RX Max (MB/s)': f"{network_rx_max/1024/1024:.2f}",
+                    'Network RX Avg (MB/s)': f"{network_rx_avg/1024/1024:.2f}",
+                    'Network TX Max (MB/s)': f"{network_tx_max/1024/1024:.2f}",
+                    'Network TX Avg (MB/s)': f"{network_tx_avg/1024/1024:.2f}",
                     'Role': 'Control Plane'
                 })
         else:
             structured['controlplane_summary'] = [{'Status': 'No Control Plane nodes found', 'Count': 0}]
         
-        # Infra Summary
+        # Infra Summary - Apply same fixes
         infra = groups.get('infra', {})
         if infra.get('count', 0) > 0:
             summary = infra.get('summary', {})
+            cpu_usage = summary.get('cpu_usage', {})
+            memory_usage = summary.get('memory_usage', {})
+            network_rx = summary.get('network_rx', {})
+            network_tx = summary.get('network_tx', {})
+            
             structured['infra_summary'] = [
                 {'Metric': 'Node Count', 'Value': infra.get('count', 0)},
-                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
-                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
-                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
-                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
-                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
-                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+                {'Metric': 'CPU Avg (%)', 'Value': f"{cpu_usage.get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{cpu_usage.get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{memory_usage.get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{memory_usage.get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{network_rx.get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{network_tx.get('avg', 0)/1024/1024:.2f}"}
             ]
             
-            # Infra Nodes Detail (individual node metrics - no column limit)
+            # Infra Nodes Detail - Fixed key names
             infra_nodes = infra.get('nodes', [])
             for node in infra_nodes:
-                node_name = node.get('name', 'unknown')
+                node_name = node.get('node', node.get('name', 'unknown'))
                 instance = node.get('instance', 'unknown')
+                
+                # Handle different possible key formats
+                cpu_max = node.get('cpu_max', node.get('max_cpu', node.get('cpu_usage_max', 0)))
+                cpu_avg = node.get('cpu_avg', node.get('avg_cpu', node.get('cpu_usage_avg', 0)))
+                memory_max = node.get('memory_max', node.get('max_memory', node.get('memory_usage_max', 0)))
+                memory_avg = node.get('memory_avg', node.get('avg_memory', node.get('memory_usage_avg', 0)))
+                
+                # Network metrics
+                network_rx_max = node.get('network_rx_max', node.get('max_network_rx', node.get('network_receive_bytes_max', 0)))
+                network_rx_avg = node.get('network_rx_avg', node.get('avg_network_rx', node.get('network_receive_bytes_avg', 0)))
+                network_tx_max = node.get('network_tx_max', node.get('max_network_tx', node.get('network_transmit_bytes_max', 0)))
+                network_tx_avg = node.get('network_tx_avg', node.get('avg_network_tx', node.get('network_transmit_bytes_avg', 0)))
+                
                 structured['infra_nodes_detail'].append({
                     'Node Name': self.truncate_node_name(node_name, 35),
                     'Instance': self.truncate_node_name(instance, 35),
-                    'CPU Max (%)': f"{node.get('cpu_max', 0):.2f}",
-                    'CPU Avg (%)': f"{node.get('cpu_avg', 0):.2f}",
-                    'Memory Max (MB)': f"{node.get('memory_max', 0):.0f}",
-                    'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}",
-                    'Network RX Max (MB/s)': f"{node.get('network_rx_max', 0)/1024/1024:.2f}",
-                    'Network RX Avg (MB/s)': f"{node.get('network_rx_avg', 0)/1024/1024:.2f}",
-                    'Network TX Max (MB/s)': f"{node.get('network_tx_max', 0)/1024/1024:.2f}",
-                    'Network TX Avg (MB/s)': f"{node.get('network_tx_avg', 0)/1024/1024:.2f}",
+                    'CPU Max (%)': f"{cpu_max:.2f}",
+                    'CPU Avg (%)': f"{cpu_avg:.2f}",
+                    'Memory Max (MB)': f"{memory_max:.0f}",
+                    'Memory Avg (MB)': f"{memory_avg:.0f}",
+                    'Network RX Max (MB/s)': f"{network_rx_max/1024/1024:.2f}",
+                    'Network RX Avg (MB/s)': f"{network_rx_avg/1024/1024:.2f}",
+                    'Network TX Max (MB/s)': f"{network_tx_max/1024/1024:.2f}",
+                    'Network TX Avg (MB/s)': f"{network_tx_avg/1024/1024:.2f}",
                     'Role': 'Infrastructure'
                 })
         else:
             structured['infra_summary'] = [{'Status': 'No Infrastructure nodes found', 'Count': 0}]
         
-        # Worker Summary
+        # Worker Summary - Apply same fixes
         worker = groups.get('worker', {})
         if worker.get('count', 0) > 0:
             summary = worker.get('summary', {})
+            cpu_usage = summary.get('cpu_usage', {})
+            memory_usage = summary.get('memory_usage', {})
+            network_rx = summary.get('network_rx', {})
+            network_tx = summary.get('network_tx', {})
+            
             structured['worker_summary'] = [
                 {'Metric': 'Node Count', 'Value': worker.get('count', 0)},
-                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
-                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
-                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
-                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
-                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
-                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+                {'Metric': 'CPU Avg (%)', 'Value': f"{cpu_usage.get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{cpu_usage.get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{memory_usage.get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{memory_usage.get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{network_rx.get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{network_tx.get('avg', 0)/1024/1024:.2f}"}
             ]
         else:
             structured['worker_summary'] = [{'Status': 'No Worker nodes found', 'Count': 0}]
         
-        # Top 5 CPU usage workers
+        # Top 5 CPU usage workers - Fixed key names
         top_cpu = data.get('top_usage', {}).get('cpu', [])
         for i, node in enumerate(top_cpu[:5], 1):
+            node_name = node.get('node', node.get('name', 'unknown'))
+            instance = node.get('instance', 'unknown')
+            cpu_max = node.get('cpu_max', node.get('max_cpu', node.get('cpu_usage_max', 0)))
+            cpu_avg = node.get('cpu_avg', node.get('avg_cpu', node.get('cpu_usage_avg', 0)))
+            
             structured['top_cpu_workers'].append({
                 'Rank': i,
-                'Node Name': self.truncate_node_name(node.get('name', 'unknown')),
-                'Instance': self.truncate_node_name(node.get('instance', 'unknown')),
-                'CPU Max (%)': f"{node.get('cpu_max', 0):.2f}",
-                'CPU Avg (%)': f"{node.get('cpu_avg', 0):.2f}",
+                'Node Name': self.truncate_node_name(node_name),
+                'Instance': self.truncate_node_name(instance),
+                'CPU Max (%)': f"{cpu_max:.2f}",
+                'CPU Avg (%)': f"{cpu_avg:.2f}",
                 'Role': 'Worker'
             })
         
-        # Top 5 memory usage workers
+        # Top 5 memory usage workers - Fixed key names
         top_memory = data.get('top_usage', {}).get('memory', [])
         for i, node in enumerate(top_memory[:5], 1):
+            node_name = node.get('node', node.get('name', 'unknown'))
+            instance = node.get('instance', 'unknown')
+            memory_max = node.get('memory_max', node.get('max_memory', node.get('memory_usage_max', 0)))
+            memory_avg = node.get('memory_avg', node.get('avg_memory', node.get('memory_usage_avg', 0)))
+            
             structured['top_memory_workers'].append({
                 'Rank': i,
-                'Node Name': self.truncate_node_name(node.get('name', 'unknown')),
-                'Instance': self.truncate_node_name(node.get('instance', 'unknown')),
-                'Memory Max (MB)': f"{node.get('memory_max', 0):.0f}",
-                'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}",
+                'Node Name': self.truncate_node_name(node_name),
+                'Instance': self.truncate_node_name(instance),
+                'Memory Max (MB)': f"{memory_max:.0f}",
+                'Memory Avg (MB)': f"{memory_avg:.0f}",
                 'Role': 'Worker'
             })
         
@@ -160,7 +211,7 @@ class NodesUsageELT(EltUtility):
             structured['top_memory_workers'] = [{'Status': 'No memory usage data available', 'Nodes': 0}]
         
         return structured
-    
+
     def summarize_node_usage(self, data: Dict[str, Any]) -> str:
         """Generate node usage summary with control plane and infra node details"""
         summary = ["Node Usage Analysis:"]
