@@ -214,8 +214,8 @@ class MCPClient:
                                 formated_result=format_results_as_table(json_data)
                             # print("formated_result in call_tool of mcp client:\n",formated_result)
                             # print("#*"*50)
-                            # return json_data
-                            return formated_result
+                            return json_data
+                            # return formated_result
                         except json.JSONDecodeError as json_err:
                             logger.error(f"Failed to parse JSON from tool {tool_name}. Content: '{content_text[:200]}...'")
                             logger.error(f"JSON decode error: {json_err}")

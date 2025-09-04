@@ -148,70 +148,218 @@ class PerformanceDataELT:
         """Extract cluster information from ovnk_benchmark_openshift_cluster_info.py output"""
         structured = {
             'cluster_overview': [],
-            'resource_counts': [],
-            'node_summary': [],
-            'cluster_health': []
+            'resource_summary': [],
+            'node_distribution': [],
+            'master_nodes_detail': [],
+            'worker_nodes_detail': [],
+            'infra_nodes_detail': [],
+            'cluster_health_status': []
         }
         
-        # Cluster overview (limit to 5 most important fields)
+        # Cluster overview (6-column format for comprehensive info)
         structured['cluster_overview'] = [
             {'Property': 'Cluster Name', 'Value': data.get('cluster_name', 'Unknown')},
             {'Property': 'Version', 'Value': data.get('cluster_version', 'Unknown')},
             {'Property': 'Platform', 'Value': data.get('platform', 'Unknown')},
             {'Property': 'Total Nodes', 'Value': data.get('total_nodes', 0)},
-            {'Property': 'API Server', 'Value': data.get('api_server_url', 'Unknown')[:50] + '...' if len(data.get('api_server_url', '')) > 50 else data.get('api_server_url', 'Unknown')}
+            {'Property': 'API Server', 'Value': self._truncate_url(data.get('api_server_url', 'Unknown'))},
+            {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19]}
         ]
         
-        # Resource counts (top 5 most relevant)
-        resource_mapping = [
+        # Resource summary (6-column format showing key resource counts)
+        resource_items = [
             ('namespaces_count', 'Namespaces'),
             ('pods_count', 'Pods'),
             ('services_count', 'Services'),
             ('networkpolicies_count', 'Network Policies'),
-            ('configmaps_count', 'Config Maps')
+            ('secrets_count', 'Secrets'),
+            ('configmaps_count', 'Config Maps'),
+            ('adminnetworkpolicies_count', 'Admin Net Policies'),
+            ('egressfirewalls_count', 'Egress Firewalls'),
+            ('egressips_count', 'Egress IPs'),
+            ('udn_count', 'User Defined Networks')
         ]
         
-        for field, label in resource_mapping:
-            if field in data:
-                structured['resource_counts'].append({
-                    'Resource Type': label,
-                    'Count': data[field]
-                })
+        # Group resources into rows of 2 for better readability
+        for i in range(0, len(resource_items), 2):
+            row_data = {}
+            
+            # First resource in the pair
+            field1, label1 = resource_items[i]
+            row_data['Resource Type 1'] = label1
+            row_data['Count 1'] = data.get(field1, 0)
+            
+            # Second resource in the pair (if exists)
+            if i + 1 < len(resource_items):
+                field2, label2 = resource_items[i + 1]
+                row_data['Resource Type 2'] = label2
+                row_data['Count 2'] = data.get(field2, 0)
+            else:
+                row_data['Resource Type 2'] = '-'
+                row_data['Count 2'] = '-'
+            
+            structured['resource_summary'].append(row_data)
         
-        # Node summary by role
-        node_roles = [
+        # Node distribution summary (6-column format)
+        node_types = [
             ('master_nodes', 'Master'),
-            ('worker_nodes', 'Worker'), 
+            ('worker_nodes', 'Worker'),
             ('infra_nodes', 'Infra')
         ]
         
-        for field, role in node_roles:
+        for field, role in node_types:
             nodes = data.get(field, [])
             if nodes:
-                # Get sample node info
-                sample_node = nodes[0] if nodes else {}
-                structured['node_summary'].append({
-                    'Role': role,
+                # Calculate resource totals for this node type
+                total_cpu = sum(self._parse_cpu_capacity(node.get('cpu_capacity', '0')) for node in nodes)
+                total_memory_gb = sum(self._parse_memory_capacity(node.get('memory_capacity', '0Ki')) for node in nodes)
+                ready_count = sum(1 for node in nodes if 'Ready' in node.get('ready_status', ''))
+                
+                structured['node_distribution'].append({
+                    'Node Type': role,
                     'Count': len(nodes),
-                    'CPU (Sample)': sample_node.get('cpu_capacity', 'Unknown'),
-                    'Memory (Sample)': sample_node.get('memory_capacity', 'Unknown'),
-                    'Status': 'Ready' if all(n.get('ready_status', '').startswith('Ready') for n in nodes) else 'Mixed'
+                    'Ready': ready_count,
+                    'Total CPU': f"{total_cpu} cores",
+                    'Total Memory': f"{total_memory_gb:.0f} GB",
+                    'Health': f"{ready_count}/{len(nodes)}"
+                })
+            else:
+                structured['node_distribution'].append({
+                    'Node Type': role,
+                    'Count': 0,
+                    'Ready': 0,
+                    'Total CPU': '0 cores',
+                    'Total Memory': '0 GB',
+                    'Health': '0/0'
                 })
         
-        # Cluster health indicators
+        # Master nodes detail (6-column format with key info)
+        master_nodes = data.get('master_nodes', [])
+        for node in master_nodes:
+            structured['master_nodes_detail'].append({
+                'Name': self._truncate_node_name(node.get('name', 'unknown')),
+                'CPU': node.get('cpu_capacity', 'Unknown'),
+                'Memory': self._format_memory_display(node.get('memory_capacity', '0Ki')),
+                'Kubelet Ver': node.get('kubelet_version', 'Unknown').replace('v', ''),
+                'Status': node.get('ready_status', 'Unknown'),
+                'Schedulable': 'Yes' if node.get('schedulable', False) else 'No'
+            })
+        
+        # Worker nodes detail (6-column format with key info)
+        worker_nodes = data.get('worker_nodes', [])
+        for node in worker_nodes:
+            structured['worker_nodes_detail'].append({
+                'Name': self._truncate_node_name(node.get('name', 'unknown')),
+                'CPU': node.get('cpu_capacity', 'Unknown'),
+                'Memory': self._format_memory_display(node.get('memory_capacity', '0Ki')),
+                'Kubelet Ver': node.get('kubelet_version', 'Unknown').replace('v', ''),
+                'Status': node.get('ready_status', 'Unknown'),
+                'Schedulable': 'Yes' if node.get('schedulable', False) else 'No'
+            })
+        
+        # Infra nodes detail (if any exist)
+        infra_nodes = data.get('infra_nodes', [])
+        if infra_nodes:
+            for node in infra_nodes:
+                structured['infra_nodes_detail'].append({
+                    'Name': self._truncate_node_name(node.get('name', 'unknown')),
+                    'CPU': node.get('cpu_capacity', 'Unknown'),
+                    'Memory': self._format_memory_display(node.get('memory_capacity', '0Ki')),
+                    'Kubelet Ver': node.get('kubelet_version', 'Unknown').replace('v', ''),
+                    'Status': node.get('ready_status', 'Unknown'),
+                    'Schedulable': 'Yes' if node.get('schedulable', False) else 'No'
+                })
+        
+        # Cluster health status (2-column format for clean overview)
         unavailable_ops = data.get('unavailable_cluster_operators', [])
         mcp_status = data.get('mcp_status', {})
         
-        structured['cluster_health'] = [
-            {'Health Indicator': 'Unavailable Operators', 'Count/Status': len(unavailable_ops)},
-            {'Health Indicator': 'MCP Pools Total', 'Count/Status': len(mcp_status)},
-            {'Health Indicator': 'MCP Updated', 'Count/Status': sum(1 for status in mcp_status.values() if status == 'Updated')},
-            {'Health Indicator': 'MCP Degraded', 'Count/Status': sum(1 for status in mcp_status.values() if status == 'Degraded')},
-            {'Health Indicator': 'Collection Time', 'Count/Status': data.get('collection_timestamp', 'Unknown')[:19]}
+        health_items = [
+            ('Unavailable Operators', len(unavailable_ops)),
+            ('Total MCP Pools', len(mcp_status)),
+            ('MCP Updated Pools', sum(1 for status in mcp_status.values() if status == 'Updated')),
+            ('MCP Degraded Pools', sum(1 for status in mcp_status.values() if status == 'Degraded')),
+            ('MCP Updating Pools', sum(1 for status in mcp_status.values() if status == 'Updating'))
         ]
         
+        for metric, value in health_items:
+            structured['cluster_health_status'].append({
+                'Health Metric': metric,
+                'Value': value
+            })
+        
+        # Add individual unavailable operators if any exist
+        if unavailable_ops:
+            for i, op in enumerate(unavailable_ops[:5], 1):  # Limit to 5 for readability
+                structured['cluster_health_status'].append({
+                    'Health Metric': f'Unavailable Operator {i}',
+                    'Value': op
+                })
+        
+        # Add MCP status details
+        for pool_name, status in mcp_status.items():
+            structured['cluster_health_status'].append({
+                'Health Metric': f'MCP {pool_name.title()}',
+                'Value': status
+            })
+        
         return structured
-    
+
+    def _truncate_url(self, url: str, max_length: int = 50) -> str:
+        """Truncate URL for display"""
+        if len(url) <= max_length:
+            return url
+        return url[:max_length-3] + '...'
+
+    def _truncate_node_name(self, name: str, max_length: int = 25) -> str:
+        """Truncate node name for display"""
+        if len(name) <= max_length:
+            return name
+        # Try to keep the meaningful part (usually the beginning)
+        return name[:max_length-3] + '...'
+
+    def _parse_cpu_capacity(self, cpu_str: str) -> int:
+        """Parse CPU capacity string to integer"""
+        try:
+            # Handle formats like "32", "32000m"
+            if cpu_str.endswith('m'):
+                return int(cpu_str[:-1]) // 1000
+            return int(cpu_str)
+        except (ValueError, TypeError):
+            return 0
+
+    def _parse_memory_capacity(self, memory_str: str) -> float:
+        """Parse memory capacity string to GB"""
+        try:
+            if memory_str.endswith('Ki'):
+                # Convert KiB to GB
+                kib = int(memory_str[:-2])
+                return kib / (1024 * 1024)  # KiB to GB
+            elif memory_str.endswith('Mi'):
+                # Convert MiB to GB  
+                mib = int(memory_str[:-2])
+                return mib / 1024  # MiB to GB
+            elif memory_str.endswith('Gi'):
+                # Already in GiB, close enough to GB
+                return float(memory_str[:-2])
+            else:
+                # Assume it's already in bytes, convert to GB
+                return int(memory_str) / (1024**3)
+        except (ValueError, TypeError):
+            return 0.0
+
+    def _format_memory_display(self, memory_str: str) -> str:
+        """Format memory for display"""
+        try:
+            gb_value = self._parse_memory_capacity(memory_str)
+            if gb_value >= 1:
+                return f"{gb_value:.0f} GB"
+            else:
+                # Show in MB for small values
+                return f"{gb_value * 1024:.0f} MB"
+        except:
+            return memory_str
+
     def _extract_prometheus_basic_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract Prometheus basic info from ovnk_benchmark_prometheus_basicinfo.py output"""
         structured = {
@@ -1285,28 +1433,72 @@ class PerformanceDataELT:
         
         return structured
 
-  # Summary generation functions
     def _summarize_cluster_info(self, data: Dict[str, Any]) -> str:
         """Generate cluster info summary"""
         summary = ["Cluster Information Summary:"]
         
-        if 'cluster_overview' in data:
-            for item in data['cluster_overview']:
-                summary.append(f"• {item['Property']}: {item['Value']}")
+        # Basic cluster info
+        cluster_name = data.get('cluster_overview', [{}])[0].get('Value', 'Unknown')
+        if cluster_name != 'Unknown':
+            summary.append(f"• Cluster: {cluster_name}")
         
-        if 'node_summary' in data:
-            summary.append(" Node Distribution:")
-            for item in data['node_summary']:
-                summary.append(f"• {item['Role']}: {item['Count']} nodes ({item['Status']})")
+        version_info = next((item for item in data.get('cluster_overview', []) if item.get('Property') == 'Version'), {})
+        if version_info.get('Value', 'Unknown') != 'Unknown':
+            summary.append(f"• Version: {version_info['Value']}")
         
-        if 'cluster_health' in data:
-            health_items = data['cluster_health']
-            unavailable_ops = next((item['Count/Status'] for item in health_items if item['Health Indicator'] == 'Unavailable Operators'), 0)
-            if unavailable_ops > 0:
-                summary.append(f" Warning: {unavailable_ops} cluster operators unavailable")
+        platform_info = next((item for item in data.get('cluster_overview', []) if item.get('Property') == 'Platform'), {})
+        if platform_info.get('Value', 'Unknown') != 'Unknown':
+            summary.append(f"• Platform: {platform_info['Value']}")
+        
+        # Node summary
+        if 'node_distribution' in data:
+            total_nodes = sum(item.get('Count', 0) for item in data['node_distribution'])
+            total_ready = sum(item.get('Ready', 0) for item in data['node_distribution'])
+            summary.append(f"• Nodes: {total_ready}/{total_nodes} ready")
+            
+            # Details by type
+            for item in data['node_distribution']:
+                if item.get('Count', 0) > 0:
+                    node_type = item['Node Type']
+                    count = item['Count'] 
+                    ready = item['Ready']
+                    summary.append(f"• {node_type}: {ready}/{count} ready")
+        
+        # Resource highlights
+        if 'resource_summary' in data:
+            # Find pods and namespaces from the resource summary
+            pods_count = 0
+            namespaces_count = 0
+            
+            for row in data['resource_summary']:
+                if row.get('Resource Type 1') == 'Pods':
+                    pods_count = row.get('Count 1', 0)
+                elif row.get('Resource Type 2') == 'Pods':
+                    pods_count = row.get('Count 2', 0)
+                elif row.get('Resource Type 1') == 'Namespaces':
+                    namespaces_count = row.get('Count 1', 0)
+                elif row.get('Resource Type 2') == 'Namespaces':
+                    namespaces_count = row.get('Count 2', 0)
+            
+            if pods_count > 0:
+                summary.append(f"• Pods: {pods_count}")
+            if namespaces_count > 0:
+                summary.append(f"• Namespaces: {namespaces_count}")
+        
+        # Health status
+        if 'cluster_health_status' in data:
+            unavailable_ops = next((item for item in data['cluster_health_status'] 
+                                if item.get('Health Metric') == 'Unavailable Operators'), {})
+            if unavailable_ops.get('Value', 0) > 0:
+                summary.append(f"⚠ {unavailable_ops['Value']} operators unavailable")
+            
+            degraded_mcp = next((item for item in data['cluster_health_status'] 
+                            if item.get('Health Metric') == 'MCP Degraded Pools'), {})
+            if degraded_mcp.get('Value', 0) > 0:
+                summary.append(f"⚠ {degraded_mcp['Value']} MCP pools degraded")
         
         return " ".join(summary)
-    
+
     def _summarize_prometheus_basic_info(self, data: Dict[str, Any]) -> str:
         """Generate Prometheus basic info summary"""
         summary = ["OVN Database Summary:"]
