@@ -226,44 +226,25 @@ class PerformanceDataELT(EltUtility):
             logger.error(f"Failed to transform to DataFrames: {e}")
             return {}
 
-def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-    """Transform structured data into pandas DataFrames"""
-    dataframes = {}
-    
-    try:
-        for key, value in structured_data.items():
-            if isinstance(value, list) and value:
-                df = pd.DataFrame(value)
-                if not df.empty:
-                    # Apply column limiting for most tables, but not for node detail tables or node_distribution
-                    if 'detail' not in key and key != 'node_distribution':
-                        df = self.limit_dataframe_columns(df)
-                    dataframes[key] = df
-                    
-    except Exception as e:
-        logger.error(f"Failed to transform cluster info to DataFrames: {e}")
-    
-    return dataframes
-
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame], data_type: str) -> Dict[str, str]:
-        """Generate HTML tables using specialized modules"""
-        try:
-            if data_type == 'cluster_info':
-                return self.cluster_info_elt.generate_html_tables(dataframes)
-            elif data_type == 'node_usage':
-                return self.node_usage_elt.generate_html_tables(dataframes)
-            elif data_type == 'pod_usage':
-                return self.pods_usage_elt.generate_html_tables(dataframes)
-            else:
-                # Default HTML table generation
-                html_tables = {}
-                for name, df in dataframes.items():
-                    if not df.empty:
-                        html_tables[name] = self.create_html_table(df, name)
-                return html_tables
-        except Exception as e:
-            logger.error(f"Failed to generate HTML tables: {e}")
-            return {}
+            """Generate HTML tables using specialized modules"""
+            try:
+                if data_type == 'cluster_info':
+                    return self.cluster_info_elt.generate_html_tables(dataframes)
+                elif data_type == 'node_usage':
+                    return self.node_usage_elt.generate_html_tables(dataframes)
+                elif data_type == 'pod_usage':
+                    return self.pods_usage_elt.generate_html_tables(dataframes)
+                else:
+                    # Default HTML table generation
+                    html_tables = {}
+                    for name, df in dataframes.items():
+                        if not df.empty:
+                            html_tables[name] = self.create_html_table(df, name)
+                    return html_tables
+            except Exception as e:
+                logger.error(f"Failed to generate HTML tables: {e}")
+                return {}
 
 # Enhanced module functions using the reorganized structure
 def extract_and_transform_mcp_results(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
