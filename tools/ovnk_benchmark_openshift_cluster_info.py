@@ -54,6 +54,7 @@ class ClusterInfo:
     configmaps_count: int
     networkpolicies_count: int
     adminnetworkpolicies_count: int
+    baselineadminnetworkpolicies_count: int
     egressfirewalls_count: int
     egressips_count: int
     udn_count: int
@@ -118,6 +119,7 @@ class ClusterInfoCollector:
                 configmaps_count=resource_counts["configmaps"],
                 networkpolicies_count=resource_counts["networkpolicies"],
                 adminnetworkpolicies_count=resource_counts["adminnetworkpolicies"],
+                baselineadminnetworkpolicies_count=resource_counts["baselineadminnetworkpolicies"],
                 egressfirewalls_count=resource_counts["egressfirewalls"],
                 egressips_count=resource_counts["egressips"],
                 udn_count=resource_counts["udn"],
@@ -290,6 +292,7 @@ class ClusterInfoCollector:
                 "configmaps": len(configmaps.items),
                 "networkpolicies": len(networkpolicies.items),
                 "adminnetworkpolicies": 0,
+                "baselineadminnetworkpolicies": 0,
                 "egressfirewalls": 0,
                 "egressips": 0,
                 "udn": 0
@@ -305,6 +308,17 @@ class ClusterInfoCollector:
                 counts["adminnetworkpolicies"] = len(admin_policies.get("items", []))
             except Exception as e:
                 logger.warning(f"Could not count admin network policies: {e}")
+            
+            # Baseline admin network policies
+            try:
+                baseline_admin_policies = custom_api.list_cluster_custom_object(
+                    group="policy.networking.k8s.io",
+                    version="v1alpha1",
+                    plural="baselineadminnetworkpolicies"
+                )
+                counts["baselineadminnetworkpolicies"] = len(baseline_admin_policies.get("items", []))
+            except Exception as e:
+                logger.warning(f"Could not count baseline admin network policies: {e}")
             
             # Egress firewalls
             try:
@@ -346,7 +360,8 @@ class ClusterInfoCollector:
             return {
                 "namespaces": 0, "pods": 0, "services": 0, "secrets": 0,
                 "configmaps": 0, "networkpolicies": 0, "adminnetworkpolicies": 0,
-                "egressfirewalls": 0, "egressips": 0, "udn": 0
+                "baselineadminnetworkpolicies": 0, "egressfirewalls": 0, "egressips": 0, 
+                "clusteruserdefinednetworks": 0, "userdefinednetworks": 0
             }
     
     async def _get_unavailable_cluster_operators(self) -> List[str]:
