@@ -225,7 +225,7 @@ class PerformanceDataELT:
             {'Metric': 'Config Resources (Secrets+ConfigMaps)', 'Value': data.get('secrets_count', 0) + data.get('configmaps_count', 0)}
         ]
         
-        # Node distribution summary (enhanced with more details)
+        # ENHANCED NODE DISTRIBUTION SUMMARY - Complete table with all requested information
         node_types = [
             ('master_nodes', 'Master'),
             ('worker_nodes', 'Worker'),
@@ -241,6 +241,7 @@ class PerformanceDataELT:
                 ready_count = sum(1 for node in nodes if 'Ready' in node.get('ready_status', ''))
                 schedulable_count = sum(1 for node in nodes if node.get('schedulable', False))
                 
+                # Create the comprehensive node distribution entry with ALL fields
                 structured['node_distribution'].append({
                     'Node Type': role,
                     'Count': len(nodes),
@@ -252,6 +253,7 @@ class PerformanceDataELT:
                     'Avg CPU per Node': f"{total_cpu/len(nodes):.0f}" if len(nodes) > 0 else "0"
                 })
             else:
+                # Handle case where no nodes exist for this type
                 structured['node_distribution'].append({
                     'Node Type': role,
                     'Count': 0,
