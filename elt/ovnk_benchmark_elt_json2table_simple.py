@@ -143,13 +143,14 @@ class PerformanceDataELT:
             return 'cluster_status'
         else:
             return 'generic'
-    
+
     def _extract_cluster_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract cluster information from ovnk_benchmark_openshift_cluster_info.py output"""
         structured = {
             'cluster_overview': [],
             'resource_summary': [],
             'all_resource_counts': [],
+            'collection_metadata': [],
             'node_distribution': [],
             'master_nodes_detail': [],
             'worker_nodes_detail': [],
@@ -169,7 +170,7 @@ class PerformanceDataELT:
             {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19] if data.get('collection_timestamp') else 'Unknown'}
         ]
         
-        # All resource counts in a comprehensive table (2-column format)
+        # Enhanced resource counts table - includes all available resource types from the JSON
         resource_items = [
             ('namespaces_count', 'Namespaces'),
             ('pods_count', 'Pods'), 
@@ -178,30 +179,53 @@ class PerformanceDataELT:
             ('configmaps_count', 'Config Maps'),
             ('networkpolicies_count', 'Network Policies'),
             ('adminnetworkpolicies_count', 'Admin Network Policies'),
+            ('baselineadminnetworkpolicies_count', 'Baseline Admin Network Policies'),
             ('egressfirewalls_count', 'Egress Firewalls'),
             ('egressips_count', 'Egress IPs'),
-            ('udn_count', 'User Defined Networks')
+            ('clusteruserdefinednetworks_count', 'Cluster User Defined Networks'),
+            ('userdefinednetworks_count', 'User Defined Networks')
         ]
         
-        # Create comprehensive resource table (2-column format)
+        # Create comprehensive resource table (flexible column format)
         for field, label in resource_items:
+            count = data.get(field, 0)
+            category = self._categorize_resource_type(label)
             structured['all_resource_counts'].append({
                 'Resource Type': label,
-                'Count': data.get(field, 0)
+                'Count': count,
+                'Category': category,
+                'Status': 'Available' if count >= 0 else 'Error'
             })
         
-        # Enhanced resource summary with totals and categories (2-column format)
+        # Collection metadata table (if available)
+        metadata = data.get('collection_metadata', {})
+        if metadata:
+            structured['collection_metadata'] = [
+                {'Metadata Field': 'Tool Name', 'Value': metadata.get('tool_name', 'Unknown')},
+                {'Metadata Field': 'Collection Duration (s)', 'Value': metadata.get('collection_duration_seconds', 'N/A')},
+                {'Metadata Field': 'Data Freshness', 'Value': metadata.get('data_freshness', 'Unknown')[:19] if metadata.get('data_freshness') else 'Unknown'},
+                {'Metadata Field': 'Total Fields Collected', 'Value': metadata.get('total_fields_collected', 0)},
+                {'Metadata Field': 'Node Details Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_node_details', False) else 'No'},
+                {'Metadata Field': 'Resource Counts Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_resource_counts', False) else 'No'},
+                {'Metadata Field': 'Network Policies Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_network_policies', False) else 'No'},
+                {'Metadata Field': 'Operator Status Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_operator_status', False) else 'No'},
+                {'Metadata Field': 'MCP Status Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_mcp_status', False) else 'No'}
+            ]
+        
+        # Enhanced resource summary with totals and categories 
         total_resources = sum(data.get(field, 0) for field, _ in resource_items)
         network_resources = sum(data.get(field, 0) for field, _ in resource_items if 'network' in field.lower() or 'egress' in field.lower() or 'udn' in field.lower())
+        policy_resources = sum(data.get(field, 0) for field, _ in resource_items if 'policy' in field.lower() or 'policies' in field.lower())
         
         structured['resource_summary'] = [
             {'Metric': 'Total Resources', 'Value': total_resources},
-            {'Metric': 'Network Resources', 'Value': network_resources},
+            {'Metric': 'Network-Related Resources', 'Value': network_resources},
+            {'Metric': 'Policy Resources', 'Value': policy_resources},
             {'Metric': 'Core Resources (Pods+Services)', 'Value': data.get('pods_count', 0) + data.get('services_count', 0)},
             {'Metric': 'Config Resources (Secrets+ConfigMaps)', 'Value': data.get('secrets_count', 0) + data.get('configmaps_count', 0)}
         ]
         
-        # Node distribution summary
+        # ENHANCED NODE DISTRIBUTION SUMMARY - Complete table with all requested information
         node_types = [
             ('master_nodes', 'Master'),
             ('worker_nodes', 'Worker'),
@@ -217,6 +241,7 @@ class PerformanceDataELT:
                 ready_count = sum(1 for node in nodes if 'Ready' in node.get('ready_status', ''))
                 schedulable_count = sum(1 for node in nodes if node.get('schedulable', False))
                 
+                # Create the comprehensive node distribution entry with ALL fields
                 structured['node_distribution'].append({
                     'Node Type': role,
                     'Count': len(nodes),
@@ -224,9 +249,11 @@ class PerformanceDataELT:
                     'Schedulable': schedulable_count,
                     'Total CPU (cores)': total_cpu,
                     'Total Memory (GB)': f"{total_memory_gb:.0f}",
-                    'Health Ratio': f"{ready_count}/{len(nodes)}"
+                    'Health Ratio': f"{ready_count}/{len(nodes)}",
+                    'Avg CPU per Node': f"{total_cpu/len(nodes):.0f}" if len(nodes) > 0 else "0"
                 })
             else:
+                # Handle case where no nodes exist for this type
                 structured['node_distribution'].append({
                     'Node Type': role,
                     'Count': 0,
@@ -234,10 +261,11 @@ class PerformanceDataELT:
                     'Schedulable': 0,
                     'Total CPU (cores)': 0,
                     'Total Memory (GB)': '0',
-                    'Health Ratio': '0/0'
+                    'Health Ratio': '0/0',
+                    'Avg CPU per Node': '0'
                 })
         
-        # Master nodes detail (comprehensive node info)
+        # Master nodes detail (comprehensive node info with more columns)
         master_nodes = data.get('master_nodes', [])
         for node in master_nodes:
             structured['master_nodes_detail'].append({
@@ -254,7 +282,7 @@ class PerformanceDataELT:
                 'Creation Time': node.get('creation_timestamp', 'Unknown')[:10] if node.get('creation_timestamp') else 'Unknown'
             })
         
-        # Worker nodes detail (comprehensive node info)
+        # Worker nodes detail (comprehensive node info with more columns)
         worker_nodes = data.get('worker_nodes', [])
         for node in worker_nodes:
             structured['worker_nodes_detail'].append({
@@ -289,18 +317,18 @@ class PerformanceDataELT:
                     'Creation Time': node.get('creation_timestamp', 'Unknown')[:10] if node.get('creation_timestamp') else 'Unknown'
                 })
         
-        # Cluster health status (2-column format for clean overview)
+        # Cluster health status (enhanced with more metrics)
         unavailable_ops = data.get('unavailable_cluster_operators', [])
         mcp_status = data.get('mcp_status', {})
         
         health_items = [
-            ('Total Cluster Operators', 'All operators combined (estimated)'),
             ('Unavailable Operators', len(unavailable_ops)),
             ('Total MCP Pools', len(mcp_status)),
             ('MCP Updated Pools', sum(1 for status in mcp_status.values() if status == 'Updated')),
             ('MCP Degraded Pools', sum(1 for status in mcp_status.values() if status == 'Degraded')),
             ('MCP Updating Pools', sum(1 for status in mcp_status.values() if status == 'Updating')),
-            ('Overall Cluster Health', 'Healthy' if len(unavailable_ops) == 0 and all(status in ['Updated'] for status in mcp_status.values()) else 'Issues Detected')
+            ('Overall Cluster Health', 'Healthy' if len(unavailable_ops) == 0 and all(status in ['Updated'] for status in mcp_status.values()) else 'Issues Detected'),
+            ('Node Health Score', f"{sum(1 for field, _ in node_types for node in data.get(field, []) if 'Ready' in node.get('ready_status', ''))}/{data.get('total_nodes', 0)}")
         ]
         
         for metric, value in health_items:
@@ -330,6 +358,21 @@ class PerformanceDataELT:
             })
         
         return structured
+
+    def _categorize_resource_type(self, resource_name: str) -> str:
+        """Categorize resource type for better organization"""
+        resource_lower = resource_name.lower()
+        
+        if any(keyword in resource_lower for keyword in ['network', 'policy', 'egress', 'udn']):
+            return 'Network & Security'
+        elif any(keyword in resource_lower for keyword in ['config', 'secret']):
+            return 'Configuration'
+        elif any(keyword in resource_lower for keyword in ['pod', 'service']):
+            return 'Workloads'
+        elif any(keyword in resource_lower for keyword in ['namespace']):
+            return 'Organization'
+        else:
+            return 'Other'
 
     def _truncate_kernel_version(self, kernel_ver: str, max_length: int = 30) -> str:
         """Truncate kernel version for display"""
@@ -409,276 +452,111 @@ class PerformanceDataELT:
         except:
             return memory_str
 
-    def _extract_prometheus_basic_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract Prometheus basic info from ovnk_benchmark_prometheus_basicinfo.py output"""
-        structured = {
-            'ovn_database_metrics': [],
-            'metric_details': []
-        }
-        
-        # OVN database size metrics
-        for metric_name, metric_data in data.items():
-            if isinstance(metric_data, dict) and 'max_value' in metric_data:
-                # Convert bytes to MB for readability
-                max_value = metric_data.get('max_value')
-                if max_value is not None and metric_data.get('unit') == 'bytes':
-                    max_value_mb = round(max_value / (1024 * 1024), 2)
-                    display_value = f"{max_value_mb} MB"
-                else:
-                    display_value = str(max_value) if max_value is not None else 'N/A'
-                
-                structured['ovn_database_metrics'].append({
-                    'Database': metric_name.replace('ovn_', '').replace('_db_size', '').replace('_', ' ').title(),
-                    'Max Size': display_value,
-                    'Unit': metric_data.get('unit', 'unknown'),
-                    'Status': 'Available' if max_value is not None else 'Error'
-                })
-                
-                # Add detailed info if labels exist
-                labels = metric_data.get('labels', {})
-                if labels:
-                    for key, value in list(labels.items())[:3]:  # Limit to 3 label pairs
-                        structured['metric_details'].append({
-                            'Metric': metric_name,
-                            'Label Key': key,
-                            'Label Value': str(value)[:50] + '...' if len(str(value)) > 50 else str(value)
-                        })
-        
-        return structured
-    
-    def _extract_pod_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract pod status metrics"""
-        structured = {
-            'pod_summary': [],
-            'pod_phases': []
-        }
-        
-        # Pod summary
-        structured['pod_summary'] = [
-            {'Metric': 'Total Pods', 'Value': data.get('total_pods', 0)},
-            {'Metric': 'Query Type', 'Value': data.get('query_type', 'unknown')},
-            {'Metric': 'Timestamp', 'Value': str(data.get('timestamp', 'N/A'))[:19]}
-        ]
-        
-        # Pod phases breakdown
-        phases = data.get('phases', {})
-        for phase, count in phases.items():
-            structured['pod_phases'].append({
-                'Phase': phase.title(),
-                'Count': count,
-                'Percentage': f"{(count/data.get('total_pods', 1))*100:.1f}%" if data.get('total_pods', 0) > 0 else '0%'
-            })
-        
-        return structured
-    
-    def _extract_kube_api_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract Kubernetes API metrics from ovnk_benchmark_prometheus_kubeapi.py output"""
-        structured = {
-            'api_summary': [],
-            'latency_metrics': [],
-            'top_latency_readonly': [],
-            'top_latency_mutating': [],
-            'api_activity': []
-        }
-        
-        # API summary
-        metadata = data.get('metadata', {})
-        summary_data = data.get('summary', {})
-        
-        structured['api_summary'] = [
-            {'Property': 'Query Duration', 'Value': data.get('duration', 'Unknown')},
-            {'Property': 'Collection Time', 'Value': data.get('timestamp', 'Unknown')[:19]},
-            {'Property': 'Overall Health', 'Value': f"{summary_data.get('overall_health', 0)}/100"},
-            {'Property': 'Health Status', 'Value': summary_data.get('overall_status', 'unknown').upper()},
-            {'Property': 'Metric Types', 'Value': summary_data.get('total_metric_types', 0)}
-        ]
-        
-        # Extract performance overview from summary
-        perf_overview = summary_data.get('performance_overview', {})
-        
-        # Latency metrics summary
-        if 'readonly_latency' in perf_overview:
-            ro_latency = perf_overview['readonly_latency']
-            structured['latency_metrics'].append({
-                'Operation Type': 'Read-Only',
-                'Avg P99 (s)': f"{ro_latency.get('highest_avg_p99', 0):.4f}",
-                'Max P99 (s)': f"{ro_latency.get('highest_max_p99', 0):.4f}",
-                'Status': ro_latency.get('status', 'unknown').upper()
-            })
-        
-        if 'mutating_latency' in perf_overview:
-            mut_latency = perf_overview['mutating_latency']
-            structured['latency_metrics'].append({
-                'Operation Type': 'Mutating',
-                'Avg P99 (s)': f"{mut_latency.get('highest_avg_p99', 0):.4f}",
-                'Max P99 (s)': f"{mut_latency.get('highest_max_p99', 0):.4f}",
-                'Status': mut_latency.get('status', 'unknown').upper()
-            })
-        
-        # Extract detailed metrics for top latency operations
-        metrics = data.get('metrics', {})
-        
-        # Top read-only latency operations
-        if 'readonly_latency' in metrics:
-            ro_metrics = metrics['readonly_latency']
-            if 'top5_avg' in ro_metrics and 'avg_ro_apicalls_latency' in ro_metrics['top5_avg']:
-                for i, item in enumerate(ro_metrics['top5_avg']['avg_ro_apicalls_latency'][:5], 1):
-                    structured['top_latency_readonly'].append({
-                        'Rank': i,
-                        'Resource:Verb:Scope': item.get('label', 'unknown'),
-                        'Avg Latency (s)': f"{item.get('value', 0):.4f}"
-                    })
-        
-        # Top mutating latency operations
-        if 'mutating_latency' in metrics:
-            mut_metrics = metrics['mutating_latency']
-            if 'top5_avg' in mut_metrics and 'avg_mutating_apicalls_latency' in mut_metrics['top5_avg']:
-                for i, item in enumerate(mut_metrics['top5_avg']['avg_mutating_apicalls_latency'][:5], 1):
-                    structured['top_latency_mutating'].append({
-                        'Rank': i,
-                        'Resource:Verb:Scope': item.get('label', 'unknown'),
-                        'Avg Latency (s)': f"{item.get('value', 0):.4f}"
-                    })
-        
-        # API activity metrics
-        activity_metrics = [
-            ('watch_events', 'Watch Events'),
-            ('cache_list', 'Cache Operations'),
-            ('etcd_requests', 'ETCD Requests')
-        ]
-        
-        for metric_key, metric_label in activity_metrics:
-            if metric_key in metrics:
-                metric_data = metrics[metric_key]
-                if 'top5_avg' in metric_data and metric_data['top5_avg']:
-                    top_item = metric_data['top5_avg'][0] if metric_data['top5_avg'] else {}
-                    structured['api_activity'].append({
-                        'Metric Type': metric_label,
-                        'Top Consumer': top_item.get('label', 'unknown')[:40] + '...' if len(top_item.get('label', '')) > 40 else top_item.get('label', 'unknown'),
-                        'Rate': f"{top_item.get('value', 0):.3f}",
-                        'Unit': metric_data.get('unit', 'unknown')
-                    })
-        
-        return structured
-    
     def _extract_node_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract node usage metrics from prometheus nodes usage output"""
+        """Extract node usage metrics from ovnk_benchmark_prometheus_nodes_usage.py output"""
         structured = {
-            'usage_summary': [],
-            'group_summary': [],
-            'top_cpu_nodes': [],
-            'top_memory_nodes': []
+            'usage_overview': [],
+            'controlplane_summary': [],
+            'infra_summary': [],
+            'worker_summary': [],
+            'top_cpu_workers': [],
+            'top_memory_workers': []
         }
         
-        # Usage summary from metadata
+        # Usage overview from metadata
         metadata = data.get('metadata', {})
-        structured['usage_summary'] = [
+        structured['usage_overview'] = [
             {'Property': 'Query Duration', 'Value': metadata.get('duration', 'Unknown')},
-            {'Property': 'Start Time', 'Value': metadata.get('start_time', 'Unknown')[:19]},
-            {'Property': 'End Time', 'Value': metadata.get('end_time', 'Unknown')[:19]},
-            {'Property': 'Collection Time', 'Value': metadata.get('query_time', 'Unknown')[:19]}
+            {'Property': 'Collection Time', 'Value': metadata.get('query_time', 'Unknown')[:19] if metadata.get('query_time') else 'Unknown'},
+            {'Property': 'Start Time', 'Value': metadata.get('start_time', 'Unknown')[:19] if metadata.get('start_time') else 'Unknown'},
+            {'Property': 'End Time', 'Value': metadata.get('end_time', 'Unknown')[:19] if metadata.get('end_time') else 'Unknown'},
+            {'Property': 'Timezone', 'Value': metadata.get('timezone', 'UTC')}
         ]
         
-        # Group summary (by node role)
+        # Process groups
         groups = data.get('groups', {})
-        for role, group_data in groups.items():
-            if group_data.get('nodes'):
-                summary = group_data.get('summary', {})
-                cpu_summary = summary.get('cpu_usage', {})
-                memory_summary = summary.get('memory_usage', {})
-                
-                structured['group_summary'].append({
-                    'Role': role.title(),
-                    'Node Count': group_data.get('count', 0),
-                    'CPU Avg (%)': f"{cpu_summary.get('avg', 0):.1f}" if cpu_summary.get('avg') is not None else 'N/A',
-                    'CPU Max (%)': f"{cpu_summary.get('max', 0):.1f}" if cpu_summary.get('max') is not None else 'N/A',
-                    'Memory Avg (MB)': f"{memory_summary.get('avg', 0):.0f}" if memory_summary.get('avg') is not None else 'N/A'
-                })
         
-        # Top CPU usage nodes
+        # Control Plane Summary (2-column format)
+        controlplane = groups.get('controlplane', {})
+        if controlplane.get('count', 0) > 0:
+            summary = controlplane.get('summary', {})
+            structured['controlplane_summary'] = [
+                {'Metric': 'Node Count', 'Value': controlplane.get('count', 0)},
+                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+            ]
+        else:
+            structured['controlplane_summary'] = [{'Status': 'No Control Plane nodes found', 'Count': 0}]
+        
+        # Infra Summary (2-column format)
+        infra = groups.get('infra', {})
+        if infra.get('count', 0) > 0:
+            summary = infra.get('summary', {})
+            structured['infra_summary'] = [
+                {'Metric': 'Node Count', 'Value': infra.get('count', 0)},
+                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+            ]
+        else:
+            structured['infra_summary'] = [{'Status': 'No Infrastructure nodes found', 'Count': 0}]
+        
+        # Worker Summary (2-column format)
+        worker = groups.get('worker', {})
+        if worker.get('count', 0) > 0:
+            summary = worker.get('summary', {})
+            structured['worker_summary'] = [
+                {'Metric': 'Node Count', 'Value': worker.get('count', 0)},
+                {'Metric': 'CPU Avg (%)', 'Value': f"{summary.get('cpu_usage', {}).get('avg', 0):.1f}"},
+                {'Metric': 'CPU Max (%)', 'Value': f"{summary.get('cpu_usage', {}).get('max', 0):.1f}"},
+                {'Metric': 'Memory Avg (GB)', 'Value': f"{summary.get('memory_usage', {}).get('avg', 0)/1024:.1f}"},
+                {'Metric': 'Memory Max (GB)', 'Value': f"{summary.get('memory_usage', {}).get('max', 0)/1024:.1f}"},
+                {'Metric': 'Network RX Avg (MB/s)', 'Value': f"{summary.get('network_rx', {}).get('avg', 0)/1024/1024:.2f}"},
+                {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{summary.get('network_tx', {}).get('avg', 0)/1024/1024:.2f}"}
+            ]
+        else:
+            structured['worker_summary'] = [{'Status': 'No Worker nodes found', 'Count': 0}]
+        
+        # Top 5 CPU usage workers (6-column format)
         top_cpu = data.get('top_usage', {}).get('cpu', [])
         for i, node in enumerate(top_cpu[:5], 1):
-            structured['top_cpu_nodes'].append({
+            structured['top_cpu_workers'].append({
                 'Rank': i,
-                'Node Name': node.get('name', 'unknown'),
-                'CPU Max (%)': f"{node.get('cpu_max', 0):.1f}",
-                'CPU Avg (%)': f"{node.get('cpu_avg', 0):.1f}"
+                'Node Name': self._truncate_node_name(node.get('name', 'unknown')),
+                'Instance': self._truncate_node_name(node.get('instance', 'unknown')),
+                'CPU Max (%)': f"{node.get('cpu_max', 0):.2f}",
+                'CPU Avg (%)': f"{node.get('cpu_avg', 0):.2f}",
+                'Role': 'Worker'
             })
         
-        # Top memory usage nodes
+        # Top 5 memory usage workers (6-column format)
         top_memory = data.get('top_usage', {}).get('memory', [])
         for i, node in enumerate(top_memory[:5], 1):
-            structured['top_memory_nodes'].append({
+            structured['top_memory_workers'].append({
                 'Rank': i,
-                'Node Name': node.get('name', 'unknown'),
+                'Node Name': self._truncate_node_name(node.get('name', 'unknown')),
+                'Instance': self._truncate_node_name(node.get('instance', 'unknown')),
                 'Memory Max (MB)': f"{node.get('memory_max', 0):.0f}",
-                'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}"
+                'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}",
+                'Role': 'Worker'
             })
         
-        return structured
-    
-    def _extract_prometheus_basic_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract Prometheus basic info output"""
-        structured = {
-            'database_sizes': []
-        }
+        # If no top usage data, add placeholder
+        if not structured['top_cpu_workers']:
+            structured['top_cpu_workers'] = [{'Status': 'No CPU usage data available', 'Nodes': 0}]
         
-        # Process each metric
-        for metric_name, metric_info in data.items():
-            if isinstance(metric_info, dict):
-                max_value = metric_info.get('max_value')
-                
-                # Convert to readable format
-                if max_value is not None:
-                    if metric_info.get('unit') == 'bytes':
-                        # Convert to MB
-                        size_mb = round(max_value / (1024 * 1024), 2)
-                        display_size = f"{size_mb} MB"
-                    else:
-                        display_size = str(max_value)
-                else:
-                    display_size = 'Error'
-                
-                # Clean up metric name
-                clean_name = metric_name.replace('ovn_', '').replace('_db_size', '').replace('_', ' ').title()
-                
-                structured['database_sizes'].append({
-                    'Database': clean_name,
-                    'Max Size': display_size,
-                    'Status': 'Available' if max_value is not None else 'Error',
-                    'Raw Value': max_value if max_value is not None else 'N/A'
-                })
+        if not structured['top_memory_workers']:
+            structured['top_memory_workers'] = [{'Status': 'No memory usage data available', 'Nodes': 0}]
         
         return structured
-    
-    def _extract_pod_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract pod status metrics"""
-        structured = {
-            'pod_overview': [],
-            'phase_distribution': []
-        }
-        
-        # Pod overview
-        structured['pod_overview'] = [
-            {'Metric': 'Total Pods', 'Value': data.get('total_pods', 0)},
-            {'Metric': 'Query Type', 'Value': data.get('query_type', 'unknown')},
-            {'Metric': 'Timestamp', 'Value': str(data.get('timestamp', 'N/A'))[:19] if data.get('timestamp') else 'N/A'}
-        ]
-        
-        # Phase distribution
-        phases = data.get('phases', {})
-        total_pods = data.get('total_pods', 0)
-        
-        for phase, count in phases.items():
-            percentage = (count / total_pods * 100) if total_pods > 0 else 0
-            structured['phase_distribution'].append({
-                'Phase': phase.title(),
-                'Count': count,
-                'Percentage': f"{percentage:.1f}%"
-            })
-        
-        return structured
-    
+
     def _extract_prometheus_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract generic Prometheus query results"""
         structured = {
@@ -940,137 +818,323 @@ class PerformanceDataELT:
         
         return structured
 
-    def _extract_pod_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract pod usage metrics from ovnk_benchmark_prometheus_pods_usage.py output"""
+    def _extract_node_usage_enhanced(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Enhanced extraction for node usage metrics from ovnk_benchmark_prometheus_nodes_usage.py output"""
         structured = {
-            'usage_summary': [],
-            'top_cpu_pods': [],
-            'top_memory_pods': []
+            'collection_summary': [],
+            'node_group_overview': [],
+            'top_cpu_nodes': [],
+            'top_memory_nodes': [],
+            'network_activity_summary': []
         }
         
-        # Usage collection summary
-        structured['usage_summary'] = [
-            {'Property': 'Collection Type', 'Value': data.get('collection_type', 'instant')},
-            {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19]},
-            {'Property': 'Total Analyzed', 'Value': data.get('total_analyzed', 0)},
-            {'Property': 'Include Containers', 'Value': 'Yes' if data.get('include_containers', False) else 'No'},
-            {'Property': 'Duration', 'Value': data.get('query_info', {}).get('duration', 'N/A')}
+        # Collection summary
+        metadata = data.get('metadata', {})
+        structured['collection_summary'] = [
+            {'Property': 'Query Duration', 'Value': metadata.get('duration', 'Unknown')},
+            {'Property': 'Collection Time', 'Value': metadata.get('query_time', 'Unknown')[:19]},
+            {'Property': 'Start Time', 'Value': metadata.get('start_time', 'Unknown')[:19]},
+            {'Property': 'End Time', 'Value': metadata.get('end_time', 'Unknown')[:19]},
+            {'Property': 'Timezone', 'Value': metadata.get('timezone', 'UTC')}
         ]
         
-        # Top 5 CPU usage
-        cpu_usage = data.get('top_5_cpu_usage', [])
-        for item in cpu_usage:
-            rank = item.get('rank', 0)
-            pod_name = item.get('pod_name', 'unknown')
-            node_name = item.get('node_name', 'unknown')
-            container_name = item.get('container_name', '')
-            
-            # Format pod display name
-            if container_name and container_name != 'unknown':
-                pod_display = f"{pod_name}:{container_name}"
-            else:
-                pod_display = pod_name
-            
-            # Truncate long names
-            if len(pod_display) > 45:
-                pod_display = pod_display[:42] + '...'
-            
-            # Get CPU metric value
-            cpu_value = 'N/A'
-            metrics = item.get('metrics', {})
-            for metric_name, metric_data in metrics.items():
-                if 'cpu' in metric_name.lower():
-                    if data.get('collection_type') == 'instant':
-                        cpu_value = f"{metric_data.get('value', 0):.2f}%"
-                    else:
-                        cpu_value = f"{metric_data.get('max', 0):.2f}%"
-                    break
-            
-            structured['top_cpu_pods'].append({
-                'Rank': rank,
-                'Pod[:Container]': pod_display,
-                'Node': node_name,
-                'CPU Usage': cpu_value,
-                'Namespace': item.get('namespace', 'unknown')
+        # Node group overview (enhanced with network data)
+        groups = data.get('groups', {})
+        for role, group_data in groups.items():
+            if group_data.get('nodes'):
+                summary = group_data.get('summary', {})
+                cpu_summary = summary.get('cpu_usage', {})
+                memory_summary = summary.get('memory_usage', {})
+                network_rx_summary = summary.get('network_rx', {})
+                network_tx_summary = summary.get('network_tx', {})
+                
+                # Format network values (convert bytes/s to MB/s if needed)
+                net_rx_max = network_rx_summary.get('max', 0)
+                net_tx_max = network_tx_summary.get('max', 0)
+                
+                # Convert to MB/s for readability
+                rx_mbps = f"{net_rx_max / (1024*1024):.1f}" if net_rx_max and net_rx_max > 0 else "0.0"
+                tx_mbps = f"{net_tx_max / (1024*1024):.1f}" if net_tx_max and net_tx_max > 0 else "0.0"
+                
+                structured['node_group_overview'].append({
+                    'Role': role.title(),
+                    'Node Count': group_data.get('count', 0),
+                    'CPU Avg (%)': f"{cpu_summary.get('avg', 0):.1f}" if cpu_summary.get('avg') is not None else 'N/A',
+                    'CPU Max (%)': f"{cpu_summary.get('max', 0):.1f}" if cpu_summary.get('max') is not None else 'N/A',
+                    'Memory Max (MB)': f"{memory_summary.get('max', 0):.0f}" if memory_summary.get('max') is not None else 'N/A'
+                })
+        
+        # Top CPU usage nodes (enhanced with more details)
+        top_cpu = data.get('top_usage', {}).get('cpu', [])
+        for i, node in enumerate(top_cpu[:5], 1):
+            structured['top_cpu_nodes'].append({
+                'Rank': i,
+                'Node Name': node.get('name', 'unknown'),
+                'CPU Max (%)': f"{node.get('cpu_max', 0):.1f}",
+                'CPU Avg (%)': f"{node.get('cpu_avg', 0):.1f}",
+                'Instance': node.get('instance', 'unknown').split(':')[0]  # Show just hostname part
             })
         
-        # Top 5 Memory usage  
-        memory_usage = data.get('top_5_memory_usage', [])
-        for item in memory_usage:
-            rank = item.get('rank', 0)
-            pod_name = item.get('pod_name', 'unknown')
-            node_name = item.get('node_name', 'unknown')
-            container_name = item.get('container_name', '')
-            
-            # Format pod display name
-            if container_name and container_name != 'unknown':
-                pod_display = f"{pod_name}:{container_name}"
-            else:
-                pod_display = pod_name
-            
-            # Truncate long names
-            if len(pod_display) > 45:
-                pod_display = pod_display[:42] + '...'
-            
-            # Get memory metric value
-            memory_value = 'N/A'
-            metrics = item.get('metrics', {})
-            for metric_name, metric_data in metrics.items():
-                if 'memory' in metric_name.lower():
-                    if data.get('collection_type') == 'instant':
-                        memory_value = f"{metric_data.get('value', 0)} {metric_data.get('unit', 'B')}"
-                    else:
-                        memory_value = f"{metric_data.get('max', 0)} {metric_data.get('unit', 'B')}"
-                    break
-            
-            structured['top_memory_pods'].append({
-                'Rank': rank,
-                'Pod[:Container]': pod_display,
-                'Node': node_name,
-                'Memory Usage': memory_value,
-                'Namespace': item.get('namespace', 'unknown')
+        # Top memory usage nodes (enhanced with more details)
+        top_memory = data.get('top_usage', {}).get('memory', [])
+        for i, node in enumerate(top_memory[:5], 1):
+            structured['top_memory_nodes'].append({
+                'Rank': i,
+                'Node Name': node.get('name', 'unknown'),
+                'Memory Max (MB)': f"{node.get('memory_max', 0):.0f}",
+                'Memory Avg (MB)': f"{node.get('memory_avg', 0):.0f}",
+                'Instance': node.get('instance', 'unknown').split(':')[0]
             })
+        
+        # Network activity summary (new section for network metrics)
+        worker_group = groups.get('worker', {})
+        if worker_group.get('summary'):
+            worker_summary = worker_group['summary']
+            network_rx = worker_summary.get('network_rx', {})
+            network_tx = worker_summary.get('network_tx', {})
+            
+            structured['network_activity_summary'] = [
+                {'Metric': 'Worker RX Max (MB/s)', 'Value': f"{(network_rx.get('max', 0) or 0) / (1024*1024):.2f}"},
+                {'Metric': 'Worker RX Avg (MB/s)', 'Value': f"{(network_rx.get('avg', 0) or 0) / (1024*1024):.2f}"},
+                {'Metric': 'Worker TX Max (MB/s)', 'Value': f"{(network_tx.get('max', 0) or 0) / (1024*1024):.2f}"},
+                {'Metric': 'Worker TX Avg (MB/s)', 'Value': f"{(network_tx.get('avg', 0) or 0) / (1024*1024):.2f}"}
+            ]
         
         return structured
 
-    
-    def _summarize_kube_api_metrics(self, data: Dict[str, Any]) -> str:
-        """Generate Kubernetes API metrics summary"""
-        summary = ["API Server Performance Summary:"]
+    def _extract_ovs_comprehensive(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract comprehensive OVS metrics from collect_all_ovs_metrics output"""
+        structured = {
+            'ovs_overview': [],
+            'cpu_performance': [],
+            'memory_performance': [],
+            'flow_metrics': [],
+            'connection_health': []
+        }
         
-        if 'api_summary' in data:
-            for item in data['api_summary']:
-                if item['Property'] in ['Overall Health', 'Health Status']:
-                    summary.append(f"• {item['Property']}: {item['Value']}")
+        # OVS Overview
+        structured['ovs_overview'] = [
+            {'Property': 'Collection Type', 'Value': data.get('collection_type', 'unknown')},
+            {'Property': 'Collection Time', 'Value': data.get('timestamp', 'Unknown')[:19]},
+            {'Property': 'CPU Metrics', 'Value': 'Available' if data.get('cpu_usage', {}).get('error') is None else 'Error'},
+            {'Property': 'Memory Metrics', 'Value': 'Available' if data.get('memory_usage', {}).get('error') is None else 'Error'},
+            {'Property': 'Flow Metrics', 'Value': 'Available' if data.get('dp_flows', {}).get('error') is None else 'Error'}
+        ]
         
-        if 'latency_metrics' in data:
-            summary.append(" Latency Performance:")
-            for item in data['latency_metrics']:
-                summary.append(f"• {item['Operation Type']}: {item['Max P99 (s)']}s max ({item['Status']})")
-        
-        return " ".join(summary)
-    
-    def _summarize_pod_status(self, data: Dict[str, Any]) -> str:
-        """Generate pod status summary"""
-        summary = ["Pod Status Summary:"]
-        
-        if 'pod_overview' in data:
-            total_pods = next((item['Value'] for item in data['pod_overview'] if item['Metric'] == 'Total Pods'), 0)
-            summary.append(f"• Total Pods: {total_pods}")
-        
-        if 'phase_distribution' in data:
-            running_pods = next((item for item in data['phase_distribution'] if item['Phase'] == 'Running'), None)
-            if running_pods:
-                summary.append(f"• Running: {running_pods['Count']} ({running_pods['Percentage']})")
+        # CPU Performance (top performers from both components)
+        cpu_data = data.get('cpu_usage', {})
+        if 'error' not in cpu_data:
+            # Combine top performers from both components
+            all_cpu_performers = []
             
-            # Check for problematic phases
-            problem_phases = ['Failed', 'Pending', 'Unknown']
-            for item in data['phase_distribution']:
-                if item['Phase'] in problem_phases and int(item['Count']) > 0:
-                    summary.append(f"• {item['Phase']}: {item['Count']} pods")
+            # Add vSwitchd top performers
+            for item in cpu_data.get('summary', {}).get('ovs_vswitchd_top10', [])[:3]:
+                all_cpu_performers.append({
+                    'Component': 'vSwitchd',
+                    'Node': item.get('node_name', 'unknown'),
+                    'Max CPU (%)': f"{item.get('max', 0):.2f}",
+                    'Performance': 'High' if item.get('max', 0) > 50 else 'Normal'
+                })
+            
+            # Add OVSDB top performers
+            for item in cpu_data.get('summary', {}).get('ovsdb_server_top10', [])[:2]:
+                all_cpu_performers.append({
+                    'Component': 'OVSDB',
+                    'Node': item.get('node_name', 'unknown'),
+                    'Max CPU (%)': f"{item.get('max', 0):.2f}",
+                    'Performance': 'High' if item.get('max', 0) > 30 else 'Normal'
+                })
+            
+            structured['cpu_performance'] = all_cpu_performers[:5]
+        
+        # Memory Performance (top 5 across all components)
+        memory_data = data.get('memory_usage', {})
+        if 'error' not in memory_data:
+            all_memory_performers = []
+            
+            # Add DB memory consumers
+            for item in memory_data.get('summary', {}).get('ovs_db_top10', [])[:3]:
+                all_memory_performers.append({
+                    'Component': 'OVS DB',
+                    'Pod': item.get('pod_name', 'unknown'),
+                    'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
+                    'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
+                })
+            
+            # Add vSwitchd memory consumers
+            for item in memory_data.get('summary', {}).get('ovs_vswitchd_top10', [])[:2]:
+                all_memory_performers.append({
+                    'Component': 'vSwitchd',
+                    'Pod': item.get('pod_name', 'unknown'),
+                    'Max Memory': f"{item.get('max', 0)} {item.get('unit', 'MB')}",
+                    'Avg Memory': f"{item.get('avg', 0)} {item.get('unit', 'MB')}"
+                })
+            
+            structured['memory_performance'] = all_memory_performers[:5]
+        
+        # Flow Metrics Summary
+        dp_flows = data.get('dp_flows', {})
+        bridge_flows = data.get('bridge_flows', {})
+        
+        flow_summary = []
+        
+        # DP Flows
+        if 'error' not in dp_flows:
+            top_dp = dp_flows.get('top_10', [])
+            if top_dp:
+                flow_summary.append({
+                    'Flow Type': 'DP Flows',
+                    'Top Instance': top_dp[0].get('instance', 'unknown'),
+                    'Max Flows': f"{top_dp[0].get('max', 0):.0f}"
+                })
+        
+        # Bridge Flows
+        if 'error' not in bridge_flows:
+            br_int_top = bridge_flows.get('top_10', {}).get('br_int', [])
+            br_ex_top = bridge_flows.get('top_10', {}).get('br_ex', [])
+            
+            if br_int_top:
+                flow_summary.append({
+                    'Flow Type': 'br-int',
+                    'Top Instance': br_int_top[0].get('instance', 'unknown'),
+                    'Max Flows': f"{br_int_top[0].get('max', 0):.0f}"
+                })
+            
+            if br_ex_top:
+                flow_summary.append({
+                    'Flow Type': 'br-ex',
+                    'Top Instance': br_ex_top[0].get('instance', 'unknown'),
+                    'Max Flows': f"{br_ex_top[0].get('max', 0):.0f}"
+                })
+        
+        structured['flow_metrics'] = flow_summary[:5]
+        
+        # Connection Health
+        conn_metrics = data.get('connection_metrics', {})
+        if 'error' not in conn_metrics:
+            metrics_data = conn_metrics.get('connection_metrics', {})
+            
+            for metric_name, metric_info in list(metrics_data.items())[:5]:
+                if 'error' not in metric_info:
+                    structured['connection_health'].append({
+                        'Connection Metric': metric_name.replace('_', ' ').title(),
+                        'Max Count': f"{metric_info.get('max', 0):.0f}",
+                        'Avg Count': f"{metric_info.get('avg', 0):.0f}",
+                        'Status': 'Healthy' if metric_info.get('max', 0) == 0 or 'overflow' not in metric_name else 'Check'
+                    })
+        
+        return structured
+
+    def _summarize_cluster_info(self, data: Dict[str, Any]) -> str:
+        """Generate cluster info summary"""
+        summary = ["Cluster Information Summary:"]
+        
+        # Basic cluster info
+        cluster_name = data.get('cluster_overview', [{}])[0].get('Value', 'Unknown')
+        if cluster_name != 'Unknown':
+            summary.append(f"• Cluster: {cluster_name}")
+        
+        version_info = next((item for item in data.get('cluster_overview', []) if item.get('Property') == 'Version'), {})
+        if version_info.get('Value', 'Unknown') != 'Unknown':
+            summary.append(f"• Version: {version_info['Value']}")
+        
+        platform_info = next((item for item in data.get('cluster_overview', []) if item.get('Property') == 'Platform'), {})
+        if platform_info.get('Value', 'Unknown') != 'Unknown':
+            summary.append(f"• Platform: {platform_info['Value']}")
+        
+        # Node summary
+        if 'node_distribution' in data:
+            total_nodes = sum(item.get('Count', 0) for item in data['node_distribution'])
+            total_ready = sum(item.get('Ready', 0) for item in data['node_distribution'])
+            summary.append(f"• Nodes: {total_ready}/{total_nodes} ready")
+            
+            # Details by type
+            for item in data['node_distribution']:
+                if item.get('Count', 0) > 0:
+                    node_type = item['Node Type']
+                    count = item['Count'] 
+                    ready = item['Ready']
+                    summary.append(f"• {node_type}: {ready}/{count} ready")
+        
+        # Resource highlights
+        if 'resource_summary' in data:
+            # Find pods and namespaces from the resource summary
+            pods_count = 0
+            namespaces_count = 0
+            
+            for row in data['resource_summary']:
+                if row.get('Resource Type 1') == 'Pods':
+                    pods_count = row.get('Count 1', 0)
+                elif row.get('Resource Type 2') == 'Pods':
+                    pods_count = row.get('Count 2', 0)
+                elif row.get('Resource Type 1') == 'Namespaces':
+                    namespaces_count = row.get('Count 1', 0)
+                elif row.get('Resource Type 2') == 'Namespaces':
+                    namespaces_count = row.get('Count 2', 0)
+            
+            if pods_count > 0:
+                summary.append(f"• Pods: {pods_count}")
+            if namespaces_count > 0:
+                summary.append(f"• Namespaces: {namespaces_count}")
+        
+        # Health status
+        if 'cluster_health_status' in data:
+            unavailable_ops = next((item for item in data['cluster_health_status'] 
+                                if item.get('Health Metric') == 'Unavailable Operators'), {})
+            if unavailable_ops.get('Value', 0) > 0:
+                summary.append(f"⚠ {unavailable_ops['Value']} operators unavailable")
+            
+            degraded_mcp = next((item for item in data['cluster_health_status'] 
+                            if item.get('Health Metric') == 'MCP Degraded Pools'), {})
+            if degraded_mcp.get('Value', 0) > 0:
+                summary.append(f"⚠ {degraded_mcp['Value']} MCP pools degraded")
         
         return " ".join(summary)
-    
+   
+    def _summarize_node_usage(self, data: Dict[str, Any]) -> str:
+        """Generate node usage summary"""
+        summary = ["Node Usage Analysis:"]
+        
+        # Collection info
+        if 'usage_overview' in data:
+            duration = next((item['Value'] for item in data['usage_overview'] if item['Property'] == 'Query Duration'), 'Unknown')
+            summary.append(f"• Collection Duration: {duration}")
+        
+        # Node group summaries
+        group_summaries = [
+            ('controlplane_summary', 'Control Plane'),
+            ('infra_summary', 'Infrastructure'),
+            ('worker_summary', 'Worker')
+        ]
+        
+        for table_name, group_name in group_summaries:
+            if table_name in data and data[table_name]:
+                node_count = next((item['Value'] for item in data[table_name] if item['Metric'] == 'Node Count'), 0)
+                if node_count > 0:
+                    cpu_avg = next((item['Value'] for item in data[table_name] if item['Metric'] == 'CPU Avg (%)'), 'N/A')
+                    memory_avg = next((item['Value'] for item in data[table_name] if item['Metric'] == 'Memory Avg (GB)'), 'N/A')
+                    summary.append(f"• {group_name}: {node_count} nodes (CPU: {cpu_avg}%, Memory: {memory_avg}GB)")
+        
+        # Detailed node information
+        if 'controlplane_nodes_detail' in data and data['controlplane_nodes_detail']:
+            cp_count = len(data['controlplane_nodes_detail'])
+            summary.append(f"• Control Plane Details: {cp_count} nodes with individual metrics")
+        
+        if 'infra_nodes_detail' in data and data['infra_nodes_detail']:
+            infra_count = len(data['infra_nodes_detail'])
+            summary.append(f"• Infrastructure Details: {infra_count} nodes with individual metrics")
+        
+        # Top resource consumers
+        if 'top_cpu_workers' in data and data['top_cpu_workers'] and 'Status' not in data['top_cpu_workers'][0]:
+            top_cpu_node = data['top_cpu_workers'][0]
+            summary.append(f"• Top CPU Worker: {top_cpu_node.get('Node Name', 'unknown')} ({top_cpu_node.get('CPU Max (%)', 'N/A')}%)")
+        
+        if 'top_memory_workers' in data and data['top_memory_workers'] and 'Status' not in data['top_memory_workers'][0]:
+            top_memory_node = data['top_memory_workers'][0]
+            summary.append(f"• Top Memory Worker: {top_memory_node.get('Node Name', 'unknown')} ({top_memory_node.get('Memory Max (MB)', 'N/A')}MB)")
+        
+        return " ".join(summary)
+  
     def _summarize_cluster_status(self, data: Dict[str, Any]) -> str:
         """Generate cluster status summary"""
         summary = ["Cluster Status Analysis:"]
@@ -1146,40 +1210,6 @@ class PerformanceDataELT:
                 summary.append(f"• Unavailable Operators: {unavailable}")
         
         return " ".join(summary) 
-
-    def _summarize_ovn_sync_duration(self, data: Dict[str, Any]) -> str:
-        """Generate OVN sync duration summary"""
-        summary = ["OVN Sync Duration Analysis:"]
-        
-        if 'sync_summary' in data:
-            collection_type = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Collection Type'), 'unknown')
-            total_metrics = next((item['Value'] for item in data['sync_summary'] if item['Property'] == 'Total Metrics'), 0)
-            summary.append(f"• Collection: {collection_type} ({total_metrics} metrics)")
-        
-        # Report top performers from each category
-        categories = [
-            ('controller_ready_duration_top5', 'Controller Ready'),
-            ('node_ready_duration_top5', 'Node Ready'),
-            ('controller_sync_duration_top5', 'Sync Duration'),
-            ('controller_sync_service_total_top5', 'Service Rate')
-        ]
-        
-        for table_name, category_name in categories:
-            if table_name in data and data[table_name]:
-                top_item = data[table_name][0]
-                if table_name == 'controller_sync_duration_top5':
-                    identifier = top_item.get('Pod:Resource', 'unknown')
-                else:
-                    identifier = top_item.get('Pod Name', 'unknown')
-                
-                if table_name == 'controller_sync_service_total_top5':
-                    value = top_item.get('Rate', 'N/A')
-                else:
-                    value = top_item.get('Duration', 'N/A')
-                
-                summary.append(f"• Top {category_name}: {identifier} ({value})")
-        
-        return " ".join(summary)
 
     def _summarize_pod_usage(self, data: Dict[str, Any]) -> str:
         """Generate pod usage summary"""

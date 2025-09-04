@@ -488,32 +488,35 @@ class PerformanceDataELT:
                         })
         
         return structured
-    
+
     def _extract_pod_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract pod status metrics"""
         structured = {
-            'pod_summary': [],
-            'pod_phases': []
+            'pod_overview': [],
+            'phase_distribution': []
         }
         
-        # Pod summary
-        structured['pod_summary'] = [
+        # Pod overview
+        structured['pod_overview'] = [
             {'Metric': 'Total Pods', 'Value': data.get('total_pods', 0)},
             {'Metric': 'Query Type', 'Value': data.get('query_type', 'unknown')},
-            {'Metric': 'Timestamp', 'Value': str(data.get('timestamp', 'N/A'))[:19]}
+            {'Metric': 'Timestamp', 'Value': str(data.get('timestamp', 'N/A'))[:19] if data.get('timestamp') else 'N/A'}
         ]
         
-        # Pod phases breakdown
+        # Phase distribution
         phases = data.get('phases', {})
+        total_pods = data.get('total_pods', 0)
+        
         for phase, count in phases.items():
-            structured['pod_phases'].append({
+            percentage = (count / total_pods * 100) if total_pods > 0 else 0
+            structured['phase_distribution'].append({
                 'Phase': phase.title(),
                 'Count': count,
-                'Percentage': f"{(count/data.get('total_pods', 1))*100:.1f}%" if data.get('total_pods', 0) > 0 else '0%'
+                'Percentage': f"{percentage:.1f}%"
             })
         
         return structured
-    
+
     def _extract_kube_api_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract Kubernetes API metrics from ovnk_benchmark_prometheus_kubeapi.py output"""
         structured = {
@@ -706,68 +709,6 @@ class PerformanceDataELT:
         
         if not structured['top_memory_workers']:
             structured['top_memory_workers'] = [{'Status': 'No memory usage data available', 'Nodes': 0}]
-        
-        return structured
-
-    def _extract_prometheus_basic_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract Prometheus basic info output"""
-        structured = {
-            'database_sizes': []
-        }
-        
-        # Process each metric
-        for metric_name, metric_info in data.items():
-            if isinstance(metric_info, dict):
-                max_value = metric_info.get('max_value')
-                
-                # Convert to readable format
-                if max_value is not None:
-                    if metric_info.get('unit') == 'bytes':
-                        # Convert to MB
-                        size_mb = round(max_value / (1024 * 1024), 2)
-                        display_size = f"{size_mb} MB"
-                    else:
-                        display_size = str(max_value)
-                else:
-                    display_size = 'Error'
-                
-                # Clean up metric name
-                clean_name = metric_name.replace('ovn_', '').replace('_db_size', '').replace('_', ' ').title()
-                
-                structured['database_sizes'].append({
-                    'Database': clean_name,
-                    'Max Size': display_size,
-                    'Status': 'Available' if max_value is not None else 'Error',
-                    'Raw Value': max_value if max_value is not None else 'N/A'
-                })
-        
-        return structured
-    
-    def _extract_pod_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract pod status metrics"""
-        structured = {
-            'pod_overview': [],
-            'phase_distribution': []
-        }
-        
-        # Pod overview
-        structured['pod_overview'] = [
-            {'Metric': 'Total Pods', 'Value': data.get('total_pods', 0)},
-            {'Metric': 'Query Type', 'Value': data.get('query_type', 'unknown')},
-            {'Metric': 'Timestamp', 'Value': str(data.get('timestamp', 'N/A'))[:19] if data.get('timestamp') else 'N/A'}
-        ]
-        
-        # Phase distribution
-        phases = data.get('phases', {})
-        total_pods = data.get('total_pods', 0)
-        
-        for phase, count in phases.items():
-            percentage = (count / total_pods * 100) if total_pods > 0 else 0
-            structured['phase_distribution'].append({
-                'Phase': phase.title(),
-                'Count': count,
-                'Percentage': f"{percentage:.1f}%"
-            })
         
         return structured
     
