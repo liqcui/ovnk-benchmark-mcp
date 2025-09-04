@@ -1689,16 +1689,25 @@ class PerformanceDataELT:
                     memory_avg = next((item['Value'] for item in data[table_name] if item['Metric'] == 'Memory Avg (GB)'), 'N/A')
                     summary.append(f"• {group_name}: {node_count} nodes (CPU: {cpu_avg}%, Memory: {memory_avg}GB)")
         
+        # Detailed node information
+        if 'controlplane_nodes_detail' in data and data['controlplane_nodes_detail']:
+            cp_count = len(data['controlplane_nodes_detail'])
+            summary.append(f"• Control Plane Details: {cp_count} nodes with individual metrics")
+        
+        if 'infra_nodes_detail' in data and data['infra_nodes_detail']:
+            infra_count = len(data['infra_nodes_detail'])
+            summary.append(f"• Infrastructure Details: {infra_count} nodes with individual metrics")
+        
         # Top resource consumers
         if 'top_cpu_workers' in data and data['top_cpu_workers'] and 'Status' not in data['top_cpu_workers'][0]:
             top_cpu_node = data['top_cpu_workers'][0]
-            summary.append(f"• Top CPU: {top_cpu_node.get('Node Name', 'unknown')} ({top_cpu_node.get('CPU Max (%)', 'N/A')}%)")
+            summary.append(f"• Top CPU Worker: {top_cpu_node.get('Node Name', 'unknown')} ({top_cpu_node.get('CPU Max (%)', 'N/A')}%)")
         
         if 'top_memory_workers' in data and data['top_memory_workers'] and 'Status' not in data['top_memory_workers'][0]:
             top_memory_node = data['top_memory_workers'][0]
-            summary.append(f"• Top Memory: {top_memory_node.get('Node Name', 'unknown')} ({top_memory_node.get('Memory Max (MB)', 'N/A')}MB)")
+            summary.append(f"• Top Memory Worker: {top_memory_node.get('Node Name', 'unknown')} ({top_memory_node.get('Memory Max (MB)', 'N/A')}MB)")
         
-        return " ".join(summary) 
+        return " ".join(summary)
 
     def _summarize_pod_status(self, data: Dict[str, Any]) -> str:
         """Generate pod status summary"""
