@@ -57,7 +57,8 @@ class ClusterInfo:
     baselineadminnetworkpolicies_count: int
     egressfirewalls_count: int
     egressips_count: int
-    udn_count: int
+    clusteruserdefinednetworks_count: int
+    userdefinednetworks_count: int
     unavailable_cluster_operators: List[str]
     mcp_status: Dict[str, str]
     collection_timestamp: str
@@ -122,7 +123,8 @@ class ClusterInfoCollector:
                 baselineadminnetworkpolicies_count=resource_counts["baselineadminnetworkpolicies"],
                 egressfirewalls_count=resource_counts["egressfirewalls"],
                 egressips_count=resource_counts["egressips"],
-                udn_count=resource_counts["udn"],
+                clusteruserdefinednetworks_count=resource_counts["clusteruserdefinednetworks"],
+                userdefinednetworks_count=resource_counts["userdefinednetworks"],
                 unavailable_cluster_operators=unavailable_operators,
                 mcp_status=mcp_status,
                 collection_timestamp=datetime.now(timezone.utc).isoformat()
@@ -295,7 +297,8 @@ class ClusterInfoCollector:
                 "baselineadminnetworkpolicies": 0,
                 "egressfirewalls": 0,
                 "egressips": 0,
-                "udn": 0
+                "clusteruserdefinednetworks": 0,
+                "userdefinednetworks": 0
             }
             
             # Admin network policies
@@ -342,6 +345,17 @@ class ClusterInfoCollector:
             except Exception as e:
                 logger.warning(f"Could not count egress IPs: {e}")
             
+            # Cluster User Defined Networks (ClusterUDN)
+            try:
+                cluster_udn_resources = custom_api.list_cluster_custom_object(
+                    group="k8s.ovn.org",
+                    version="v1",
+                    plural="clusteruserdefinednetworks"
+                )
+                counts["clusteruserdefinednetworks"] = len(cluster_udn_resources.get("items", []))
+            except Exception as e:
+                logger.warning(f"Could not count cluster user defined networks: {e}")
+            
             # User Defined Networks (UDN)
             try:
                 udn_resources = custom_api.list_cluster_custom_object(
@@ -349,7 +363,7 @@ class ClusterInfoCollector:
                     version="v1",
                     plural="userdefinednetworks"
                 )
-                counts["udn"] = len(udn_resources.get("items", []))
+                counts["userdefinednetworks"] = len(udn_resources.get("items", []))
             except Exception as e:
                 logger.warning(f"Could not count user defined networks: {e}")
             

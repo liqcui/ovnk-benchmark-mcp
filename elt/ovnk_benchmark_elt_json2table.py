@@ -143,167 +143,6 @@ class PerformanceDataELT:
             return 'cluster_status'
         else:
             return 'generic'
-    
-    def _extract_cluster_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract cluster information from ovnk_benchmark_openshift_cluster_info.py output"""
-        structured = {
-            'cluster_overview': [],
-            'resource_summary': [],
-            'node_distribution': [],
-            'master_nodes_detail': [],
-            'worker_nodes_detail': [],
-            'infra_nodes_detail': [],
-            'cluster_health_status': []
-        }
-        
-        # Cluster overview (6-column format for comprehensive info)
-        structured['cluster_overview'] = [
-            {'Property': 'Cluster Name', 'Value': data.get('cluster_name', 'Unknown')},
-            {'Property': 'Version', 'Value': data.get('cluster_version', 'Unknown')},
-            {'Property': 'Platform', 'Value': data.get('platform', 'Unknown')},
-            {'Property': 'Total Nodes', 'Value': data.get('total_nodes', 0)},
-            {'Property': 'API Server', 'Value': self._truncate_url(data.get('api_server_url', 'Unknown'))},
-            {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19]}
-        ]
-        
-        # Resource summary (6-column format showing key resource counts)
-        resource_items = [
-            ('namespaces_count', 'Namespaces'),
-            ('pods_count', 'Pods'),
-            ('services_count', 'Services'),
-            ('networkpolicies_count', 'Network Policies'),
-            ('secrets_count', 'Secrets'),
-            ('configmaps_count', 'Config Maps'),
-            ('adminnetworkpolicies_count', 'Admin Net Policies'),
-            ('egressfirewalls_count', 'Egress Firewalls'),
-            ('egressips_count', 'Egress IPs'),
-            ('udn_count', 'User Defined Networks')
-        ]
-        
-        # Group resources into rows of 2 for better readability
-        for i in range(0, len(resource_items), 2):
-            row_data = {}
-            
-            # First resource in the pair
-            field1, label1 = resource_items[i]
-            row_data['Resource Type 1'] = label1
-            row_data['Count 1'] = data.get(field1, 0)
-            
-            # Second resource in the pair (if exists)
-            if i + 1 < len(resource_items):
-                field2, label2 = resource_items[i + 1]
-                row_data['Resource Type 2'] = label2
-                row_data['Count 2'] = data.get(field2, 0)
-            else:
-                row_data['Resource Type 2'] = '-'
-                row_data['Count 2'] = '-'
-            
-            structured['resource_summary'].append(row_data)
-        
-        # Node distribution summary (6-column format)
-        node_types = [
-            ('master_nodes', 'Master'),
-            ('worker_nodes', 'Worker'),
-            ('infra_nodes', 'Infra')
-        ]
-        
-        for field, role in node_types:
-            nodes = data.get(field, [])
-            if nodes:
-                # Calculate resource totals for this node type
-                total_cpu = sum(self._parse_cpu_capacity(node.get('cpu_capacity', '0')) for node in nodes)
-                total_memory_gb = sum(self._parse_memory_capacity(node.get('memory_capacity', '0Ki')) for node in nodes)
-                ready_count = sum(1 for node in nodes if 'Ready' in node.get('ready_status', ''))
-                
-                structured['node_distribution'].append({
-                    'Node Type': role,
-                    'Count': len(nodes),
-                    'Ready': ready_count,
-                    'Total CPU': f"{total_cpu} cores",
-                    'Total Memory': f"{total_memory_gb:.0f} GB",
-                    'Health': f"{ready_count}/{len(nodes)}"
-                })
-            else:
-                structured['node_distribution'].append({
-                    'Node Type': role,
-                    'Count': 0,
-                    'Ready': 0,
-                    'Total CPU': '0 cores',
-                    'Total Memory': '0 GB',
-                    'Health': '0/0'
-                })
-        
-        # Master nodes detail (6-column format with key info)
-        master_nodes = data.get('master_nodes', [])
-        for node in master_nodes:
-            structured['master_nodes_detail'].append({
-                'Name': self._truncate_node_name(node.get('name', 'unknown')),
-                'CPU': node.get('cpu_capacity', 'Unknown'),
-                'Memory': self._format_memory_display(node.get('memory_capacity', '0Ki')),
-                'Kubelet Ver': node.get('kubelet_version', 'Unknown').replace('v', ''),
-                'Status': node.get('ready_status', 'Unknown'),
-                'Schedulable': 'Yes' if node.get('schedulable', False) else 'No'
-            })
-        
-        # Worker nodes detail (6-column format with key info)
-        worker_nodes = data.get('worker_nodes', [])
-        for node in worker_nodes:
-            structured['worker_nodes_detail'].append({
-                'Name': self._truncate_node_name(node.get('name', 'unknown')),
-                'CPU': node.get('cpu_capacity', 'Unknown'),
-                'Memory': self._format_memory_display(node.get('memory_capacity', '0Ki')),
-                'Kubelet Ver': node.get('kubelet_version', 'Unknown').replace('v', ''),
-                'Status': node.get('ready_status', 'Unknown'),
-                'Schedulable': 'Yes' if node.get('schedulable', False) else 'No'
-            })
-        
-        # Infra nodes detail (if any exist)
-        infra_nodes = data.get('infra_nodes', [])
-        if infra_nodes:
-            for node in infra_nodes:
-                structured['infra_nodes_detail'].append({
-                    'Name': self._truncate_node_name(node.get('name', 'unknown')),
-                    'CPU': node.get('cpu_capacity', 'Unknown'),
-                    'Memory': self._format_memory_display(node.get('memory_capacity', '0Ki')),
-                    'Kubelet Ver': node.get('kubelet_version', 'Unknown').replace('v', ''),
-                    'Status': node.get('ready_status', 'Unknown'),
-                    'Schedulable': 'Yes' if node.get('schedulable', False) else 'No'
-                })
-        
-        # Cluster health status (2-column format for clean overview)
-        unavailable_ops = data.get('unavailable_cluster_operators', [])
-        mcp_status = data.get('mcp_status', {})
-        
-        health_items = [
-            ('Unavailable Operators', len(unavailable_ops)),
-            ('Total MCP Pools', len(mcp_status)),
-            ('MCP Updated Pools', sum(1 for status in mcp_status.values() if status == 'Updated')),
-            ('MCP Degraded Pools', sum(1 for status in mcp_status.values() if status == 'Degraded')),
-            ('MCP Updating Pools', sum(1 for status in mcp_status.values() if status == 'Updating'))
-        ]
-        
-        for metric, value in health_items:
-            structured['cluster_health_status'].append({
-                'Health Metric': metric,
-                'Value': value
-            })
-        
-        # Add individual unavailable operators if any exist
-        if unavailable_ops:
-            for i, op in enumerate(unavailable_ops[:5], 1):  # Limit to 5 for readability
-                structured['cluster_health_status'].append({
-                    'Health Metric': f'Unavailable Operator {i}',
-                    'Value': op
-                })
-        
-        # Add MCP status details
-        for pool_name, status in mcp_status.items():
-            structured['cluster_health_status'].append({
-                'Health Metric': f'MCP {pool_name.title()}',
-                'Value': status
-            })
-        
-        return structured
 
     def _extract_cluster_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract cluster information from ovnk_benchmark_openshift_cluster_info.py output"""
@@ -311,6 +150,7 @@ class PerformanceDataELT:
             'cluster_overview': [],
             'resource_summary': [],
             'all_resource_counts': [],
+            'collection_metadata': [],
             'node_distribution': [],
             'master_nodes_detail': [],
             'worker_nodes_detail': [],
@@ -330,7 +170,7 @@ class PerformanceDataELT:
             {'Property': 'Collection Time', 'Value': data.get('collection_timestamp', 'Unknown')[:19] if data.get('collection_timestamp') else 'Unknown'}
         ]
         
-        # All resource counts in a comprehensive table (2-column format)
+        # Enhanced resource counts table - includes all available resource types from the JSON
         resource_items = [
             ('namespaces_count', 'Namespaces'),
             ('pods_count', 'Pods'), 
@@ -339,30 +179,53 @@ class PerformanceDataELT:
             ('configmaps_count', 'Config Maps'),
             ('networkpolicies_count', 'Network Policies'),
             ('adminnetworkpolicies_count', 'Admin Network Policies'),
+            ('baselineadminnetworkpolicies_count', 'Baseline Admin Network Policies'),
             ('egressfirewalls_count', 'Egress Firewalls'),
             ('egressips_count', 'Egress IPs'),
-            ('udn_count', 'User Defined Networks')
+            ('clusteruserdefinednetworks_count', 'Cluster User Defined Networks'),
+            ('userdefinednetworks_count', 'User Defined Networks')
         ]
         
-        # Create comprehensive resource table (2-column format)
+        # Create comprehensive resource table (flexible column format)
         for field, label in resource_items:
+            count = data.get(field, 0)
+            category = self._categorize_resource_type(label)
             structured['all_resource_counts'].append({
                 'Resource Type': label,
-                'Count': data.get(field, 0)
+                'Count': count,
+                'Category': category,
+                'Status': 'Available' if count >= 0 else 'Error'
             })
         
-        # Enhanced resource summary with totals and categories (2-column format)
+        # Collection metadata table (if available)
+        metadata = data.get('collection_metadata', {})
+        if metadata:
+            structured['collection_metadata'] = [
+                {'Metadata Field': 'Tool Name', 'Value': metadata.get('tool_name', 'Unknown')},
+                {'Metadata Field': 'Collection Duration (s)', 'Value': metadata.get('collection_duration_seconds', 'N/A')},
+                {'Metadata Field': 'Data Freshness', 'Value': metadata.get('data_freshness', 'Unknown')[:19] if metadata.get('data_freshness') else 'Unknown'},
+                {'Metadata Field': 'Total Fields Collected', 'Value': metadata.get('total_fields_collected', 0)},
+                {'Metadata Field': 'Node Details Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_node_details', False) else 'No'},
+                {'Metadata Field': 'Resource Counts Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_resource_counts', False) else 'No'},
+                {'Metadata Field': 'Network Policies Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_network_policies', False) else 'No'},
+                {'Metadata Field': 'Operator Status Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_operator_status', False) else 'No'},
+                {'Metadata Field': 'MCP Status Included', 'Value': 'Yes' if metadata.get('parameters_applied', {}).get('include_mcp_status', False) else 'No'}
+            ]
+        
+        # Enhanced resource summary with totals and categories 
         total_resources = sum(data.get(field, 0) for field, _ in resource_items)
         network_resources = sum(data.get(field, 0) for field, _ in resource_items if 'network' in field.lower() or 'egress' in field.lower() or 'udn' in field.lower())
+        policy_resources = sum(data.get(field, 0) for field, _ in resource_items if 'policy' in field.lower() or 'policies' in field.lower())
         
         structured['resource_summary'] = [
             {'Metric': 'Total Resources', 'Value': total_resources},
-            {'Metric': 'Network Resources', 'Value': network_resources},
+            {'Metric': 'Network-Related Resources', 'Value': network_resources},
+            {'Metric': 'Policy Resources', 'Value': policy_resources},
             {'Metric': 'Core Resources (Pods+Services)', 'Value': data.get('pods_count', 0) + data.get('services_count', 0)},
             {'Metric': 'Config Resources (Secrets+ConfigMaps)', 'Value': data.get('secrets_count', 0) + data.get('configmaps_count', 0)}
         ]
         
-        # Node distribution summary
+        # Node distribution summary (enhanced with more details)
         node_types = [
             ('master_nodes', 'Master'),
             ('worker_nodes', 'Worker'),
@@ -385,7 +248,8 @@ class PerformanceDataELT:
                     'Schedulable': schedulable_count,
                     'Total CPU (cores)': total_cpu,
                     'Total Memory (GB)': f"{total_memory_gb:.0f}",
-                    'Health Ratio': f"{ready_count}/{len(nodes)}"
+                    'Health Ratio': f"{ready_count}/{len(nodes)}",
+                    'Avg CPU per Node': f"{total_cpu/len(nodes):.0f}" if len(nodes) > 0 else "0"
                 })
             else:
                 structured['node_distribution'].append({
@@ -395,10 +259,11 @@ class PerformanceDataELT:
                     'Schedulable': 0,
                     'Total CPU (cores)': 0,
                     'Total Memory (GB)': '0',
-                    'Health Ratio': '0/0'
+                    'Health Ratio': '0/0',
+                    'Avg CPU per Node': '0'
                 })
         
-        # Master nodes detail (comprehensive node info)
+        # Master nodes detail (comprehensive node info with more columns)
         master_nodes = data.get('master_nodes', [])
         for node in master_nodes:
             structured['master_nodes_detail'].append({
@@ -415,7 +280,7 @@ class PerformanceDataELT:
                 'Creation Time': node.get('creation_timestamp', 'Unknown')[:10] if node.get('creation_timestamp') else 'Unknown'
             })
         
-        # Worker nodes detail (comprehensive node info)
+        # Worker nodes detail (comprehensive node info with more columns)
         worker_nodes = data.get('worker_nodes', [])
         for node in worker_nodes:
             structured['worker_nodes_detail'].append({
@@ -450,18 +315,18 @@ class PerformanceDataELT:
                     'Creation Time': node.get('creation_timestamp', 'Unknown')[:10] if node.get('creation_timestamp') else 'Unknown'
                 })
         
-        # Cluster health status (2-column format for clean overview)
+        # Cluster health status (enhanced with more metrics)
         unavailable_ops = data.get('unavailable_cluster_operators', [])
         mcp_status = data.get('mcp_status', {})
         
         health_items = [
-            ('Total Cluster Operators', 'All operators combined (estimated)'),
             ('Unavailable Operators', len(unavailable_ops)),
             ('Total MCP Pools', len(mcp_status)),
             ('MCP Updated Pools', sum(1 for status in mcp_status.values() if status == 'Updated')),
             ('MCP Degraded Pools', sum(1 for status in mcp_status.values() if status == 'Degraded')),
             ('MCP Updating Pools', sum(1 for status in mcp_status.values() if status == 'Updating')),
-            ('Overall Cluster Health', 'Healthy' if len(unavailable_ops) == 0 and all(status in ['Updated'] for status in mcp_status.values()) else 'Issues Detected')
+            ('Overall Cluster Health', 'Healthy' if len(unavailable_ops) == 0 and all(status in ['Updated'] for status in mcp_status.values()) else 'Issues Detected'),
+            ('Node Health Score', f"{sum(1 for field, _ in node_types for node in data.get(field, []) if 'Ready' in node.get('ready_status', ''))}/{data.get('total_nodes', 0)}")
         ]
         
         for metric, value in health_items:
@@ -491,6 +356,21 @@ class PerformanceDataELT:
             })
         
         return structured
+
+    def _categorize_resource_type(self, resource_name: str) -> str:
+        """Categorize resource type for better organization"""
+        resource_lower = resource_name.lower()
+        
+        if any(keyword in resource_lower for keyword in ['network', 'policy', 'egress', 'udn']):
+            return 'Network & Security'
+        elif any(keyword in resource_lower for keyword in ['config', 'secret']):
+            return 'Configuration'
+        elif any(keyword in resource_lower for keyword in ['pod', 'service']):
+            return 'Workloads'
+        elif any(keyword in resource_lower for keyword in ['namespace']):
+            return 'Organization'
+        else:
+            return 'Other'
 
     def _truncate_kernel_version(self, kernel_ver: str, max_length: int = 30) -> str:
         """Truncate kernel version for display"""
