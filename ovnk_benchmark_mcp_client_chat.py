@@ -211,7 +211,8 @@ class MCPClient:
                             if tool_name in ["get_mcp_health_status",]:
                                 formated_result=json_data           
                             else:
-                                formated_result=format_results_as_table(json_data)
+                                # formated_result=format_results_as_table(json_data)
+                                formated_result=json_to_html_table(json_data)
                             # print("formated_result in call_tool of mcp client:\n",formated_result)
                             # print("#*"*50)
                             # return json_data
