@@ -61,41 +61,33 @@ class NodesUsageELT(EltUtility):
                 {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{network_tx.get('avg', 0)/1024/1024:.2f}"}
             ]
             
-            # Control Plane Nodes Detail - Fixed key names
+            # Control Plane Nodes Detail - Extract from nodes array with proper metrics parsing
             cp_nodes = controlplane.get('nodes', [])
             for node in cp_nodes:
-                node_name = node.get('node', node.get('name', 'unknown'))
-                instance = node.get('instance', 'unknown')
+                node_name = node.get('name', 'unknown')
+                metrics = node.get('metrics', {})
                 
-                # Handle different possible key formats
-                cpu_max = node.get('cpu_max', node.get('max_cpu', node.get('cpu_usage_max', 0)))
-                cpu_avg = node.get('cpu_avg', node.get('avg_cpu', node.get('cpu_usage_avg', 0)))
-                memory_max = node.get('memory_max', node.get('max_memory', node.get('memory_usage_max', 0)))
-                memory_avg = node.get('memory_avg', node.get('avg_memory', node.get('memory_usage_avg', 0)))
-                
-                # Network metrics - check multiple possible key formats
-                network_rx_max = node.get('network_rx_max', node.get('max_network_rx', node.get('network_receive_bytes_max', 0)))
-                network_rx_avg = node.get('network_rx_avg', node.get('avg_network_rx', node.get('network_receive_bytes_avg', 0)))
-                network_tx_max = node.get('network_tx_max', node.get('max_network_tx', node.get('network_transmit_bytes_max', 0)))
-                network_tx_avg = node.get('network_tx_avg', node.get('avg_network_tx', node.get('network_transmit_bytes_avg', 0)))
+                cpu_metrics = metrics.get('cpu_usage', {})
+                memory_metrics = metrics.get('memory_usage', {})
+                network_rx_metrics = metrics.get('network_rx', {})
+                network_tx_metrics = metrics.get('network_tx', {})
                 
                 structured['controlplane_nodes_detail'].append({
                     'Node Name': self.truncate_node_name(node_name, 35),
-                    'Instance': self.truncate_node_name(instance, 35),
-                    'CPU Max (%)': f"{cpu_max:.2f}",
-                    'CPU Avg (%)': f"{cpu_avg:.2f}",
-                    'Memory Max (MB)': f"{memory_max:.0f}",
-                    'Memory Avg (MB)': f"{memory_avg:.0f}",
-                    'Network RX Max (MB/s)': f"{network_rx_max/1024/1024:.2f}",
-                    'Network RX Avg (MB/s)': f"{network_rx_avg/1024/1024:.2f}",
-                    'Network TX Max (MB/s)': f"{network_tx_max/1024/1024:.2f}",
-                    'Network TX Avg (MB/s)': f"{network_tx_avg/1024/1024:.2f}",
+                    'CPU Max (%)': f"{cpu_metrics.get('max', 0):.2f}",
+                    'CPU Avg (%)': f"{cpu_metrics.get('avg', 0):.2f}",
+                    'Memory Max (GB)': f"{memory_metrics.get('max', 0)/1024:.2f}",
+                    'Memory Avg (GB)': f"{memory_metrics.get('avg', 0)/1024:.2f}",
+                    'Network RX Max (MB/s)': f"{network_rx_metrics.get('max', 0)/1024/1024:.2f}",
+                    'Network RX Avg (MB/s)': f"{network_rx_metrics.get('avg', 0)/1024/1024:.2f}",
+                    'Network TX Max (MB/s)': f"{network_tx_metrics.get('max', 0)/1024/1024:.2f}",
+                    'Network TX Avg (MB/s)': f"{network_tx_metrics.get('avg', 0)/1024/1024:.2f}",
                     'Role': 'Control Plane'
                 })
         else:
             structured['controlplane_summary'] = [{'Status': 'No Control Plane nodes found', 'Count': 0}]
         
-        # Infra Summary - Apply same fixes
+        # Infra Summary
         infra = groups.get('infra', {})
         if infra.get('count', 0) > 0:
             summary = infra.get('summary', {})
@@ -114,41 +106,33 @@ class NodesUsageELT(EltUtility):
                 {'Metric': 'Network TX Avg (MB/s)', 'Value': f"{network_tx.get('avg', 0)/1024/1024:.2f}"}
             ]
             
-            # Infra Nodes Detail - Fixed key names
+            # Infra Nodes Detail - Extract from nodes array with proper metrics parsing
             infra_nodes = infra.get('nodes', [])
             for node in infra_nodes:
-                node_name = node.get('node', node.get('name', 'unknown'))
-                instance = node.get('instance', 'unknown')
+                node_name = node.get('name', 'unknown')
+                metrics = node.get('metrics', {})
                 
-                # Handle different possible key formats
-                cpu_max = node.get('cpu_max', node.get('max_cpu', node.get('cpu_usage_max', 0)))
-                cpu_avg = node.get('cpu_avg', node.get('avg_cpu', node.get('cpu_usage_avg', 0)))
-                memory_max = node.get('memory_max', node.get('max_memory', node.get('memory_usage_max', 0)))
-                memory_avg = node.get('memory_avg', node.get('avg_memory', node.get('memory_usage_avg', 0)))
-                
-                # Network metrics
-                network_rx_max = node.get('network_rx_max', node.get('max_network_rx', node.get('network_receive_bytes_max', 0)))
-                network_rx_avg = node.get('network_rx_avg', node.get('avg_network_rx', node.get('network_receive_bytes_avg', 0)))
-                network_tx_max = node.get('network_tx_max', node.get('max_network_tx', node.get('network_transmit_bytes_max', 0)))
-                network_tx_avg = node.get('network_tx_avg', node.get('avg_network_tx', node.get('network_transmit_bytes_avg', 0)))
+                cpu_metrics = metrics.get('cpu_usage', {})
+                memory_metrics = metrics.get('memory_usage', {})
+                network_rx_metrics = metrics.get('network_rx', {})
+                network_tx_metrics = metrics.get('network_tx', {})
                 
                 structured['infra_nodes_detail'].append({
                     'Node Name': self.truncate_node_name(node_name, 35),
-                    'Instance': self.truncate_node_name(instance, 35),
-                    'CPU Max (%)': f"{cpu_max:.2f}",
-                    'CPU Avg (%)': f"{cpu_avg:.2f}",
-                    'Memory Max (MB)': f"{memory_max:.0f}",
-                    'Memory Avg (MB)': f"{memory_avg:.0f}",
-                    'Network RX Max (MB/s)': f"{network_rx_max/1024/1024:.2f}",
-                    'Network RX Avg (MB/s)': f"{network_rx_avg/1024/1024:.2f}",
-                    'Network TX Max (MB/s)': f"{network_tx_max/1024/1024:.2f}",
-                    'Network TX Avg (MB/s)': f"{network_tx_avg/1024/1024:.2f}",
+                    'CPU Max (%)': f"{cpu_metrics.get('max', 0):.2f}",
+                    'CPU Avg (%)': f"{cpu_metrics.get('avg', 0):.2f}",
+                    'Memory Max (GB)': f"{memory_metrics.get('max', 0)/1024:.2f}",
+                    'Memory Avg (GB)': f"{memory_metrics.get('avg', 0)/1024:.2f}",
+                    'Network RX Max (MB/s)': f"{network_rx_metrics.get('max', 0)/1024/1024:.2f}",
+                    'Network RX Avg (MB/s)': f"{network_rx_metrics.get('avg', 0)/1024/1024:.2f}",
+                    'Network TX Max (MB/s)': f"{network_tx_metrics.get('max', 0)/1024/1024:.2f}",
+                    'Network TX Avg (MB/s)': f"{network_tx_metrics.get('avg', 0)/1024/1024:.2f}",
                     'Role': 'Infrastructure'
                 })
         else:
             structured['infra_summary'] = [{'Status': 'No Infrastructure nodes found', 'Count': 0}]
         
-        # Worker Summary - Apply same fixes
+        # Worker Summary
         worker = groups.get('worker', {})
         if worker.get('count', 0) > 0:
             summary = worker.get('summary', {})
@@ -169,37 +153,33 @@ class NodesUsageELT(EltUtility):
         else:
             structured['worker_summary'] = [{'Status': 'No Worker nodes found', 'Count': 0}]
         
-        # Top 5 CPU usage workers - Fixed key names
+        # Top 5 CPU usage workers - Extract from top_usage with proper key names (removed instance column)
         top_cpu = data.get('top_usage', {}).get('cpu', [])
         for i, node in enumerate(top_cpu[:5], 1):
-            node_name = node.get('node', node.get('name', 'unknown'))
-            instance = node.get('instance', 'unknown')
-            cpu_max = node.get('cpu_max', node.get('max_cpu', node.get('cpu_usage_max', 0)))
-            cpu_avg = node.get('cpu_avg', node.get('avg_cpu', node.get('cpu_usage_avg', 0)))
+            node_name = node.get('name', 'unknown')
+            cpu_max = node.get('cpu_max', 0)
+            cpu_avg = node.get('cpu_avg', 0)
             
             structured['top_cpu_workers'].append({
                 'Rank': i,
                 'Node Name': self.truncate_node_name(node_name),
-                'Instance': self.truncate_node_name(instance),
                 'CPU Max (%)': f"{cpu_max:.2f}",
                 'CPU Avg (%)': f"{cpu_avg:.2f}",
                 'Role': 'Worker'
             })
         
-        # Top 5 memory usage workers - Fixed key names
+        # Top 5 memory usage workers - Extract from top_usage with proper key names (removed instance column)
         top_memory = data.get('top_usage', {}).get('memory', [])
         for i, node in enumerate(top_memory[:5], 1):
-            node_name = node.get('node', node.get('name', 'unknown'))
-            instance = node.get('instance', 'unknown')
-            memory_max = node.get('memory_max', node.get('max_memory', node.get('memory_usage_max', 0)))
-            memory_avg = node.get('memory_avg', node.get('avg_memory', node.get('memory_usage_avg', 0)))
+            node_name = node.get('name', 'unknown')
+            memory_max = node.get('memory_max', 0)
+            memory_avg = node.get('memory_avg', 0)
             
             structured['top_memory_workers'].append({
                 'Rank': i,
                 'Node Name': self.truncate_node_name(node_name),
-                'Instance': self.truncate_node_name(instance),
-                'Memory Max (MB)': f"{memory_max:.0f}",
-                'Memory Avg (MB)': f"{memory_avg:.0f}",
+                'Memory Max (GB)': f"{memory_max/1024:.2f}",
+                'Memory Avg (GB)': f"{memory_avg/1024:.2f}",
                 'Role': 'Worker'
             })
         
@@ -236,24 +216,59 @@ class NodesUsageELT(EltUtility):
                     memory_avg = next((item['Value'] for item in data[table_name] if item['Metric'] == 'Memory Avg (GB)'), 'N/A')
                     summary.append(f"• {group_name}: {node_count} nodes (CPU: {cpu_avg}%, Memory: {memory_avg}GB)")
         
-        # Detailed node information with HTML table format for control plane and infra nodes
+        # Control Plane detailed table in HTML format (no column limit)
         if 'controlplane_nodes_detail' in data and data['controlplane_nodes_detail']:
             cp_count = len(data['controlplane_nodes_detail'])
-            summary.append(f"• Control Plane Details: {cp_count} nodes with comprehensive metrics (CPU, Memory, Network)")
+            summary.append(f"• Control Plane Details: {cp_count} nodes with comprehensive metrics")
             
-            # Add the first control plane node as example
-            if data['controlplane_nodes_detail']:
-                first_cp = data['controlplane_nodes_detail'][0]
-                summary.append(f"  - Example: {first_cp.get('Node Name', 'unknown')} - CPU Max: {first_cp.get('CPU Max (%)', 'N/A')}%, Memory Max: {first_cp.get('Memory Max (MB)', 'N/A')}MB")
+            # Create HTML table for control plane nodes
+            cp_table_html = '<div class="table-responsive mt-2"><table class="table table-striped table-bordered table-sm">'
+            cp_table_html += '<thead class="thead-dark"><tr>'
+            
+            # Table headers (no instance column)
+            headers = ['Node Name', 'CPU Max (%)', 'CPU Avg (%)', 'Memory Max (GB)', 'Memory Avg (GB)', 
+                    'Network RX Max (MB/s)', 'Network RX Avg (MB/s)', 'Network TX Max (MB/s)', 'Network TX Avg (MB/s)']
+            for header in headers:
+                cp_table_html += f'<th>{header}</th>'
+            cp_table_html += '</tr></thead><tbody>'
+            
+            # Table rows
+            for node in data['controlplane_nodes_detail']:
+                cp_table_html += '<tr>'
+                for header in headers:
+                    value = node.get(header, 'N/A')
+                    cp_table_html += f'<td>{value}</td>'
+                cp_table_html += '</tr>'
+            
+            cp_table_html += '</tbody></table></div>'
+            summary.append(cp_table_html)
         
+        # Infrastructure detailed table in HTML format (no column limit)
         if 'infra_nodes_detail' in data and data['infra_nodes_detail']:
             infra_count = len(data['infra_nodes_detail'])
-            summary.append(f"• Infrastructure Details: {infra_count} nodes with comprehensive metrics (CPU, Memory, Network)")
+            summary.append(f"• Infrastructure Details: {infra_count} nodes with comprehensive metrics")
             
-            # Add the first infra node as example
-            if data['infra_nodes_detail']:
-                first_infra = data['infra_nodes_detail'][0]
-                summary.append(f"  - Example: {first_infra.get('Node Name', 'unknown')} - CPU Max: {first_infra.get('CPU Max (%)', 'N/A')}%, Memory Max: {first_infra.get('Memory Max (MB)', 'N/A')}MB")
+            # Create HTML table for infra nodes
+            infra_table_html = '<div class="table-responsive mt-2"><table class="table table-striped table-bordered table-sm">'
+            infra_table_html += '<thead class="thead-dark"><tr>'
+            
+            # Table headers (no instance column)
+            headers = ['Node Name', 'CPU Max (%)', 'CPU Avg (%)', 'Memory Max (GB)', 'Memory Avg (GB)', 
+                    'Network RX Max (MB/s)', 'Network RX Avg (MB/s)', 'Network TX Max (MB/s)', 'Network TX Avg (MB/s)']
+            for header in headers:
+                infra_table_html += f'<th>{header}</th>'
+            infra_table_html += '</tr></thead><tbody>'
+            
+            # Table rows
+            for node in data['infra_nodes_detail']:
+                infra_table_html += '<tr>'
+                for header in headers:
+                    value = node.get(header, 'N/A')
+                    infra_table_html += f'<td>{value}</td>'
+                infra_table_html += '</tr>'
+            
+            infra_table_html += '</tbody></table></div>'
+            summary.append(infra_table_html)
         
         # Top resource consumers
         if 'top_cpu_workers' in data and data['top_cpu_workers'] and 'Status' not in data['top_cpu_workers'][0]:
@@ -262,10 +277,11 @@ class NodesUsageELT(EltUtility):
         
         if 'top_memory_workers' in data and data['top_memory_workers'] and 'Status' not in data['top_memory_workers'][0]:
             top_memory_node = data['top_memory_workers'][0]
-            summary.append(f"• Top Memory Worker: {top_memory_node.get('Node Name', 'unknown')} ({top_memory_node.get('Memory Max (MB)', 'N/A')}MB)")
+            memory_value = top_memory_node.get('Memory Max (GB)', 'N/A')
+            summary.append(f"• Top Memory Worker: {top_memory_node.get('Node Name', 'unknown')} ({memory_value}GB)")
         
         return " ".join(summary)
-    
+
     def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
         """Transform structured data into pandas DataFrames - no column limits for detail tables"""
         dataframes = {}

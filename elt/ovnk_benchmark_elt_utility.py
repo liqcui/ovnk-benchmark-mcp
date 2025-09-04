@@ -148,15 +148,29 @@ class EltUtility:
         if max_cols is None:
             max_cols = self.max_columns
         
-        # Special handling for specific tables that should show all columns
-        if table_name == 'node_distribution':
+        # Special handling for specific tables that should show all columns or have different limits
+        if table_name in ['controlplane_nodes_detail', 'infra_nodes_detail']:
+            return df  # Don't limit detail tables
+        elif table_name == 'node_distribution':
             return df  # Don't limit node distribution table
+        elif 'top_' in (table_name or ''):
+            max_cols = 4  # Limit top usage tables to 4 columns for readability
+        elif 'summary' in (table_name or ''):
+            max_cols = 2  # Limit summary tables to 2 columns for better readability
             
         if len(df.columns) <= max_cols:
             return df
         
-        # Keep most important columns
-        priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory']
+        # Keep most important columns based on table type
+        if 'summary' in (table_name or ''):
+            # For summary tables, keep metric and value columns
+            priority_cols = ['metric', 'value']
+        elif 'top_' in (table_name or ''):
+            # For top usage tables, keep rank, name, and main metric columns
+            priority_cols = ['rank', 'name', 'node', 'cpu', 'memory', 'max', 'avg']
+        else:
+            # Default priority columns
+            priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory']
         
         # Find priority columns that exist
         keep_cols = []
@@ -170,7 +184,7 @@ class EltUtility:
         while len(keep_cols) < max_cols and remaining_cols:
             keep_cols.append(remaining_cols.pop(0))
         
-        return df[keep_cols[:max_cols]]
+        return df[keep_cols[:max_cols]]        
 
     def create_property_value_table(self, data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Create a property-value table format"""
