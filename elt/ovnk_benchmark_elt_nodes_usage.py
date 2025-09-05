@@ -210,10 +210,10 @@ class NodesUsageELT(EltUtility):
         
         for table_name, group_name in group_summaries:
             if table_name in data and data[table_name]:
-                node_count = next((item['Value'] for item in data[table_name] if item['Metric'] == 'Node Count'), 0)
-                if node_count > 0:
-                    cpu_avg = next((item['Value'] for item in data[table_name] if item['Metric'] == 'CPU Avg (%)'), 'N/A')
-                    memory_avg = next((item['Value'] for item in data[table_name] if item['Metric'] == 'Memory Avg (GB)'), 'N/A')
+                node_count = next((item.get('Value') for item in data[table_name] if item.get('Metric') == 'Node Count'), 0)
+                if isinstance(node_count, (int, float)) and node_count > 0:
+                    cpu_avg = next((item.get('Value') for item in data[table_name] if item.get('Metric') == 'CPU Avg (%)'), 'N/A')
+                    memory_avg = next((item.get('Value') for item in data[table_name] if item.get('Metric') == 'Memory Avg (GB)'), 'N/A')
                     summary.append(f"• {group_name}: {node_count} nodes (CPU: {cpu_avg}%, Memory: {memory_avg}GB)")
         
         # Control Plane detailed table in HTML format (no column limit)

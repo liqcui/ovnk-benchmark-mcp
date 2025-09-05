@@ -264,11 +264,11 @@ class ClusterInfoELT(EltUtility):
         
         # Resource highlights
         if 'resource_summary' in data:
-            total_resources = next((item['Value'] for item in data['resource_summary'] if item['Metric'] == 'Total Resources'), 0)
+            total_resources = next((item.get('Value') for item in data['resource_summary'] if item.get('Metric') == 'Total Resources'), 0)
             if total_resources > 0:
                 summary.append(f"• Total Resources: {total_resources}")
-                
-            core_resources = next((item['Value'] for item in data['resource_summary'] if item['Metric'] == 'Core Resources (Pods+Services)'), 0)
+            
+            core_resources = next((item.get('Value') for item in data['resource_summary'] if item.get('Metric') == 'Core Resources (Pods+Services)'), 0)
             if core_resources > 0:
                 summary.append(f"• Core Resources: {core_resources} (Pods+Services)")
         
