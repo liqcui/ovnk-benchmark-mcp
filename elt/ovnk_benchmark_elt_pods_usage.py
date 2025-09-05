@@ -89,7 +89,7 @@ class PodsUsageELT(EltUtility):
                     'Namespace': namespace
                 })
         
-        # Top 5 Memory usage - simplified view  
+        # Top 5 Memory usage - include both working set (memory_usage) and RSS  
         memory_usage = data.get('top_5_memory_usage', [])
         for item in memory_usage:
             rank = item.get('rank', 0)
@@ -108,40 +108,59 @@ class PodsUsageELT(EltUtility):
             if len(pod_display) > 35:
                 pod_display = pod_display[:32] + '...'
             
-            # Get memory metric value - prioritize memory_usage (working set)
-            memory_value = 'N/A'
+            # Get memory metrics: working set (memory_usage or memory_working_set) and RSS
             metrics = item.get('metrics', {})
-            
-            # Look for memory_usage metric first, then memory_rss
-            memory_metric = metrics.get('memory_usage') or metrics.get('memory_working_set') or metrics.get('memory_rss', {})
-            if memory_metric:
-                unit = memory_metric.get('unit', 'B')
+            ws_metric = metrics.get('memory_usage') or metrics.get('memory_working_set', {})
+            rss_metric = metrics.get('memory_rss', {})
+
+            # Prepare display strings
+            ws_value_str = 'N/A'
+            rss_value_str = 'N/A'
+
+            if ws_metric:
+                ws_unit = ws_metric.get('unit', 'B')
                 if data.get('collection_type') == 'instant':
-                    memory_value = f"{memory_metric.get('value', 0)} {unit}"
+                    ws_value_str = f"{ws_metric.get('value', 0)} {ws_unit}"
                 else:
-                    # For duration queries, show avg/max
-                    avg_val = memory_metric.get('avg', 0)
-                    max_val = memory_metric.get('max', 0)
-                    memory_value = f"{avg_val:.0f} {unit} (max: {max_val:.0f})"
+                    ws_avg = ws_metric.get('avg', 0)
+                    ws_max = ws_metric.get('max', 0)
+                    ws_value_str = f"{ws_avg:.0f} {ws_unit} (max: {ws_max:.0f})"
+
+            if rss_metric:
+                rss_unit = rss_metric.get('unit', 'B')
+                if data.get('collection_type') == 'instant':
+                    rss_value_str = f"{rss_metric.get('value', 0)} {rss_unit}"
+                else:
+                    rss_avg = rss_metric.get('avg', 0)
+                    rss_max = rss_metric.get('max', 0)
+                    rss_value_str = f"{rss_avg:.0f} {rss_unit} (max: {rss_max:.0f})"
             
             structured['top_memory_pods'].append({
                 'Rank': rank,
                 'Pod': self.truncate_text(pod_display, 30),
                 'Node': node_name,
-                'Memory Usage': memory_value
+                'Memory Usage': ws_value_str,
+                'Memory RSS': rss_value_str
             })
             
-            # Detailed Memory metrics for separate table
-            if memory_metric and data.get('collection_type') == 'duration':
-                unit = memory_metric.get('unit', 'MB')
-                structured['memory_detailed'].append({
+            # Detailed Memory metrics for separate table (duration queries)
+            if data.get('collection_type') == 'duration' and (ws_metric or rss_metric):
+                ws_unit = (ws_metric or {}).get('unit', 'MB')
+                rss_unit = (rss_metric or {}).get('unit', 'MB')
+
+                row = {
                     'Pod': self.truncate_text(pod_display, 25),
-                    f'Min {unit}': f"{memory_metric.get('min', 0):.0f}",
-                    f'Avg {unit}': f"{memory_metric.get('avg', 0):.0f}",
-                    f'Max {unit}': f"{memory_metric.get('max', 0):.0f}",
                     'Node': self.truncate_node_name(node_name, 20),
                     'Namespace': namespace
-                })
+                }
+                if ws_metric:
+                    row[f'Avg WS ({ws_unit})'] = f"{ws_metric.get('avg', 0):.0f}"
+                    row[f'Max WS ({ws_unit})'] = f"{ws_metric.get('max', 0):.0f}"
+                if rss_metric:
+                    row[f'Avg RSS ({rss_unit})'] = f"{rss_metric.get('avg', 0):.0f}"
+                    row[f'Max RSS ({rss_unit})'] = f"{rss_metric.get('max', 0):.0f}"
+
+                structured['memory_detailed'].append(row)
         
         return structured
 
