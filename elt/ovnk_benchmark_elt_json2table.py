@@ -19,6 +19,7 @@ from .ovnk_benchmark_elt_pods_usage import PodsUsageELT
 from .ovnk_benchmark_elt_utility import EltUtility
 from .ovnk_benchmark_elt_cluster_stat import ClusterStatELT
 from .ovnk_benchmark_elt_ovs import OvsELT
+from .ovnk_benchmark_elt_sync import syncDurationELT
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class PerformanceDataELT(EltUtility):
         self.pods_usage_elt = PodsUsageELT()
         self.cluster_stat_elt = ClusterStatELT() 
         self.ovs_elt = OvsELT()
+        self.sync_elt = syncDurationELT()
 
     def extract_json_data(self, mcp_results: Union[Dict[str, Any], str]) -> Dict[str, Any]:
         """Extract relevant data from MCP tool results"""
@@ -66,7 +68,9 @@ class PerformanceDataELT(EltUtility):
             elif extracted['data_type'] == 'cluster_status':  # NEW: Handle cluster status
                 extracted['structured_data'] = self.cluster_stat_elt.extract_cluster_stat(mcp_results)
             elif extracted['data_type'] == 'ovs_metrics':  # NEW: Handle OVS metrics
-                extracted['structured_data'] = self.ovs_elt.extract_ovs_data(mcp_results)                
+                extracted['structured_data'] = self.ovs_elt.extract_ovs_data(mcp_results) 
+            elif extracted['data_type'] == 'sync_duration':  # NEW: Handle sync duration
+                extracted['structured_data'] = self.sync_elt.extract_sync_data(mcp_results)
             else:
                 extracted['structured_data'] = self._extract_generic_data(mcp_results)
             
@@ -78,6 +82,11 @@ class PerformanceDataELT(EltUtility):
 
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from MCP results"""
+
+        if ('controller_ready_duration' in data and 'node_ready_duration' in data and 
+            'controller_sync_duration' in data and 'controller_service_rate' in data and 
+            'overall_summary' in data):
+            return 'sync_duration'
 
         # NEW: Check for OVS metrics data
         if ('cpu_usage' in data and 'memory_usage' in data and 
@@ -182,7 +191,9 @@ class PerformanceDataELT(EltUtility):
             elif data_type == 'cluster_status':  # NEW: Handle cluster status summary
                 return self.cluster_stat_elt.summarize_cluster_stat(structured_data)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics summary
-                return self.ovs_elt.summarize_ovs_data(structured_data)                
+                return self.ovs_elt.summarize_ovs_data(structured_data) 
+            elif data_type == 'sync_duration':  # NEW: Handle sync duration summary
+                return self.sync_elt.summarize_sync_data(structured_data)
             elif data_type == 'prometheus_basic_info':
                 return self._summarize_prometheus_basic_info(structured_data)
             elif data_type == 'kube_api_metrics':
@@ -219,7 +230,9 @@ class PerformanceDataELT(EltUtility):
             elif data_type == 'cluster_status':  # NEW: Handle cluster status transformation
                 return self.cluster_stat_elt.transform_to_dataframes(structured_data)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics transformation
-                return self.ovs_elt.transform_to_dataframes(structured_data)                
+                return self.ovs_elt.transform_to_dataframes(structured_data) 
+            elif data_type == 'sync_duration':  # NEW: Handle sync duration transformation
+                return self.sync_elt.transform_to_dataframes(structured_data)                               
             else:
                 # Default transformation for other data types
                 dataframes = {}
@@ -263,7 +276,9 @@ class PerformanceDataELT(EltUtility):
             elif data_type == 'cluster_status':  # NEW: Handle cluster status HTML generation
                 return self.cluster_stat_elt.generate_html_tables(dataframes)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics HTML generation
-                return self.ovs_elt.generate_html_tables(dataframes)                
+                return self.ovs_elt.generate_html_tables(dataframes)     
+            elif data_type == 'sync_duration':  # NEW: Handle sync duration HTML generation
+                return self.sync_elt.generate_html_tables(dataframes)                           
             else:
                 # Default HTML table generation
                 html_tables = {}

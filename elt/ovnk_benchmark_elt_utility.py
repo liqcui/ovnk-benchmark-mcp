@@ -177,7 +177,14 @@ class EltUtility:
             max_cols = 4  # Limit alerts to 4 columns
         elif table_name in ['cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:  # 2-column for status tables
             max_cols = 2
-            
+        # Sync duration specific handling
+        elif table_name in ['controller_ready_duration', 'node_ready_duration', 'controller_service_rate']:
+            max_cols = 4  # Sync duration tables get 4 columns for readability
+        elif table_name == 'controller_sync_duration':
+            max_cols = 5  # Controller sync duration needs 5 columns (rank, pod, resource, node, duration)
+        elif table_name == 'sync_summary':
+            max_cols = 2  # Sync summary - simple property-value format
+
         if len(df.columns) <= max_cols:
             return df
         
@@ -206,6 +213,15 @@ class EltUtility:
         elif 'top_' in (table_name or ''):
             # For top usage tables, keep rank, name, and main metric columns
             priority_cols = ['rank', 'name', 'node', 'cpu', 'memory', 'max', 'avg']
+        elif table_name in ['controller_ready_duration', 'node_ready_duration', 'controller_service_rate']:
+            # For sync duration tables, prioritize rank, pod, node, and duration/rate
+            priority_cols = ['rank', 'pod', 'node', 'duration', 'rate']
+        elif table_name == 'controller_sync_duration':
+            # For controller sync duration, prioritize rank, pod, resource, node, duration
+            priority_cols = ['rank', 'pod', 'resource', 'node', 'duration']
+        elif table_name == 'sync_summary':
+            # For sync summary, prioritize property and value columns
+            priority_cols = ['property', 'value']            
         else:
             # Default priority columns
             priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory', 'metric']
