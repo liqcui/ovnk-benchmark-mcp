@@ -15,7 +15,7 @@ class EltUtility:
     """Common utility functions for ELT modules"""
     
     def __init__(self):
-        self.max_columns = 5
+        self.max_columns = 6
     
     def truncate_text(self, text: str, max_length: int = 30, suffix: str = '...') -> str:
         """Truncate text for display"""
@@ -153,24 +153,38 @@ class EltUtility:
             return df  # Don't limit detail tables
         elif table_name == 'node_distribution':
             return df  # Don't limit node distribution table
+        elif table_name == 'node_groups':  # NEW: Allow more columns for node groups
+            max_cols = 6  # Node groups can show more columns
+        elif table_name == 'network_analysis':  # NEW: Allow more columns for network analysis
+            max_cols = 6  # Network analysis can show more columns
         elif 'top_' in (table_name or ''):
             max_cols = 4  # Limit top usage tables to 4 columns for readability
-        elif 'summary' in (table_name or ''):
-            max_cols = 2  # Limit summary tables to 2 columns for better readability
+        elif 'summary' in (table_name or '') or 'metadata' in (table_name or ''):
+            max_cols = 2  # Limit summary/metadata tables to 2 columns for better readability
+        elif table_name == 'alerts' and len(df.columns) > 4:
+            max_cols = 4  # NEW: Limit alerts to 4 columns
+        elif table_name in ['cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:  # NEW: 2-column for status tables
+            max_cols = 2
             
         if len(df.columns) <= max_cols:
             return df
         
         # Keep most important columns based on table type
-        if 'summary' in (table_name or ''):
-            # For summary tables, keep metric and value columns
-            priority_cols = ['metric', 'value']
+        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:
+            # For summary/status tables, keep metric and value columns
+            priority_cols = ['metric', 'value', 'property']
+        elif table_name == 'node_groups':
+            # For node groups, prioritize key status columns
+            priority_cols = ['node_type', 'node type', 'total', 'ready', 'health_score', 'health score', 'cpu_cores', 'cpu cores']
+        elif table_name == 'alerts':
+            # For alerts, prioritize severity and message
+            priority_cols = ['alert', 'severity', 'component', 'message']
         elif 'top_' in (table_name or ''):
             # For top usage tables, keep rank, name, and main metric columns
             priority_cols = ['rank', 'name', 'node', 'cpu', 'memory', 'max', 'avg']
         else:
             # Default priority columns
-            priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory']
+            priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory', 'metric']
         
         # Find priority columns that exist
         keep_cols = []
@@ -184,7 +198,7 @@ class EltUtility:
         while len(keep_cols) < max_cols and remaining_cols:
             keep_cols.append(remaining_cols.pop(0))
         
-        return df[keep_cols[:max_cols]]        
+        return df[keep_cols[:max_cols]] 
 
     def create_property_value_table(self, data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Create a property-value table format"""
@@ -204,3 +218,4 @@ class EltUtility:
             'schedulable_count': schedulable_count,
             'count': len(nodes)
         }
+

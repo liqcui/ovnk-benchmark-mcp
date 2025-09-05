@@ -30,7 +30,8 @@ class PerformanceDataELT(EltUtility):
         self.cluster_info_elt = ClusterInfoELT()
         self.node_usage_elt = NodesUsageELT()
         self.pods_usage_elt = PodsUsageELT()
-        
+        self.cluster_stat_elt = ClusterStatELT()  # NEW: Add cluster status ELT
+
     def extract_json_data(self, mcp_results: Union[Dict[str, Any], str]) -> Dict[str, Any]:
         """Extract relevant data from MCP tool results"""
         try:
@@ -59,6 +60,8 @@ class PerformanceDataELT(EltUtility):
                 extracted['structured_data'] = self.node_usage_elt.extract_node_usage(mcp_results)
             elif extracted['data_type'] == 'pod_usage':
                 extracted['structured_data'] = self.pods_usage_elt.extract_pod_usage(mcp_results)
+            elif extracted['data_type'] == 'cluster_status':  # NEW: Handle cluster status
+                extracted['structured_data'] = self.cluster_stat_elt.extract_cluster_stat(mcp_results)
             else:
                 extracted['structured_data'] = self._extract_generic_data(mcp_results)
             
@@ -67,10 +70,15 @@ class PerformanceDataELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to extract JSON data: {e}")
             return {'error': str(e), 'raw_data': mcp_results}
-    
+
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from MCP results"""
- 
+        
+        # NEW: Check for cluster status analysis data
+        if ('cluster_health' in data and 'node_groups' in data and 
+            'metadata' in data and data.get('metadata', {}).get('analyzer_type') == 'cluster_status'):
+            return 'cluster_status'
+
         # Check for pod usage metrics
         if ('top_5_cpu_usage' in data and 'top_5_memory_usage' in data and 
             'collection_type' in data and 'total_analyzed' in data):
@@ -99,7 +107,7 @@ class PerformanceDataELT(EltUtility):
             return 'cluster_status'
         else:
             return 'generic'
-     
+
     def _extract_generic_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract generic data with smart column limiting"""
         structured = {'key_value_pairs': []}
@@ -150,8 +158,7 @@ class PerformanceDataELT(EltUtility):
         return structured
 
     # Additional extraction methods for remaining data types would go here
-    # For brevity, I'll include placeholders for the remaining methods
-    
+    # For brevity, I'll include placeholders for the remaining methods   
     def generate_brief_summary(self, structured_data: Dict[str, Any], data_type: str) -> str:
         """Generate a brief textual summary of the data using specialized modules"""
         try:
@@ -161,6 +168,8 @@ class PerformanceDataELT(EltUtility):
                 return self.node_usage_elt.summarize_node_usage(structured_data)
             elif data_type == 'pod_usage':
                 return self.pods_usage_elt.summarize_pod_usage(structured_data)
+            elif data_type == 'cluster_status':  # NEW: Handle cluster status summary
+                return self.cluster_stat_elt.summarize_cluster_stat(structured_data)
             elif data_type == 'prometheus_basic_info':
                 return self._summarize_prometheus_basic_info(structured_data)
             elif data_type == 'kube_api_metrics':
@@ -173,7 +182,7 @@ class PerformanceDataELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to generate summary: {e}")
             return f"Summary generation failed: {str(e)}"
-    
+
     def _summarize_generic(self, data: Dict[str, Any]) -> str:
         """Generate generic summary"""
         summary = ["Data Summary:"]
@@ -194,6 +203,8 @@ class PerformanceDataELT(EltUtility):
                 return self.node_usage_elt.transform_to_dataframes(structured_data)
             elif data_type == 'pod_usage':
                 return self.pods_usage_elt.transform_to_dataframes(structured_data)
+            elif data_type == 'cluster_status':  # NEW: Handle cluster status transformation
+                return self.cluster_stat_elt.transform_to_dataframes(structured_data)
             else:
                 # Default transformation for other data types
                 dataframes = {}
@@ -203,23 +214,6 @@ class PerformanceDataELT(EltUtility):
                         if not df.empty:
                             df = self.limit_dataframe_columns(df)
                             dataframes[key] = df
-                return dataframes
-
-                dataframes = {}
-                
-                try:
-                    for key, value in structured_data.items():
-                        if isinstance(value, list) and value:
-                            df = pd.DataFrame(value)
-                            if not df.empty:
-                                # Apply column limiting for most tables, but not for node detail tables or node_distribution
-                                if 'detail' not in key and key != 'node_distribution':
-                                    df = self.limit_dataframe_columns(df)
-                                dataframes[key] = df
-                                
-                except Exception as e:
-                    logger.error(f"Failed to transform cluster info to DataFrames: {e}")
-                
                 return dataframes
 
         except Exception as e:
@@ -245,6 +239,28 @@ class PerformanceDataELT(EltUtility):
             except Exception as e:
                 logger.error(f"Failed to generate HTML tables: {e}")
                 return {}
+
+    def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame], data_type: str) -> Dict[str, str]:
+        """Generate HTML tables using specialized modules"""
+        try:
+            if data_type == 'cluster_info':
+                return self.cluster_info_elt.generate_html_tables(dataframes)
+            elif data_type == 'node_usage':
+                return self.node_usage_elt.generate_html_tables(dataframes)
+            elif data_type == 'pod_usage':
+                return self.pods_usage_elt.generate_html_tables(dataframes)
+            elif data_type == 'cluster_status':  # NEW: Handle cluster status HTML generation
+                return self.cluster_stat_elt.generate_html_tables(dataframes)
+            else:
+                # Default HTML table generation
+                html_tables = {}
+                for name, df in dataframes.items():
+                    if not df.empty:
+                        html_tables[name] = self.create_html_table(df, name)
+                return html_tables
+        except Exception as e:
+            logger.error(f"Failed to generate HTML tables: {e}")
+            return {}
 
 # Enhanced module functions using the reorganized structure
 def extract_and_transform_mcp_results(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -401,3 +417,21 @@ __all__ = [
     'json_to_html_table',
     'convert_json_to_tables'
 ]
+
+
+
+# =====================================================
+# Updated functions in ovnk_benchmark_elt_json2table.py
+# =====================================================
+
+# Add import for the new module
+from .ovnk_benchmark_elt_cluster_stat import ClusterStatELT
+
+class PerformanceDataELT(EltUtility):
+    """Main Extract, Load, Transform class for performance data"""
+ 
+
+
+
+
+
