@@ -227,7 +227,11 @@ class PerformanceDataELT(EltUtility):
                     if isinstance(value, list) and value:
                         df = pd.DataFrame(value)
                         if not df.empty:
-                            df = self.limit_dataframe_columns(df)
+                            # Do not limit columns for memory_detailed table to keep all columns
+                            if key == 'memory_detailed':
+                                pass
+                            else:
+                                df = self.limit_dataframe_columns(df)
                             dataframes[key] = df
                 return dataframes
 

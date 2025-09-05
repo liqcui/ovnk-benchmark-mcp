@@ -214,9 +214,12 @@ class PodsUsageELT(EltUtility):
                         elif key in ['top_cpu_pods', 'top_memory_pods']:
                             # Top usage tables - limit to 4 columns for readability
                             df = self.limit_dataframe_columns(df, max_cols=4, table_name=key)
-                        elif key in ['cpu_detailed', 'memory_detailed']:
-                            # Detailed tables - allow up to 6 columns but prioritize key metrics
+                        elif key == 'cpu_detailed':
+                            # CPU detailed - keep to a reasonable number of columns
                             df = self.limit_dataframe_columns(df, max_cols=6, table_name=key)
+                        elif key == 'memory_detailed':
+                            # Memory detailed - show all available columns for readability; no limiting
+                            df = df
                         else:
                             # Default limiting
                             df = self.limit_dataframe_columns(df, table_name=key)
