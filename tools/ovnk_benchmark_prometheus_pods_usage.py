@@ -60,18 +60,18 @@ class PodsUsageCollector:
         return '{' + ', '.join(parts) + '}'
     
     def _get_ovn_queries(self, interval: str = "1m") -> Dict[str, str]:
-        """Get OVN-specific PromQL queries with broader container coverage"""
+        """Get OVN-specific PromQL queries aggregated by pod (no container grouping)"""
         return {
-            # Memory queries for OVN pods - use working set which is more accurate for actual usage
-            'memory_usage': 'sum by(pod, container) (container_memory_working_set_bytes{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
-            'memory_rss': 'sum by(pod, container) (container_memory_rss{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
+            # Memory queries for OVN pods - aggregated by pod only
+            'memory_usage': 'sum by(pod) (container_memory_working_set_bytes{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
+            'memory_rss': 'sum by(pod) (container_memory_rss{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
             
-            # CPU queries for OVN pods - use broader matching
-            'cpu_usage': f'sum by(pod, container) (rate(container_cpu_usage_seconds_total{{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}}[{interval}])) * 100',
+            # CPU queries for OVN pods - aggregated by pod only
+            'cpu_usage': f'sum by(pod) (rate(container_cpu_usage_seconds_total{{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}}[{interval}])) * 100',
             
-            # Resource limits for context
-            'memory_limit': 'sum by(pod, container) (container_spec_memory_limit_bytes{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
-            'cpu_limit': 'sum by(pod, container) (container_spec_cpu_quota{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}) / sum by(pod, container) (container_spec_cpu_period{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}) * 100'
+            # Resource limits for context - aggregated by pod only
+            'memory_limit': 'sum by(pod) (container_spec_memory_limit_bytes{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"})',
+            'cpu_limit': 'sum by(pod) (container_spec_cpu_quota{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}) / sum by(pod) (container_spec_cpu_period{namespace=~"openshift-ovn-kubernetes", pod=~"ovnkube-.*", container!="", container!="POD"}) * 100'
         }
     
     async def _get_pod_node_mapping(self, namespace_pattern: str = ".*") -> Dict[str, Dict[str, str]]:
@@ -152,7 +152,7 @@ class PodsUsageCollector:
             container_pattern: Regular expression pattern for container names  
             namespace_pattern: Regular expression pattern for namespace names
             custom_queries: Custom PromQL queries dictionary
-            use_ovn_queries: Use predefined OVN queries
+            use_ovn_queries: Use predefined OVN queries (aggregated by pod, no containers)
             time: Optional specific timestamp (UTC)
             
         Returns:
@@ -165,7 +165,7 @@ class PodsUsageCollector:
                 include_containers = container_pattern != ".*"
             elif use_ovn_queries:
                 queries = self._get_ovn_queries()
-                include_containers = True  # Force container-level analysis for OVN
+                include_containers = False  # Always aggregate by pod for OVN queries
             else:
                 queries = self._get_default_queries(pod_pattern, container_pattern, namespace_pattern)
                 include_containers = container_pattern != ".*"
@@ -251,7 +251,7 @@ class PodsUsageCollector:
             container_pattern: Regular expression pattern for container names
             namespace_pattern: Regular expression pattern for namespace names  
             custom_queries: Custom PromQL queries dictionary
-            use_ovn_queries: Use predefined OVN queries
+            use_ovn_queries: Use predefined OVN queries (aggregated by pod, no containers)
             step: Query resolution step
             end_time: Optional end time (UTC)
             
@@ -269,11 +269,15 @@ class PodsUsageCollector:
             elif use_ovn_queries:
                 rate_window = self._select_rate_window(duration)
                 queries = self._get_ovn_queries(interval=rate_window)
-                include_containers = True  # Force container-level analysis for OVN
+                include_containers = False  # Always aggregate by pod for OVN queries
             else:
                 rate_window = self._select_rate_window(duration)
                 queries = self._get_default_queries(pod_pattern, container_pattern, namespace_pattern, interval=rate_window)
                 include_containers = container_pattern != ".*"
+            
+            # Override include_containers if container_pattern is wildcard
+            if container_pattern == ".*":
+                include_containers = False
             
             # Execute range queries
             results = await self.prometheus_client.query_multiple_range(queries, start_time, actual_end_time, step)

@@ -153,29 +153,36 @@ class EltUtility:
             return df  # Don't limit detail tables
         elif table_name == 'node_distribution':
             return df  # Don't limit node distribution table
-        elif table_name == 'node_groups':  # NEW: Allow more columns for node groups
+        elif table_name == 'node_groups':  # Allow more columns for node groups
             max_cols = 6  # Node groups can show more columns
-        elif table_name == 'network_analysis':  # NEW: Allow more columns for network analysis
+        elif table_name == 'network_analysis':  # Allow more columns for network analysis
             max_cols = 6  # Network analysis can show more columns
-        # NEW: OVS-specific table handling
+        # OVS-specific table handling
         elif table_name in ['cpu_usage_summary', 'memory_usage_summary', 'dp_flows_top', 'bridge_flows_summary']:
             max_cols = 4  # OVS usage tables get 4 columns for readability
         elif table_name in ['connection_metrics']:
-            max_cols = 2  # Connection metrics are simple key-value                        
+            max_cols = 2  # Connection metrics are simple key-value
+        # Pods usage specific handling
+        elif table_name in ['top_cpu_pods', 'top_memory_pods']:
+            max_cols = 4  # Top pods usage tables - 4 columns for readability
+        elif table_name in ['cpu_detailed', 'memory_detailed']:
+            max_cols = 6  # Detailed pods metrics - allow more columns
+        elif table_name == 'usage_summary':
+            max_cols = 2  # Usage summary - simple property-value format                      
         elif 'top_' in (table_name or ''):
             max_cols = 4  # Limit top usage tables to 4 columns for readability
         elif 'summary' in (table_name or '') or 'metadata' in (table_name or ''):
             max_cols = 2  # Limit summary/metadata tables to 2 columns for better readability
         elif table_name == 'alerts' and len(df.columns) > 4:
-            max_cols = 4  # NEW: Limit alerts to 4 columns
-        elif table_name in ['cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:  # NEW: 2-column for status tables
+            max_cols = 4  # Limit alerts to 4 columns
+        elif table_name in ['cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:  # 2-column for status tables
             max_cols = 2
             
         if len(df.columns) <= max_cols:
             return df
         
         # Keep most important columns based on table type
-        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:
+        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status', 'usage_summary']:
             # For summary/status tables, keep metric and value columns
             priority_cols = ['metric', 'value', 'property']
         elif table_name == 'node_groups':
@@ -185,11 +192,17 @@ class EltUtility:
             # For alerts, prioritize severity and message
             priority_cols = ['alert', 'severity', 'component', 'message']
         elif table_name in ['cpu_usage_summary', 'memory_usage_summary']:
-            # NEW: For OVS usage summaries, prioritize component, node/pod, and key metrics
+            # For OVS usage summaries, prioritize component, node/pod, and key metrics
             priority_cols = ['component', 'node', 'pod', 'max', 'avg', 'cpu', 'memory']
         elif table_name in ['dp_flows_top', 'bridge_flows_summary']:
-            # NEW: For flow tables, prioritize instance/bridge and flow counts
-            priority_cols = ['instance', 'bridge', 'max', 'avg', 'flows']            
+            # For flow tables, prioritize instance/bridge and flow counts
+            priority_cols = ['instance', 'bridge', 'max', 'avg', 'flows']
+        elif table_name in ['top_cpu_pods', 'top_memory_pods']:
+            # For top pods usage tables, prioritize rank, pod, and usage metrics
+            priority_cols = ['rank', 'pod', 'cpu', 'memory', 'usage', 'node']
+        elif table_name in ['cpu_detailed', 'memory_detailed']:
+            # For detailed pods metrics, prioritize pod name and key metrics
+            priority_cols = ['pod', 'min', 'avg', 'max', 'node', 'namespace']            
         elif 'top_' in (table_name or ''):
             # For top usage tables, keep rank, name, and main metric columns
             priority_cols = ['rank', 'name', 'node', 'cpu', 'memory', 'max', 'avg']
@@ -209,7 +222,7 @@ class EltUtility:
         while len(keep_cols) < max_cols and remaining_cols:
             keep_cols.append(remaining_cols.pop(0))
         
-        return df[keep_cols[:max_cols]] 
+        return df[keep_cols[:max_cols]]
 
     def create_property_value_table(self, data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Create a property-value table format"""
