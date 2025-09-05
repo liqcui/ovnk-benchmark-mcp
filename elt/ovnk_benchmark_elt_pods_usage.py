@@ -78,11 +78,10 @@ class PodsUsageELT(EltUtility):
                 'CPU Usage': cpu_value
             })
             
-            # Detailed CPU metrics for separate table
+            # Detailed CPU metrics for separate table (omit Min % for readability)
             if cpu_metric and data.get('collection_type') == 'duration':
                 structured['cpu_detailed'].append({
                     'Pod': self.truncate_text(pod_display, 25),
-                    'Min %': f"{cpu_metric.get('min', 0):.2f}",
                     'Avg %': f"{cpu_metric.get('avg', 0):.2f}",
                     'Max %': f"{cpu_metric.get('max', 0):.2f}",
                     'Node': self.truncate_node_name(node_name, 20),

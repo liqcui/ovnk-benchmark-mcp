@@ -225,7 +225,19 @@ class PerformanceDataELT(EltUtility):
                 dataframes = {}
                 for key, value in structured_data.items():
                     if isinstance(value, list) and value:
-                        df = pd.DataFrame(value)
+                        # If this is CPU detailed, drop 'Min %' column if present for readability
+                        if key == 'cpu_detailed':
+                            filtered_rows = []
+                            for row in value:
+                                if isinstance(row, dict) and 'Min %' in row:
+                                    new_row = dict(row)
+                                    new_row.pop('Min %', None)
+                                    filtered_rows.append(new_row)
+                                else:
+                                    filtered_rows.append(row)
+                            df = pd.DataFrame(filtered_rows)
+                        else:
+                            df = pd.DataFrame(value)
                         if not df.empty:
                             # Do not limit columns for memory_detailed table to keep all columns
                             if key == 'memory_detailed':
