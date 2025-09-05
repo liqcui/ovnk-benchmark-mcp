@@ -311,6 +311,9 @@ class ClusterInfoELT(EltUtility):
         
         try:
             for name, df in dataframes.items():
+                # Skip rendering collection metadata as an HTML table
+                if name == 'collection_metadata':
+                    continue
                 if not df.empty:
                     html_tables[name] = self.create_html_table(df, name)
         except Exception as e:
