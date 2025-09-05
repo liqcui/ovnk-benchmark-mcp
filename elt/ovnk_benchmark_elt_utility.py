@@ -157,6 +157,11 @@ class EltUtility:
             max_cols = 6  # Node groups can show more columns
         elif table_name == 'network_analysis':  # NEW: Allow more columns for network analysis
             max_cols = 6  # Network analysis can show more columns
+        # NEW: OVS-specific table handling
+        elif table_name in ['cpu_usage_summary', 'memory_usage_summary', 'dp_flows_top', 'bridge_flows_summary']:
+            max_cols = 4  # OVS usage tables get 4 columns for readability
+        elif table_name in ['connection_metrics']:
+            max_cols = 2  # Connection metrics are simple key-value                        
         elif 'top_' in (table_name or ''):
             max_cols = 4  # Limit top usage tables to 4 columns for readability
         elif 'summary' in (table_name or '') or 'metadata' in (table_name or ''):
@@ -179,6 +184,12 @@ class EltUtility:
         elif table_name == 'alerts':
             # For alerts, prioritize severity and message
             priority_cols = ['alert', 'severity', 'component', 'message']
+        elif table_name in ['cpu_usage_summary', 'memory_usage_summary']:
+            # NEW: For OVS usage summaries, prioritize component, node/pod, and key metrics
+            priority_cols = ['component', 'node', 'pod', 'max', 'avg', 'cpu', 'memory']
+        elif table_name in ['dp_flows_top', 'bridge_flows_summary']:
+            # NEW: For flow tables, prioritize instance/bridge and flow counts
+            priority_cols = ['instance', 'bridge', 'max', 'avg', 'flows']            
         elif 'top_' in (table_name or ''):
             # For top usage tables, keep rank, name, and main metric columns
             priority_cols = ['rank', 'name', 'node', 'cpu', 'memory', 'max', 'avg']

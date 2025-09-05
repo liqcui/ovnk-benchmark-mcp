@@ -18,6 +18,7 @@ from .ovnk_benchmark_elt_nodes_usage import NodesUsageELT
 from .ovnk_benchmark_elt_pods_usage import PodsUsageELT
 from .ovnk_benchmark_elt_utility import EltUtility
 from .ovnk_benchmark_elt_cluster_stat import ClusterStatELT
+from .ovnk_benchmark_elt_ovs import OvsELT
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,8 @@ class PerformanceDataELT(EltUtility):
         self.cluster_info_elt = ClusterInfoELT()
         self.node_usage_elt = NodesUsageELT()
         self.pods_usage_elt = PodsUsageELT()
-        self.cluster_stat_elt = ClusterStatELT()  # NEW: Add cluster status ELT
+        self.cluster_stat_elt = ClusterStatELT() 
+        self.ovs_elt = OvsELT()
 
     def extract_json_data(self, mcp_results: Union[Dict[str, Any], str]) -> Dict[str, Any]:
         """Extract relevant data from MCP tool results"""
@@ -63,6 +65,8 @@ class PerformanceDataELT(EltUtility):
                 extracted['structured_data'] = self.pods_usage_elt.extract_pod_usage(mcp_results)
             elif extracted['data_type'] == 'cluster_status':  # NEW: Handle cluster status
                 extracted['structured_data'] = self.cluster_stat_elt.extract_cluster_stat(mcp_results)
+            elif extracted['data_type'] == 'ovs_metrics':  # NEW: Handle OVS metrics
+                extracted['structured_data'] = self.ovs_elt.extract_ovs_data(mcp_results)                
             else:
                 extracted['structured_data'] = self._extract_generic_data(mcp_results)
             
@@ -74,7 +78,13 @@ class PerformanceDataELT(EltUtility):
 
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from MCP results"""
-        
+
+        # NEW: Check for OVS metrics data
+        if ('cpu_usage' in data and 'memory_usage' in data and 
+            'dp_flows' in data and 'bridge_flows' in data and 
+            'connection_metrics' in data):
+            return 'ovs_metrics'
+
         # NEW: Check for cluster status analysis data
         if ('cluster_health' in data and 'node_groups' in data and 
             'metadata' in data and data.get('metadata', {}).get('analyzer_type') == 'cluster_status'):
@@ -171,6 +181,8 @@ class PerformanceDataELT(EltUtility):
                 return self.pods_usage_elt.summarize_pod_usage(structured_data)
             elif data_type == 'cluster_status':  # NEW: Handle cluster status summary
                 return self.cluster_stat_elt.summarize_cluster_stat(structured_data)
+            elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics summary
+                return self.ovs_elt.summarize_ovs_data(structured_data)                
             elif data_type == 'prometheus_basic_info':
                 return self._summarize_prometheus_basic_info(structured_data)
             elif data_type == 'kube_api_metrics':
@@ -206,6 +218,8 @@ class PerformanceDataELT(EltUtility):
                 return self.pods_usage_elt.transform_to_dataframes(structured_data)
             elif data_type == 'cluster_status':  # NEW: Handle cluster status transformation
                 return self.cluster_stat_elt.transform_to_dataframes(structured_data)
+            elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics transformation
+                return self.ovs_elt.transform_to_dataframes(structured_data)                
             else:
                 # Default transformation for other data types
                 dataframes = {}
@@ -232,6 +246,8 @@ class PerformanceDataELT(EltUtility):
                 return self.pods_usage_elt.generate_html_tables(dataframes)
             elif data_type == 'cluster_status':  # NEW: Handle cluster status HTML generation
                 return self.cluster_stat_elt.generate_html_tables(dataframes)
+            elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics HTML generation
+                return self.ovs_elt.generate_html_tables(dataframes)                
             else:
                 # Default HTML table generation
                 html_tables = {}
