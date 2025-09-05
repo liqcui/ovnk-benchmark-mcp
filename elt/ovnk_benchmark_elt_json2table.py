@@ -17,6 +17,7 @@ from .ovnk_benchmark_elt_cluster_info import ClusterInfoELT
 from .ovnk_benchmark_elt_nodes_usage import NodesUsageELT
 from .ovnk_benchmark_elt_pods_usage import PodsUsageELT
 from .ovnk_benchmark_elt_utility import EltUtility
+from .ovnk_benchmark_elt_cluster_stat import ClusterStatELT
 
 logger = logging.getLogger(__name__)
 
@@ -221,26 +222,6 @@ class PerformanceDataELT(EltUtility):
             return {}
 
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame], data_type: str) -> Dict[str, str]:
-            """Generate HTML tables using specialized modules"""
-            try:
-                if data_type == 'cluster_info':
-                    return self.cluster_info_elt.generate_html_tables(dataframes)
-                elif data_type == 'node_usage':
-                    return self.node_usage_elt.generate_html_tables(dataframes)
-                elif data_type == 'pod_usage':
-                    return self.pods_usage_elt.generate_html_tables(dataframes)
-                else:
-                    # Default HTML table generation
-                    html_tables = {}
-                    for name, df in dataframes.items():
-                        if not df.empty:
-                            html_tables[name] = self.create_html_table(df, name)
-                    return html_tables
-            except Exception as e:
-                logger.error(f"Failed to generate HTML tables: {e}")
-                return {}
-
-    def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame], data_type: str) -> Dict[str, str]:
         """Generate HTML tables using specialized modules"""
         try:
             if data_type == 'cluster_info':
@@ -417,21 +398,3 @@ __all__ = [
     'json_to_html_table',
     'convert_json_to_tables'
 ]
-
-
-
-# =====================================================
-# Updated functions in ovnk_benchmark_elt_json2table.py
-# =====================================================
-
-# Add import for the new module
-from .ovnk_benchmark_elt_cluster_stat import ClusterStatELT
-
-class PerformanceDataELT(EltUtility):
-    """Main Extract, Load, Transform class for performance data"""
- 
-
-
-
-
-
