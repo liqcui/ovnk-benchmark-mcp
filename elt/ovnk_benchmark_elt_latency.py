@@ -454,10 +454,12 @@ class ovnLatencyELT(EltUtility):
                         continue
                     detailed_entry = metric_info.copy()
                     readable_value = entry.get('readable_value', {}) if isinstance(entry.get('readable_value'), dict) else {}
+                    # Resolve pod and node names from multiple possible keys to avoid 'unknown'
+                    pod_name_resolved, node_name_resolved = self._resolve_pod_and_node_names(entry)
                     detailed_entry.update({
                         'rank': idx,
-                        'pod_name': self.truncate_text(entry.get('pod_name', 'N/A'), 25),
-                        'node_name': self.truncate_text(entry.get('node_name', 'unknown'), 20),
+                        'pod_name': self.truncate_text(pod_name_resolved, 25),
+                        'node_name': self.truncate_text(node_name_resolved, 20),
                         'value': f"{readable_value.get('value', 0)} {readable_value.get('unit', 'ms')}"
                     })
                     if 'resource_name' in entry:
@@ -470,6 +472,30 @@ class ovnLatencyELT(EltUtility):
                     output_list.append(detailed_entry)
             else:
                 output_list.append(metric_info)
+
+    def _resolve_pod_and_node_names(self, entry: Dict[str, Any]) -> Tuple[str, str]:
+        """Resolve pod_name and node_name robustly from an entry with multiple possible key variants."""
+        def first_non_empty(d: Dict[str, Any], keys: List[str], default: str) -> str:
+            for k in keys:
+                v = d.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v
+            # Also look into nested 'labels' or 'metadata' dicts if present
+            labels = d.get('labels') if isinstance(d.get('labels'), dict) else {}
+            for k in keys:
+                v = labels.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v
+            meta = d.get('metadata') if isinstance(d.get('metadata'), dict) else {}
+            for k in keys:
+                v = meta.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v
+            return default
+
+        pod_name = first_non_empty(entry, ['pod_name', 'pod', 'podname', 'podName'], 'N/A')
+        node_name = first_non_empty(entry, ['node_name', 'node', 'instance', 'nodename', 'nodeName', 'host'], 'unknown')
+        return pod_name, node_name
 
     def _extract_summary_data(self, overall_summary: Dict[str, Any]) -> List[Dict[str, str]]:
         summary_data: List[Dict[str, str]] = []
