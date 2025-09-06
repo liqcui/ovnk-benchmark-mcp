@@ -142,7 +142,7 @@ class EltUtility:
         except Exception as e:
             logger.error(f"Failed to generate HTML table for {table_name}: {e}")
             return f'<div class="alert alert-danger">Error generating table: {str(e)}</div>'
-
+ 
     def limit_dataframe_columns(self, df: pd.DataFrame, max_cols: int = None, table_name: str = None) -> pd.DataFrame:
         """Limit DataFrame columns to maximum number"""
         if max_cols is None:
@@ -195,15 +195,18 @@ class EltUtility:
             max_cols = 4  # Kube API top metrics get 4 columns
         elif 'metrics' in (table_name or '') and any(x in str(table_name) for x in ['watch_events', 'etcd_requests', 'rest_client', 'ovnkube_controller']):
             max_cols = 4  # Component metrics get 4 columns
-        # NEW: OVN Latency specific handling
+        # UPDATED: OVN Latency specific handling - allow all columns for full metric names
         elif table_name in ['latency_metadata', 'latency_summary']:
             max_cols = 2  # Latency metadata and summary use 2 columns
         elif table_name == 'top_latencies':
-            max_cols = 4  # Top latencies get 4 columns (Rank, Metric, Component, Latency)
+            # Don't limit columns for top latencies to show full metric names
+            return df
         elif table_name in ['ready_duration', 'sync_duration', 'percentile_latency', 'pod_latency', 'cni_latency', 'service_latency', 'network_programming']:
-            max_cols = 4  # OVN latency category tables get 4 columns for readability
+            # Don't limit columns for OVN latency category tables to show full metric names
+            return df
         elif 'latency' in (table_name or '').lower() and 'ovn' in str(table_name).lower():
-            max_cols = 4  # OVN latency related tables get 4 columns
+            # Don't limit columns for any OVN latency related tables
+            return df
 
         if len(df.columns) <= max_cols:
             return df
@@ -252,13 +255,7 @@ class EltUtility:
         elif 'metrics' in (table_name or '') or '_top' in (table_name or ''):
             # For component metrics tables, prioritize rank, resource, and value
             priority_cols = ['rank', 'resource', 'value', 'unit', 'metric']
-        # NEW: OVN Latency priority columns
-        elif table_name == 'top_latencies':
-            # For top latencies, prioritize rank, metric, component, and latency value
-            priority_cols = ['rank', 'metric', 'component', 'category', 'latency', 'max latency', 'data points']
-        elif table_name in ['ready_duration', 'sync_duration', 'percentile_latency', 'pod_latency', 'cni_latency', 'service_latency', 'network_programming']:
-            # For OVN latency category tables, prioritize metric, component, and key values
-            priority_cols = ['metric', 'component', 'count', 'max', 'avg', 'unit', 'status']
+        # OVN Latency tables are handled above and return early - these won't be reached
         else:
             # Default priority columns
             priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory', 'metric']

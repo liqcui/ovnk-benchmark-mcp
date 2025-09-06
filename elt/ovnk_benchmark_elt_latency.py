@@ -1,6 +1,7 @@
 """
 Extract, Load, Transform module for OVN Latency metrics
 Processes OVN-Kubernetes latency performance data from Prometheus queries
+Updated to show full metric names in tables
 """
 
 import logging
@@ -157,26 +158,25 @@ class ovnLatencyELT(EltUtility):
                 
                 dataframes['latency_summary'] = pd.DataFrame(summary_rows)
             
-            # Create top latencies table
+            # Create top latencies table with full metric names
             if 'overall_summary' in structured_data and 'top_latencies' in structured_data['overall_summary']:
                 top_latencies = structured_data['overall_summary']['top_latencies']
                 if top_latencies:
                     top_latency_rows = []
                     for i, latency in enumerate(top_latencies[:5], 1):
                         readable_max = latency.get('readable_max', {})
+                        # Show full metric name without truncation
+                        metric_name = latency.get('metric_name', 'Unknown')
                         top_latency_rows.append({
                             'Rank': i,
-                            'Metric': self.truncate_text(latency.get('metric_name', 'Unknown'), 25),
+                            'Metric': metric_name,  # Full metric name
                             'Component': latency.get('component', 'Unknown'),
-                            'Category': latency.get('category', 'Unknown').replace('_', ' ').title(),
-                            'Max Latency': f"{readable_max.get('value', 0)} {readable_max.get('unit', 'ms')}",
-                            'Data Points': str(latency.get('data_points', 0))
+                            'Max Latency': f"{readable_max.get('value', 0)} {readable_max.get('unit', 'ms')}"
                         })
                     
-                    df = pd.DataFrame(top_latency_rows)
-                    dataframes['top_latencies'] = self.limit_dataframe_columns(df, 4, 'top_latencies')
+                    dataframes['top_latencies'] = pd.DataFrame(top_latency_rows)
             
-            # Process metric categories
+            # Process metric categories with full metric names
             metric_categories = [
                 ('ready_duration_metrics', 'Ready Duration'),
                 ('sync_duration_metrics', 'Sync Duration'),
@@ -192,7 +192,7 @@ class ovnLatencyELT(EltUtility):
                     category_df = self._create_category_dataframe(structured_data[category_key], category_display)
                     if not category_df.empty:
                         table_name = category_key.replace('_metrics', '')
-                        dataframes[table_name] = self.limit_dataframe_columns(category_df, 4, table_name)
+                        dataframes[table_name] = category_df
             
             return dataframes
             
@@ -201,13 +201,13 @@ class ovnLatencyELT(EltUtility):
             return {}
     
     def _create_category_dataframe(self, category_data: Dict[str, Any], category_name: str) -> pd.DataFrame:
-        """Create DataFrame for a metric category"""
+        """Create DataFrame for a metric category with full metric names"""
         rows = []
         
         for metric_name, metric_info in category_data.items():
             if 'error' in metric_info:
                 rows.append({
-                    'Metric': self.truncate_text(metric_name.replace('_', ' ').title(), 25),
+                    'Metric': metric_name,  # Full metric name
                     'Component': 'Error',
                     'Status': 'Failed',
                     'Details': self.truncate_text(str(metric_info['error']), 40)
@@ -217,20 +217,21 @@ class ovnLatencyELT(EltUtility):
                 readable_max = statistics.get('readable_max', {})
                 readable_avg = statistics.get('readable_avg', {})
                 
+                # Get the actual metric name from the data, fallback to key
+                display_name = metric_info.get('metric_name', metric_name)
+                
                 row = {
-                    'Metric': self.truncate_text(metric_info.get('metric_name', metric_name).replace('_', ' '), 25),
+                    'Metric': display_name,  # Show full metric name
                     'Component': metric_info.get('component', 'Unknown').title(),
                     'Count': str(statistics.get('count', 0)),
-                    'Max': f"{readable_max.get('value', 0)} {readable_max.get('unit', 'ms')}" if readable_max else 'N/A',
-                    'Avg': f"{readable_avg.get('value', 0)} {readable_avg.get('unit', 'ms')}" if readable_avg else 'N/A',
-                    'Unit': metric_info.get('unit', 'seconds')
+                    'Max': f"{readable_max.get('value', 0)} {readable_max.get('unit', 'ms')}" if readable_max else 'N/A'
                 }
                 rows.append(row)
         
         return pd.DataFrame(rows)
     
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
-        """Generate HTML tables for OVN latency metrics"""
+        """Generate HTML tables for OVN latency metrics with full metric names"""
         html_tables = {}
         
         # Define table order and titles
@@ -251,15 +252,73 @@ class ovnLatencyELT(EltUtility):
             if table_key in dataframes and not dataframes[table_key].empty:
                 df = dataframes[table_key]
                 
-                # Apply column limiting based on table type
+                # Use custom HTML generation for better metric name display
                 if table_key in ['latency_metadata', 'latency_summary']:
-                    df = self.limit_dataframe_columns(df, 2, table_key)
+                    html_tables[table_key] = self.create_html_table(df, table_key)
                 else:
-                    df = self.limit_dataframe_columns(df, 4, table_key)
-                
-                html_tables[table_key] = self.create_html_table(df, table_key)
+                    html_tables[table_key] = self.create_html_table_with_wide_columns(df, table_key)
         
         return html_tables
+    
+    def create_html_table_with_wide_columns(self, df: pd.DataFrame, table_name: str) -> str:
+        """Generate HTML table with wider columns for full metric names"""
+        try:
+            if df.empty:
+                return ""
+            
+            # Create styled HTML table
+            html = df.to_html(
+                index=False,
+                classes='table table-striped table-bordered table-sm',
+                escape=False,
+                table_id=f"table-{table_name.replace('_', '-')}",
+                border=1
+            )
+            
+            # Add custom CSS for wider metric columns
+            custom_css = f"""
+            <style>
+                #table-{table_name.replace('_', '-')} .metric-col {{
+                    min-width: 350px;
+                    max-width: 500px;
+                    word-wrap: break-word;
+                    white-space: normal;
+                    font-family: monospace;
+                    font-size: 0.9em;
+                }}
+                #table-{table_name.replace('_', '-')} {{
+                    table-layout: auto;
+                    width: 100%;
+                }}
+                #table-{table_name.replace('_', '-')} th, 
+                #table-{table_name.replace('_', '-')} td {{
+                    padding: 8px;
+                    vertical-align: top;
+                }}
+            </style>
+            """
+            
+            # Replace metric column headers and cells to add CSS class
+            if 'Metric' in df.columns:
+                html = html.replace('<th>Metric</th>', '<th class="metric-col">Metric</th>')
+                # Add class to all metric data cells
+                for _, row in df.iterrows():
+                    if 'Metric' in row:
+                        metric_value = str(row['Metric'])
+                        old_cell = f'<td>{metric_value}</td>'
+                        new_cell = f'<td class="metric-col">{metric_value}</td>'
+                        html = html.replace(old_cell, new_cell, 1)
+            
+            # Clean up HTML
+            html = self.clean_html(html)
+            
+            # Add responsive wrapper and custom CSS
+            html = f'{custom_css}<div class="table-responsive">{html}</div>'
+            
+            return html
+        except Exception as e:
+            logger.error(f"Failed to generate HTML table for {table_name}: {e}")
+            return f'<div class="alert alert-danger">Error generating table: {str(e)}</div>'
     
     def summarize_ovn_latency_data(self, structured_data: Dict[str, Any]) -> str:
         """Generate a brief summary of OVN latency data"""
