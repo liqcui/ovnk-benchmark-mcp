@@ -6,25 +6,27 @@ Reuses existing ELT infrastructure for consistent table formatting and display
 
 import logging
 from typing import Dict, Any, List, Optional, Union, Tuple
+import pandas as pd
 import json
 from datetime import datetime, timedelta
 import asyncio
 import re
 
+from .ovnk_benchmark_elt_utility import EltUtility
+
 logger = logging.getLogger(__name__)
 
-class OVNLatencyAnalyzer:
+class ovnLatencyELT(EltUtility):
     """
     OVN-Kubernetes latency metrics analyzer using Prometheus queries
     """
     
-    def __init__(self, prometheus_client):
+    def __init__(self, prometheus_client=None):
         """
-        Initialize the OVN latency analyzer
-        
-        Args:
-            prometheus_client: Prometheus client instance for querying metrics
+        Initialize the OVN latency analyzer/ELT helper.
+        The prometheus_client is optional for pure ELT transformations.
         """
+        super().__init__()
         self.prometheus_client = prometheus_client
         self.default_duration = '10m'
         
@@ -374,6 +376,205 @@ class OVNLatencyAnalyzer:
         except:
             return {'value': value_seconds, 'unit': 'seconds'}
 
+    # ================= ELT-style extraction and presentation methods =================
+    def extract_ovn_latency_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract OVN latency data from JSON results (ELT pipeline entry)."""
+        try:
+            extracted: Dict[str, Any] = {
+                'metadata': {},
+                'ready_duration': [],
+                'sync_duration': [],
+                'percentile_latency': [],
+                'pod_latency': [],
+                'cni_latency': [],
+                'service_latency': [],
+                'network_programming': [],
+                'top_latencies': [],
+                'summary': {}
+            }
+
+            extracted['metadata'] = {
+                'collection_timestamp': data.get('collection_timestamp', 'unknown'),
+                'collection_type': data.get('collection_type', 'unknown'),
+                'query_type': data.get('query_type', 'instant'),
+                'timezone': data.get('timezone', 'UTC')
+            }
+
+            self._extract_metric_category(data.get('ready_duration_metrics', {}), extracted['ready_duration'])
+            self._extract_metric_category(data.get('sync_duration_metrics', {}), extracted['sync_duration'])
+            self._extract_metric_category(data.get('percentile_latency_metrics', {}), extracted['percentile_latency'])
+            self._extract_metric_category(data.get('pod_latency_metrics', {}), extracted['pod_latency'])
+            self._extract_metric_category(data.get('cni_latency_metrics', {}), extracted['cni_latency'])
+            self._extract_metric_category(data.get('service_latency_metrics', {}), extracted['service_latency'])
+            self._extract_metric_category(data.get('network_programming_metrics', {}), extracted['network_programming'])
+
+            overall_summary = data.get('overall_summary', {})
+            top_latencies = overall_summary.get('top_latencies', [])
+            for idx, metric in enumerate(top_latencies[:10], 1):
+                readable_max = metric.get('readable_max', {})
+                extracted['top_latencies'].append({
+                    'rank': idx,
+                    'metric_name': self.truncate_metric_name(metric.get('metric_name', 'unknown'), 35),
+                    'component': metric.get('component', 'unknown'),
+                    'category': metric.get('category', 'unknown').replace('_', ' ').title() if isinstance(metric.get('category'), str) else 'Unknown',
+                    'max_latency': f"{readable_max.get('value', 0)} {readable_max.get('unit', 'ms')}",
+                    'data_points': metric.get('data_points', 0)
+                })
+
+            extracted['summary'] = self._extract_summary_data(overall_summary)
+            return extracted
+        except Exception as e:
+            logger.error(f"Failed to extract OVN latency data: {e}")
+            return {'error': str(e)}
+
+    def _extract_metric_category(self, category_data: Dict[str, Any], output_list: List[Dict[str, Any]]) -> None:
+        """Extract metrics from a specific category into a flat list for tables."""
+        for metric_key, metric_data in category_data.items():
+            if not isinstance(metric_data, dict) or 'error' in metric_data:
+                continue
+            statistics = metric_data.get('statistics', {}) if isinstance(metric_data.get('statistics'), dict) else {}
+            if statistics.get('count', 0) == 0:
+                continue
+            metric_info = {
+                'metric_name': self.truncate_metric_name(metric_data.get('metric_name', metric_key), 30),
+                'component': metric_data.get('component', 'unknown'),
+                'unit': metric_data.get('unit', 'seconds'),
+                'data_points': statistics.get('count', 0)
+            }
+            readable_max = statistics.get('readable_max', {}) if isinstance(statistics.get('readable_max'), dict) else {}
+            readable_avg = statistics.get('readable_avg', {}) if isinstance(statistics.get('readable_avg'), dict) else {}
+            metric_info.update({
+                'max_latency': f"{readable_max.get('value', 0)} {readable_max.get('unit', 'ms')}",
+                'avg_latency': f"{readable_avg.get('value', 0)} {readable_avg.get('unit', 'ms')}"
+            })
+            top_5_data = statistics.get('top_5', []) if isinstance(statistics.get('top_5'), list) else []
+            if top_5_data:
+                for idx, entry in enumerate(top_5_data[:5], 1):
+                    if not isinstance(entry, dict):
+                        continue
+                    detailed_entry = metric_info.copy()
+                    readable_value = entry.get('readable_value', {}) if isinstance(entry.get('readable_value'), dict) else {}
+                    detailed_entry.update({
+                        'rank': idx,
+                        'pod_name': self.truncate_text(entry.get('pod_name', 'N/A'), 25),
+                        'node_name': self.truncate_text(entry.get('node_name', 'unknown'), 20),
+                        'value': f"{readable_value.get('value', 0)} {readable_value.get('unit', 'ms')}"
+                    })
+                    if 'resource_name' in entry:
+                        detailed_entry['resource'] = self.truncate_text(entry.get('resource_name', 'unknown'), 20)
+                    if 'service_name' in entry:
+                        detailed_entry['service'] = self.truncate_text(entry.get('service_name', 'N/A'), 20)
+                        detailed_entry['pod_name'] = 'N/A'
+                        detailed_entry['node_name'] = 'N/A'
+                    output_list.append(detailed_entry)
+            else:
+                output_list.append(metric_info)
+
+    def _extract_summary_data(self, overall_summary: Dict[str, Any]) -> List[Dict[str, str]]:
+        summary_data: List[Dict[str, str]] = []
+        if not isinstance(overall_summary, dict):
+            return summary_data
+        summary_data.append({'property': 'Total Metrics Collected', 'value': str(overall_summary.get('total_metrics_collected', 0))})
+        summary_data.append({'property': 'Successful Metrics', 'value': str(overall_summary.get('successful_metrics', 0))})
+        summary_data.append({'property': 'Failed Metrics', 'value': str(overall_summary.get('failed_metrics', 0))})
+        component_breakdown = overall_summary.get('component_breakdown', {}) if isinstance(overall_summary.get('component_breakdown'), dict) else {}
+        for component, count in component_breakdown.items():
+            try:
+                if int(count) > 0:
+                    summary_data.append({'property': f"{str(component).title()} Metrics", 'value': str(count)})
+            except Exception:
+                continue
+        overall_max = overall_summary.get('overall_max_latency', {}) if isinstance(overall_summary.get('overall_max_latency'), dict) else {}
+        if 'readable' in overall_max and isinstance(overall_max['readable'], dict):
+            readable = overall_max['readable']
+            summary_data.append({'property': 'Highest Latency', 'value': f"{readable.get('value', 0)} {readable.get('unit', 'ms')} ({overall_max.get('metric', 'unknown')})"})
+        overall_avg = overall_summary.get('overall_avg_latency', {}) if isinstance(overall_summary.get('overall_avg_latency'), dict) else {}
+        if 'readable' in overall_avg and isinstance(overall_avg['readable'], dict):
+            readable = overall_avg['readable']
+            summary_data.append({'property': 'Average Max Latency', 'value': f"{readable.get('value', 0)} {readable.get('unit', 'ms')}"})
+        return summary_data
+
+    def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+        dataframes: Dict[str, pd.DataFrame] = {}
+        try:
+            if structured_data.get('metadata'):
+                metadata_list: List[Dict[str, Any]] = []
+                for key, value in structured_data['metadata'].items():
+                    metadata_list.append({'property': key.replace('_', ' ').title(), 'value': str(value)})
+                if metadata_list:
+                    dataframes['latency_metadata'] = pd.DataFrame(metadata_list)
+            if structured_data.get('summary'):
+                dataframes['latency_summary'] = pd.DataFrame(structured_data['summary'])
+            if structured_data.get('top_latencies'):
+                dataframes['top_latencies'] = pd.DataFrame(structured_data['top_latencies'])
+            categories = {
+                'ready_duration': 'Ready Duration Metrics',
+                'sync_duration': 'Sync Duration Metrics',
+                'percentile_latency': 'Percentile Latency Metrics',
+                'pod_latency': 'Pod Latency Metrics',
+                'cni_latency': 'CNI Latency Metrics',
+                'service_latency': 'Service Latency Metrics',
+                'network_programming': 'Network Programming Metrics'
+            }
+            for category_key in categories.keys():
+                category_data = structured_data.get(category_key, [])
+                if category_data:
+                    df = pd.DataFrame(category_data)
+                    if not df.empty:
+                        dataframes[category_key] = df
+            return dataframes
+        except Exception as e:
+            logger.error(f"Failed to transform OVN latency data to DataFrames: {e}")
+            return {}
+
+    def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
+        html_tables: Dict[str, str] = {}
+        try:
+            for table_name, df in dataframes.items():
+                if df.empty:
+                    continue
+                if table_name in ['latency_metadata', 'latency_summary']:
+                    limited_df = self.limit_dataframe_columns(df, 2, table_name)
+                else:
+                    limited_df = df
+                html_table = self.create_html_table(limited_df, table_name)
+                html_tables[table_name] = html_table
+            return html_tables
+        except Exception as e:
+            logger.error(f"Failed to generate HTML tables for OVN latency data: {e}")
+            return {}
+
+    def summarize_ovn_latency_data(self, structured_data: Dict[str, Any]) -> str:
+        try:
+            summary_parts: List[str] = ["OVN Latency Analysis:"]
+            metadata = structured_data.get('metadata', {}) if isinstance(structured_data.get('metadata'), dict) else {}
+            collection_type = metadata.get('collection_type', 'unknown')
+            query_type = metadata.get('query_type', 'instant')
+            summary_parts.append(f"• Collection type: {collection_type} ({query_type} query)")
+            total_metrics = 0
+            categories_with_data: List[str] = []
+            categories = ['ready_duration', 'sync_duration', 'percentile_latency', 'pod_latency', 'cni_latency', 'service_latency', 'network_programming']
+            for category in categories:
+                count = len(structured_data.get(category, [])) if isinstance(structured_data.get(category), list) else 0
+                if count > 0:
+                    total_metrics += count
+                    categories_with_data.append(f"{category.replace('_', ' ')}: {count}")
+            if total_metrics > 0:
+                summary_parts.append(f"• Total metrics with data: {total_metrics}")
+                summary_parts.append(f"• Categories: {', '.join(categories_with_data[:3])}")
+            top_latencies = structured_data.get('top_latencies', []) if isinstance(structured_data.get('top_latencies'), list) else []
+            if top_latencies:
+                top_metric = top_latencies[0]
+                summary_parts.append(f"• Highest latency: {top_metric.get('max_latency', 'unknown')} ({top_metric.get('metric_name', 'unknown')})")
+            summary_data = structured_data.get('summary', []) if isinstance(structured_data.get('summary'), list) else []
+            successful_metrics = next((item.get('value') for item in summary_data if isinstance(item, dict) and 'successful' in str(item.get('property', '')).lower()), '0')
+            failed_metrics = next((item.get('value') for item in summary_data if isinstance(item, dict) and 'failed' in str(item.get('property', '')).lower()), '0')
+            summary_parts.append(f"• Success rate: {successful_metrics} successful, {failed_metrics} failed")
+            return " ".join(summary_parts)
+        except Exception as e:
+            logger.error(f"Failed to summarize OVN latency data: {e}")
+            return f"OVN Latency Analysis summary generation failed: {str(e)}"
+
 # Main extraction functions using ELT infrastructure
 def extract_ovn_latency_to_readable_tables(prometheus_results: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -385,7 +586,7 @@ def extract_ovn_latency_to_readable_tables(prometheus_results: Dict[str, Any]) -
     Returns:
         Dictionary with structured data, HTML tables, and summary
     """
-    from .elt.ovnk_benchmark_elt_json2table import convert_json_to_tables
+    from .ovnk_benchmark_elt_json2table import convert_json_to_tables
     
     try:
         # Use the existing ELT infrastructure to convert data to tables
@@ -603,8 +804,6 @@ def get_ovn_latency_brief_summary(prometheus_results: Dict[str, Any]) -> str:
     Returns:
         Brief text summary string
     """
-    from .elt.ovnk_benchmark_elt_latency import ovnLatencyELT
-    
     try:
         # Use the specialized OVN latency ELT module for summary generation
         ovn_elt = ovnLatencyELT()
@@ -640,7 +839,7 @@ async def collect_and_analyze_ovn_latency(prometheus_client, duration: str = '10
     """
     try:
         # Initialize analyzer
-        analyzer = OVNLatencyAnalyzer(prometheus_client)
+        analyzer = ovnLatencyELT(prometheus_client)
         
         # Collect raw metrics
         raw_metrics = await analyzer.collect_ovn_latency_metrics(duration, query_type)
@@ -693,7 +892,7 @@ async def collect_and_analyze_ovn_latency(prometheus_client, duration: str = '10
 
 # Export main functions
 __all__ = [
-    'OVNLatencyAnalyzer',
+    'ovnLatencyELT',
     'extract_ovn_latency_to_readable_tables',
     'format_ovn_latency_response_for_display', 
     'get_ovn_latency_brief_summary',
