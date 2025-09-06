@@ -19,7 +19,7 @@ from tools.ovnk_benchmark_openshift_cluster_info import ClusterInfoCollector,Clu
 from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
 from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
-from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
+from tools.ovnk_benchmark_prometheus_ovnk_latency import OVNLatencyCollector
 from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
 from tools.ovnk_benchmark_prometheus_basicinfo import ovnBasicInfoCollector, get_pod_phase_counts
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
@@ -277,7 +277,7 @@ class OverallPerformanceAnalyzer:
         """Collect OVNK sync analysis"""
         try:
             async with PrometheusBaseQuery(self.prometheus_url, self.token) as client:
-                collector = OVNSyncDurationCollector(client)
+                collector = OVNLatencyCollector(client)
                 return await collector.collect_sync_duration_seconds_metrics(duration)
         except Exception as e:
             logger.error(f"Failed to collect OVNK sync: {e}")

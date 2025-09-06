@@ -1,0 +1,62 @@
+# OVN-Kubernetes Latency Metrics Configuration
+# This file defines the Prometheus queries used to collect latency metrics
+
+metrics:
+  - query: topk(10, ovnkube_controller_ready_duration_seconds)
+    metricName: ovnkube_controller_ready_duration_seconds
+    unit: seconds
+    description: "Time taken for ovnkube-controller to become ready"
+    component: controller
+    
+  - query: topk(10, ovnkube_node_ready_duration_second s)
+    metricName: ovnkube_node_ready_duration_seconds
+    unit: seconds
+    description: "Time taken for ovnkube-node to become ready"
+    component: node
+    
+  - query: ovnkube_controller_sync_duration_seconds{namespace="openshift-ovn-kubernetes"}
+    metricName: ovnkube_controller_sync_duration_seconds
+    unit: seconds
+    description: "Duration of controller sync operations"
+    component: controller
+    
+  # Additional metrics can be added here
+  - query: histogram_quantile(0.95, rate(ovnkube_controller_sync_duration_seconds_bucket[5m]))
+    metricName: ovnkube_controller_sync_duration_p95
+    unit: seconds
+    description: "95th percentile of controller sync duration over 5 minutes"
+    component: controller
+    
+  - query: histogram_quantile(0.95, rate(ovnkube_node_sync_duration_seconds_bucket[5m]))
+    metricName: ovnkube_node_sync_duration_p95
+    unit: seconds
+    description: "95th percentile of node sync duration over 5 minutes"
+    component: node
+
+  - query: histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_pod_creation_latency_seconds_bucket[$interval]))) > 0
+    metricName: Pod_Annotation_Latency_p99
+  
+  - query: histogram_quantile(0.99, sum(rate(ovnkube_node_cni_request_duration_seconds_bucket{command="ADD"}[$interval])) by (pod,le)) > 0
+    metricName: CNI_Request_ADD_Latency_p99
+
+  - query: histogram_quantile(0.99, sum(rate(ovnkube_node_cni_request_duration_seconds_bucket{command="DEL"}[$interval])) by (pod,le)) > 0
+    metricName: CNI_Request_DEL_Latency_p99
+
+  - query: histogram_quantile(0.99, sum by(pod, le) (rate(ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket[2m])))
+    metricName: Pod_creation_latency_first_seen_lsp_p99
+  
+  - query: histogram_quantile(0.99, sum by(pod, le) (rate(ovnkube_controller_pod_lsp_created_port_binding_duration_seconds_bucket[2m])))
+    metricName: pod_creation_latency_port_binding_p99
+
+  - query: rate(ovnkube_controller_sync_service_latency_seconds_sum[2m])
+    metricName: sync_service_latency
+
+  - query: histogram_quantile(0.9, sum by(pod, le) (rate(ovnkube_controller_sync_service_latency_seconds_bucket[2m])))
+    metricName: sync_service_latency_p99
+  
+  - query: histogram_quantile(0.99, sum by(pod, le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[2m])))
+    metricName: apply_network_config_pod_duration_p99
+ 
+  - query: histogram_quantile(0.99, sum by(service, le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[2m])))  
+    metricName: apply_network_config_service_duration_p99
+  

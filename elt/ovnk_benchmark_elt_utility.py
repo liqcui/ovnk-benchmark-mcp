@@ -142,7 +142,7 @@ class EltUtility:
         except Exception as e:
             logger.error(f"Failed to generate HTML table for {table_name}: {e}")
             return f'<div class="alert alert-danger">Error generating table: {str(e)}</div>'
-    
+
     def limit_dataframe_columns(self, df: pd.DataFrame, max_cols: int = None, table_name: str = None) -> pd.DataFrame:
         """Limit DataFrame columns to maximum number"""
         if max_cols is None:
@@ -184,12 +184,32 @@ class EltUtility:
             max_cols = 5  # Controller sync duration needs 5 columns (rank, pod, resource, node, duration)
         elif table_name == 'sync_summary':
             max_cols = 2  # Sync summary - simple property-value format
+        # Kube API metrics specific handling
+        elif table_name in ['health_summary', 'api_metadata']:
+            max_cols = 2  # Health and metadata summaries use 2 columns
+        elif table_name in ['readonly_latency', 'mutating_latency']:
+            max_cols = 4  # Latency tables get 4 columns (Rank, Resource, Value, Type)
+        elif table_name in ['top_issues']:
+            max_cols = 2  # Issues table uses 2 columns (Rank, Issue)
+        elif 'top' in (table_name or '') and 'kube' in str(table_name).lower():
+            max_cols = 4  # Kube API top metrics get 4 columns
+        elif 'metrics' in (table_name or '') and any(x in str(table_name) for x in ['watch_events', 'etcd_requests', 'rest_client', 'ovnkube_controller']):
+            max_cols = 4  # Component metrics get 4 columns
+        # NEW: OVN Latency specific handling
+        elif table_name in ['latency_metadata', 'latency_summary']:
+            max_cols = 2  # Latency metadata and summary use 2 columns
+        elif table_name == 'top_latencies':
+            max_cols = 4  # Top latencies get 4 columns (Rank, Metric, Component, Latency)
+        elif table_name in ['ready_duration', 'sync_duration', 'percentile_latency', 'pod_latency', 'cni_latency', 'service_latency', 'network_programming']:
+            max_cols = 4  # OVN latency category tables get 4 columns for readability
+        elif 'latency' in (table_name or '').lower() and 'ovn' in str(table_name).lower():
+            max_cols = 4  # OVN latency related tables get 4 columns
 
         if len(df.columns) <= max_cols:
             return df
         
         # Keep most important columns based on table type
-        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status', 'usage_summary']:
+        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status', 'usage_summary', 'health_summary', 'api_metadata', 'latency_metadata', 'latency_summary']:
             # For summary/status tables, keep metric and value columns
             priority_cols = ['metric', 'value', 'property']
         elif table_name == 'node_groups':
@@ -221,7 +241,24 @@ class EltUtility:
             priority_cols = ['rank', 'pod', 'resource', 'node', 'duration']
         elif table_name == 'sync_summary':
             # For sync summary, prioritize property and value columns
-            priority_cols = ['property', 'value']            
+            priority_cols = ['property', 'value']
+        # Kube API metrics priority columns            
+        elif table_name in ['readonly_latency', 'mutating_latency']:
+            # For latency tables, prioritize rank, resource, and values
+            priority_cols = ['rank', 'resource', 'avg', 'max', 'p99', 'type', 'value']
+        elif table_name == 'top_issues':
+            # For issues table, prioritize rank and issue description
+            priority_cols = ['rank', 'issue']
+        elif 'metrics' in (table_name or '') or '_top' in (table_name or ''):
+            # For component metrics tables, prioritize rank, resource, and value
+            priority_cols = ['rank', 'resource', 'value', 'unit', 'metric']
+        # NEW: OVN Latency priority columns
+        elif table_name == 'top_latencies':
+            # For top latencies, prioritize rank, metric, component, and latency value
+            priority_cols = ['rank', 'metric', 'component', 'category', 'latency', 'max latency', 'data points']
+        elif table_name in ['ready_duration', 'sync_duration', 'percentile_latency', 'pod_latency', 'cni_latency', 'service_latency', 'network_programming']:
+            # For OVN latency category tables, prioritize metric, component, and key values
+            priority_cols = ['metric', 'component', 'count', 'max', 'avg', 'unit', 'status']
         else:
             # Default priority columns
             priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory', 'metric']
@@ -259,3 +296,141 @@ class EltUtility:
             'count': len(nodes)
         }
 
+    def format_latency_value(self, value: Union[float, int], unit: str = 'seconds') -> str:
+        """Format latency value with appropriate unit for display"""
+        try:
+            if unit == 'seconds' and isinstance(value, (int, float)):
+                if value == 0:
+                    return '0 ms'
+                elif value < 1:
+                    return f"{round(value * 1000, 2)} ms"
+                elif value < 60:
+                    return f"{round(value, 3)} s"
+                elif value < 3600:
+                    return f"{round(value / 60, 2)} min"
+                else:
+                    return f"{round(value / 3600, 2)} h"
+            else:
+                return f"{round(float(value), 4)} {unit}"
+        except (ValueError, TypeError):
+            return str(value)
+
+    def categorize_latency_severity(self, value: float, unit: str = 'seconds') -> str:
+        """Categorize latency severity for color coding"""
+        try:
+            if unit == 'seconds':
+                if value < 0.1:  # Less than 100ms
+                    return 'low'
+                elif value < 1.0:  # Less than 1 second
+                    return 'medium'
+                elif value < 5.0:  # Less than 5 seconds
+                    return 'high'
+                else:  # 5+ seconds
+                    return 'critical'
+            else:
+                # For other units, assume already in appropriate scale
+                return 'medium'
+        except (ValueError, TypeError):
+            return 'unknown'
+
+    def truncate_metric_name(self, metric_name: str, max_length: int = 30) -> str:
+        """Truncate metric name for display while preserving key information"""
+        if len(metric_name) <= max_length:
+            return metric_name
+        
+        # Try to preserve important parts like percentile info
+        if 'p99' in metric_name:
+            base_name = metric_name.replace('_p99', '').replace('p99', '')
+            truncated = self.truncate_text(base_name, max_length - 4)
+            return f"{truncated} p99"
+        elif 'p95' in metric_name:
+            base_name = metric_name.replace('_p95', '').replace('p95', '')
+            truncated = self.truncate_text(base_name, max_length - 4)
+            return f"{truncated} p95"
+        else:
+            return self.truncate_text(metric_name, max_length)
+
+    def extract_component_from_metric(self, metric_name: str) -> str:
+        """Extract component type from metric name"""
+        metric_lower = metric_name.lower()
+        
+        if any(keyword in metric_lower for keyword in ['controller', 'ovnkube_controller']):
+            return 'Controller'
+        elif any(keyword in metric_lower for keyword in ['node', 'ovnkube_node']):
+            return 'Node'
+        elif any(keyword in metric_lower for keyword in ['cni']):
+            return 'CNI'
+        elif any(keyword in metric_lower for keyword in ['pod']):
+            return 'Pod'
+        elif any(keyword in metric_lower for keyword in ['service']):
+            return 'Service'
+        elif any(keyword in metric_lower for keyword in ['network']):
+            return 'Network'
+        else:
+            return 'Unknown'
+
+    def create_latency_severity_badge(self, value: float, unit: str = 'seconds') -> str:
+        """Create HTML badge for latency severity"""
+        severity = self.categorize_latency_severity(value, unit)
+        formatted_value = self.format_latency_value(value, unit)
+        
+        badge_colors = {
+            'low': 'success',
+            'medium': 'warning', 
+            'high': 'danger',
+            'critical': 'dark',
+            'unknown': 'secondary'
+        }
+        
+        color = badge_colors.get(severity, 'secondary')
+        return f'<span class="badge badge-{color}">{formatted_value}</span>'
+
+    def sort_latency_metrics_by_priority(self, metrics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Sort latency metrics by priority/importance"""
+        def get_priority_score(metric: Dict[str, Any]) -> int:
+            """Calculate priority score for a metric (higher = more important)"""
+            score = 0
+            metric_name = metric.get('metric_name', '').lower()
+            
+            # Component priority
+            component = metric.get('component', '').lower()
+            if component == 'controller':
+                score += 100
+            elif component == 'node':
+                score += 80
+            elif component == 'cni':
+                score += 60
+            
+            # Metric type priority
+            if 'ready' in metric_name:
+                score += 50
+            elif 'sync' in metric_name:
+                score += 40
+            elif 'pod' in metric_name:
+                score += 30
+            elif 'service' in metric_name:
+                score += 20
+            
+            # Percentile priority (p99 > p95 > avg)
+            if 'p99' in metric_name:
+                score += 15
+            elif 'p95' in metric_name:
+                score += 10
+            elif 'avg' in metric_name:
+                score += 5
+            
+            # Value-based priority (higher latency = higher priority for attention)
+            try:
+                max_value = metric.get('statistics', {}).get('max_value', 0)
+                if max_value > 5:  # > 5 seconds
+                    score += 30
+                elif max_value > 1:  # > 1 second
+                    score += 20
+                elif max_value > 0.5:  # > 500ms
+                    score += 10
+            except (ValueError, TypeError):
+                pass
+            
+            return score
+        
+        return sorted(metrics, key=get_priority_score, reverse=True)

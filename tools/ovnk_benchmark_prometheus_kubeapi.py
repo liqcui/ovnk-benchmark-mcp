@@ -5,6 +5,7 @@ Queries and processes Kubernetes API server performance metrics
 
 import asyncio
 from datetime import datetime, timezone
+import math
 from typing import Dict, List, Any, Optional
 from .ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
 
@@ -261,18 +262,16 @@ class kubeAPICollector:
             if 'value' in result_item:
                 # Instant query
                 _, value = result_item['value']
-                try:
-                    numeric_value = float(value)
-                except (ValueError, TypeError):
+                numeric_value = self._to_number(value)
+                if numeric_value is None:
                     continue
             elif 'values' in result_item:
                 # Range query - calculate avg or max
                 values = []
                 for _, val in result_item['values']:
-                    try:
-                        values.append(float(val))
-                    except (ValueError, TypeError):
-                        continue
+                    num = self._to_number(val)
+                    if num is not None:
+                        values.append(num)
                 
                 if not values:
                     continue
@@ -342,43 +341,43 @@ class kubeAPICollector:
             # Handle instant query results
             if 'value' in result_item:
                 timestamp, value = result_item['value']
-                try:
-                    numeric_value = float(value)
+                numeric_value = self._to_number(value)
+                if numeric_value is None:
+                    continue
+                item_data['values'].append({
+                    'timestamp': float(timestamp),
+                    'value': numeric_value
+                })
+                all_values.append(numeric_value)
+            
+            # Handle range query results
+            elif 'values' in result_item:
+                for timestamp, value in result_item['values']:
+                    numeric_value = self._to_number(value)
+                    if numeric_value is None:
+                        continue
                     item_data['values'].append({
                         'timestamp': float(timestamp),
                         'value': numeric_value
                     })
                     all_values.append(numeric_value)
-                except (ValueError, TypeError):
-                    continue
-            
-            # Handle range query results
-            elif 'values' in result_item:
-                for timestamp, value in result_item['values']:
-                    try:
-                        numeric_value = float(value)
-                        item_data['values'].append({
-                            'timestamp': float(timestamp),
-                            'value': numeric_value
-                        })
-                        all_values.append(numeric_value)
-                    except (ValueError, TypeError):
-                        continue
             
             if item_data['values']:
                 processed['values'].append(item_data)
         
         # Calculate statistics
         if all_values:
-            processed['statistics'] = {
-                'count': len(all_values),
-                'min': min(all_values),
-                'max': max(all_values),
-                'avg': sum(all_values) / len(all_values),
-                'p50': self._percentile(all_values, 50),
-                'p90': self._percentile(all_values, 90),
-                'p99': self._percentile(all_values, 99)
-            }
+            finite_values = [v for v in all_values if self._is_finite(v)]
+            if finite_values:
+                processed['statistics'] = {
+                    'count': len(finite_values),
+                    'min': min(finite_values),
+                    'max': max(finite_values),
+                    'avg': sum(finite_values) / len(finite_values),
+                    'p50': self._percentile(finite_values, 50),
+                    'p90': self._percentile(finite_values, 90),
+                    'p99': self._percentile(finite_values, 99)
+                }
         
         return processed
     
@@ -398,7 +397,10 @@ class kubeAPICollector:
         if not values:
             return 0.0
         
-        sorted_values = sorted(values)
+        # Filter out non-finite values to avoid NaN in results
+        sorted_values = sorted([v for v in values if self._is_finite(v)])
+        if not sorted_values:
+            return 0.0
         k = (len(sorted_values) - 1) * percentile / 100
         f = int(k)
         c = k - f
@@ -407,6 +409,19 @@ class kubeAPICollector:
             return sorted_values[f]
         else:
             return sorted_values[f] * (1 - c) + sorted_values[f + 1] * c
+
+    def _to_number(self, value: Any) -> Optional[float]:
+        """Convert input to a finite float; return None for NaN/Inf or invalid."""
+        try:
+            num = float(value)
+            if self._is_finite(num):
+                return num
+            return None
+        except (ValueError, TypeError):
+            return None
+
+    def _is_finite(self, num: float) -> bool:
+        return not math.isnan(num) and not math.isinf(num)
     
     def _generate_comprehensive_summary(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
         """Generate comprehensive summary of all API server metrics"""

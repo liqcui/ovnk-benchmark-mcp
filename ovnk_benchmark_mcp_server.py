@@ -23,7 +23,7 @@ from tools.ovnk_benchmark_prometheus_basicinfo import ovnBasicInfoCollector, get
 
 from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
-from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector,get_ovn_sync_summary_json,collect_ovn_sync_metrics_duration
+from tools.ovnk_benchmark_prometheus_ovnk_latency import OVNLatencyCollector,get_ovn_sync_summary_json,collect_ovn_sync_metrics_duration
 from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
 from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
@@ -289,38 +289,48 @@ class PrometheusBasicInfoRequest(BaseModel):
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-class OVNKSyncDurationRequest(BaseModel):
-    """Request model for OVN-Kubernetes sync duration metrics queries"""
-    query_type: str = Field(
-        default="instant",
-        description="Type of metrics query: 'instant' for current snapshot of sync duration metrics or 'duration' for time-range analysis with statistical aggregation over specified time period. Instant queries show current state, duration queries provide trend analysis with min/avg/max calculations."
-    )
+class OVNLatencyRequest(BaseModel):
+    """Request model for OVN-Kubernetes latency metrics collection and analysis"""
     duration: Optional[str] = Field(
         default=None,
-        description="Analysis time window when query_type='duration' using Prometheus time format (e.g., '5m', '15m', '30m', '1h', '2h', '6h', '24h'). Required for duration-based analysis. Shorter durations (5m-30m) for recent performance, longer durations (1h-24h) for trend analysis and baseline establishment."
-    )
-    timestamp: Optional[str] = Field(
-        default=None,
-        description="Specific timestamp for instant queries in ISO format (YYYY-MM-DDTHH:MM:SSZ). When provided, retrieves sync metrics at exact point in time instead of current metrics. Useful for historical analysis, incident correlation, or comparing metrics across different time points."
+        description="Query duration for range queries using Prometheus time format (e.g., '5m', '30m', '1h', '2h', '24h'). When specified, collects metrics over the time range for trend analysis. When omitted, performs instant query for current state. Longer durations provide more comprehensive analysis but take more time to process. Recommended: '5m' for quick checks, '1h' for standard analysis, '24h' for trend analysis."
     )
     end_time: Optional[str] = Field(
         default=None,
-        description="End time for duration queries in ISO format (YYYY-MM-DDTHH:MM:SSZ). Defaults to current time if not specified. Combined with duration parameter to define analysis time window. Essential for analyzing historical performance periods or specific time ranges."
+        description="End time for range queries in ISO format (YYYY-MM-DDTHH:MM:SSZ). Only used with duration parameter. When not specified, uses current time as end point. Useful for analyzing historical time periods or specific incident timeframes."
     )
+    include_controller_metrics: bool = Field(
+        default=True,
+        description="Whether to include controller-specific latency metrics including sync duration percentiles, pod annotation latency, service sync latency, and network programming duration. Controller metrics are essential for understanding control plane performance and policy application delays."
+    )
+    include_node_metrics: bool = Field(
+        default=True,
+        description="Whether to include node-specific latency metrics including CNI request durations for ADD/DEL operations, node sync duration percentiles, and pod creation latency. Node metrics are crucial for understanding data plane performance and pod startup delays."
+    )
+    include_pod_latency: bool = Field(
+        default=True,
+        description="Whether to include detailed pod lifecycle latency metrics such as first seen LSP creation, port binding duration, and annotation processing time. These metrics help identify bottlenecks in pod creation workflows and network setup delays."
+    )
+    include_service_latency: bool = Field(
+        default=True,
+        description="Whether to include service-related latency metrics including sync service latency and network programming duration for services. Service metrics are important for understanding load balancer configuration delays and service endpoint updates."
+    )
+    metric_categories: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list to filter specific metric categories. Available categories: ['ready_duration', 'percentile_latency', 'pod_latency', 'cni_latency', 'service_latency', 'network_programming']. When specified, only returns metrics from selected categories. Use to reduce response size and focus on specific performance areas. Example: ['pod_latency', 'cni_latency'] for pod creation analysis."
+    )
+    top_n_results: int = Field(
+        default=5,
+        description="Number of top latency results to return per metric (1-50). Controls the size of detailed results for each metric type. Higher values provide more comprehensive view of performance distribution but increase response size. Recommended: 5-10 for quick analysis, 20+ for detailed troubleshooting."
+    )
+    include_statistics: bool = Field(
+        default=True,
+        description="Whether to include statistical analysis (max, avg, percentiles) for each metric category. Statistics provide summary insights and help identify performance trends and outliers across the cluster."
+    )
+    # save_to_file removed
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-class PerformanceDataRequest(BaseModel):
-    """Request model for performance data storage"""
-    metrics_data: Dict[str, Any] = Field(
-        description="Metrics data dictionary to store in database"
-    )
-    timestamp: Optional[str] = Field(
-        default=None, 
-        description="ISO timestamp for the data (defaults to current time)"
-    )
-    
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 class HealthCheckRequest(BaseModel):
     """Empty request model for health check"""
@@ -662,19 +672,7 @@ async def get_openshift_cluster_info(request: ClusterInfoRequest) -> Dict[str, A
             logger.info("Machine Config Pool status excluded from response")
         
         # Save to file if requested
-        if request.save_to_file:
-            try:
-                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                filename = f"cluster_info_{timestamp}.json"
-                
-                with open(filename, 'w') as f:
-                    json.dump(cluster_data, f, indent=2, default=str)
-                
-                cluster_data['saved_file'] = filename
-                logger.info(f"Cluster information saved to {filename}")
-            except Exception as save_error:
-                logger.warning(f"Failed to save cluster info to file: {save_error}")
-                cluster_data['save_file_error'] = str(save_error)
+        # save_to_file handling removed
         
         # Add collection metadata
         cluster_data['collection_metadata'] = {
@@ -685,7 +683,7 @@ async def get_openshift_cluster_info(request: ClusterInfoRequest) -> Dict[str, A
                 'include_network_policies': request.include_network_policies,
                 'include_operator_status': request.include_operator_status,
                 'include_mcp_status': request.include_mcp_status,
-                'save_to_file': request.save_to_file
+                # 'save_to_file': request.save_to_file
             },
             'collection_duration_seconds': 60.0,
             'data_freshness': cluster_data.get('collection_timestamp'),
@@ -1235,166 +1233,259 @@ async def query_multus_metrics(request: PODsMultusRequest) -> Dict[str, Any]:
         logger.error(f"Error querying Multus metrics: {e}")
         return {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
 
+
 @app.tool(
-    name="query_ovnk_sync_duration_seconds_metrics",
-    description="""Query comprehensive OVN-Kubernetes synchronization duration metrics including controller ready times, node synchronization performance, resource reconciliation durations, and service processing rates. This tool provides critical visibility into OVN-K control plane performance, sync bottlenecks, and operational efficiency.
+    name="get_ovnk_latency_metrics",
+    description="""Collect and analyze comprehensive OVN-Kubernetes latency metrics including controller sync operations, CNI request processing, pod lifecycle latencies, and service configuration delays. This tool provides detailed insights into network control plane and data plane performance, enabling identification of bottlenecks, performance degradation, and optimization opportunities.
 
-COMPREHENSIVE SYNC METRICS COLLECTED:
+This tool leverages the OVNLatencyCollector to gather structured latency metrics from OVN-Kubernetes components across the entire cluster, providing both instant snapshots and historical trend analysis.
 
-CONTROLLER READINESS METRICS:
-- ovnkube_controller_ready_duration_seconds: Time required for OVN-K controllers to achieve ready state after startup, restart, or configuration changes
-- Top 10 longest controller ready durations with pod-to-node mapping for infrastructure correlation
-- Controller startup performance analysis identifying slow-starting controllers and potential configuration issues
-- Ready state trend analysis for capacity planning and maintenance window optimization
+CONTROLLER PERFORMANCE METRICS (include_controller_metrics=true):
+- Controller sync duration 95th percentile: Measures control plane responsiveness for policy updates and configuration changes
+- Pod annotation latency 99th percentile: Time from pod creation to OVN annotation completion, critical for pod startup performance
+- Service sync latency and 99th percentile: Service configuration and load balancer setup delays affecting application connectivity
+- Network programming duration for pods and services: Time to apply network configurations, impacting policy enforcement speed
+- Controller ready duration: Bootstrap and restart times affecting cluster recovery
 
-NODE READINESS METRICS:
-- ovnkube_node_ready_duration_seconds: Time required for OVN-K node agents to synchronize and reach operational state
-- Top 10 longest node ready durations with node location mapping for geographic or infrastructure correlation
-- Node-level sync performance assessment identifying problematic nodes requiring attention
-- Network infrastructure readiness analysis for troubleshooting connectivity and configuration issues
+NODE PERFORMANCE METRICS (include_node_metrics=true):
+- Node sync duration 95th percentile: Node-level configuration synchronization performance and health
+- CNI ADD request latency 99th percentile: Pod network interface creation time, directly impacting pod startup delays
+- CNI DEL request latency 99th percentile: Network cleanup performance during pod deletion
+- Node ready duration: Node bootstrap times affecting cluster scaling and recovery operations
 
-CONTROLLER SYNC DURATION METRICS:
-- ovnkube_controller_sync_duration_seconds: Resource-specific synchronization times including pods, services, network policies, and ingress resources
-- Top 20 longest sync durations with detailed resource breakdown (resource type, name, namespace)
-- Per-resource synchronization performance enabling identification of problematic resources or resource types
-- Sync duration trend analysis with statistical aggregation (min/avg/max) for performance baseline establishment
-- Resource-specific bottleneck identification for targeted optimization and troubleshooting
+POD LIFECYCLE LATENCY ANALYSIS (include_pod_latency=true):
+- Pod creation first seen LSP latency 99th percentile: Time from pod detection to logical switch port creation in OVN
+- Pod creation port binding latency 99th percentile: Duration for OVN port binding operations affecting network connectivity
+- End-to-end pod networking setup time: Complete workflow from pod scheduling to network readiness
+- Resource correlation: Pod names, nodes, and resource types for targeted troubleshooting
 
-SERVICE PROCESSING RATE METRICS:
-- ovnkube_controller_sync_service_total rate: Service synchronization throughput measured in operations per second
-- Top 10 highest service processing rates indicating controller load and throughput capacity
-- Service sync performance trends and processing efficiency analysis
-- Throughput capacity assessment for service-heavy workload planning and optimization
+SERVICE NETWORKING PERFORMANCE (include_service_latency=true):
+- Service synchronization latency trends and percentiles
+- Network programming duration for service endpoint updates
+- Load balancer configuration delays impacting traffic routing
+- Service-to-service communication setup time
 
-STATISTICAL ANALYSIS AND AGGREGATION:
-- Instant queries: Current snapshot with top performers and immediate performance indicators
-- Duration queries: Statistical analysis with min/avg/max values, trend identification, and performance degradation detection
-- Cross-component performance correlation enabling holistic control plane health assessment
-- Resource utilization efficiency metrics and optimization opportunity identification
+COMPREHENSIVE STATISTICAL ANALYSIS (include_statistics=true):
+- Performance percentiles (95th, 99th) for all metric categories to identify outliers and trends
+- Maximum and average latency values with human-readable time formats (ms/s/min/h)
+- Data point counts and distribution analysis for statistical significance
+- Top N worst-performing operations with detailed context (pod names, nodes, resources)
+- Cross-component performance correlation and bottleneck identification
 
-RESOURCE IDENTIFICATION AND MAPPING:
-- Detailed resource information extraction including resource name, type (Pod, Service, NetworkPolicy), and namespace
-- Pod-to-node mapping for correlating sync performance with underlying infrastructure
-- Resource-specific performance patterns enabling targeted troubleshooting and optimization
-- Cross-namespace sync performance analysis for multi-tenant environment monitoring
+OPERATIONAL INSIGHTS AND TROUBLESHOOTING:
+- Component health assessment through latency thresholds and performance trends
+- Resource correlation (pod names, node assignments, namespaces) for targeted investigation  
+- Performance baseline establishment for capacity planning and SLA monitoring
+- Incident correlation with specific time periods using duration and end_time parameters
+- Historical trend analysis for performance degradation detection and optimization planning
 
-PERFORMANCE THRESHOLDS AND ALERTING:
-- Automatic identification of unusually long sync durations requiring immediate attention
-- Performance baseline establishment through historical trend analysis
-- Sync duration threshold monitoring for proactive performance management
-- Resource synchronization efficiency assessment with optimization recommendations
+QUERY CAPABILITIES:
+- Instant queries: Current performance snapshot for real-time monitoring and alerts
+- Duration queries: Historical analysis over specified time periods (5m to 24h+) for trend identification
+- Flexible time range selection: Custom start/end times for incident investigation
+- Category filtering: Focus on specific performance areas (pod, service, CNI, controller) for targeted analysis
+- Configurable result limits: Balance between comprehensive data and response performance
 
-OPERATIONAL METADATA:
-- Collection timestamp with UTC timezone for consistent time correlation across monitoring systems
-- Query execution metadata including data point counts, metric collection success rates, and error handling
-- Structured JSON output format compatible with monitoring dashboards, alerting systems, and automation tools
-- Performance analysis summary with overall maximum values, averages, and performance outliers
+METRICS CATEGORIZATION:
+- ready_duration: Component startup and bootstrap performance metrics
+- percentile_latency: Statistical performance analysis with 95th/99th percentiles  
+- pod_latency: Complete pod creation workflow timing and network setup delays
+- cni_latency: Container Network Interface operation performance for pod networking
+- service_latency: Service configuration and load balancer setup performance
+- network_programming: OVN policy application and configuration enforcement timing
 
 Parameters:
-- query_type (default: "instant"): Query method - "instant" for current sync metrics snapshot or "duration" for time-range trend analysis
-- duration (optional): Required for duration queries - time window using Prometheus format ("5m", "30m", "1h", "6h", "24h")
-- timestamp (optional): Specific time for instant historical queries in ISO format (YYYY-MM-DDTHH:MM:SSZ)
-- end_time (optional): End time for duration queries in ISO format, defaults to current time
+- duration (optional): Prometheus time format for range queries ('5m', '1h', '24h') - omit for instant query
+- end_time (optional): ISO timestamp for historical analysis - requires duration parameter
+- include_controller_metrics (default: true): Controller sync operations, policy application, service configuration
+- include_node_metrics (default: true): Node synchronization, CNI operations, infrastructure performance  
+- include_pod_latency (default: true): Pod lifecycle timing, network setup delays, annotation processing
+- include_service_latency (default: true): Service synchronization, load balancer configuration, endpoint updates
+- metric_categories (optional): Filter specific categories ['pod_latency', 'cni_latency', 'service_latency', etc.]
+- top_n_results (default: 10): Number of detailed results per metric (1-50) for performance analysis depth
+- include_statistics (default: true): Statistical analysis, percentiles, and performance summaries
+- save_to_file (default: false): Export results to JSON for documentation and further analysis
 
-OPERATIONAL USE CASES:
-- Performance troubleshooting: Identify sync bottlenecks causing application deployment delays or network policy application issues
-- Capacity planning: Analyze controller and node sync performance trends for infrastructure scaling decisions
-- Incident response: Correlate sync duration spikes with application performance issues or network connectivity problems
-- Maintenance planning: Establish performance baselines and identify optimal maintenance windows based on sync load patterns
-- Resource optimization: Identify resource types or namespaces with consistently high sync durations requiring configuration optimization
-- Health monitoring: Continuous monitoring of OVN-K control plane performance for proactive issue detection
-- Compliance reporting: Document sync performance metrics for SLA compliance and performance audit requirements
-- Troubleshooting automation: Programmatic identification of sync performance issues for automated alerting and remediation
+Use this tool for:
+- Performance monitoring and SLA compliance verification for network operations
+- Bottleneck identification during pod creation, service updates, or policy application
+- Capacity planning through historical trend analysis and performance baseline establishment
+- Incident investigation with specific time range analysis and component correlation
+- Optimization planning by identifying highest-impact latency improvements
+- Operational health assessment of OVN-Kubernetes control and data plane components
+- Development and testing performance validation for network policy and configuration changes
+- Executive reporting on network infrastructure performance and reliability metrics
 
-This tool is essential for maintaining optimal OVN-Kubernetes control plane performance and ensuring efficient network resource management in OpenShift clusters."""
+The tool provides comprehensive latency analysis suitable for both real-time operations monitoring and strategic performance optimization, enabling data-driven decisions about network infrastructure scaling, optimization, and troubleshooting priorities."""
 )
-async def query_ovnk_sync_duration_seconds_metrics(request: OVNKSyncDurationRequest) -> Dict[str, Any]:
+async def get_ovnk_latency_metrics(request: OVNLatencyRequest) -> Dict[str, Any]:
     """
-    Query comprehensive OVN-Kubernetes synchronization duration metrics including controller 
-    ready times, node synchronization performance, resource reconciliation durations, 
-    and service processing rates.
+    Collect and analyze comprehensive OVN-Kubernetes latency metrics including controller sync operations,
+    CNI request processing, pod lifecycle latencies, and service configuration delays.
     
-    Provides critical visibility into OVN-K control plane performance, sync bottlenecks, 
-    and operational efficiency.
+    Provides detailed insights into network control plane and data plane performance for
+    bottleneck identification and optimization opportunities.
     """
-    global prometheus_client
     try:
-        if not prometheus_client:
+        global auth_manager, prometheus_client
+        
+        # Ensure components are initialized
+        if not auth_manager or not prometheus_client:
             await initialize_components()
         
-        # Initialize the OVN sync duration collector
-        collector = OVNSyncDurationCollector(prometheus_client)
+        logger.info(f"Starting OVN latency metrics collection - "
+                   f"Duration: {request.duration or 'instant'}, "
+                   f"Categories: {request.metric_categories or 'all'}")
         
-        # Determine query type and execute appropriate collection method
-        if request.query_type == "instant":
-            logger.info("Collecting instant OVN sync duration metrics...")
-            
-            # Add timeout to prevent hanging during instant collection
-            result = await asyncio.wait_for(
-                collector.collect_comprehensive_metrics(request.timestamp),
-                timeout=30.0
-            )
-            
-            # Log collection summary
-            overall_summary = result.get('overall_summary', {})
-            metrics_collected = overall_summary.get('metrics_collected', 0)
-            total_data_points = overall_summary.get('total_data_points', 0)
-            
-            logger.info(f"Instant sync metrics collection completed - "
-                       f"Metrics collected: {metrics_collected}, "
-                       f"Total data points: {total_data_points}")
-            
-        elif request.query_type == "duration":
-            if not request.duration:
-                return {
-                    "error": "Duration parameter is required for duration-based queries",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "suggestion": "Provide duration parameter (e.g., '5m', '1h', '6h') for time-range analysis"
-                }
-            
-            logger.info(f"Collecting OVN sync duration metrics for duration: {request.duration}")
-            
-            # Add timeout to prevent hanging during duration collection
-            result = await asyncio.wait_for(
-                collector.collect_duration_metrics(request.duration, request.end_time),
-                timeout=45.0
-            )
-            
-            # Log collection summary
-            overall_summary = result.get('overall_summary', {})
-            metrics_collected = overall_summary.get('metrics_collected', 0)
-            total_series = overall_summary.get('total_series', 0)
-            
-            logger.info(f"Duration sync metrics collection completed - "
-                       f"Metrics collected: {metrics_collected}, "
-                       f"Total time series: {total_series}")
-            
-        else:
-            return {
-                "error": f"Invalid query_type '{request.query_type}'. Must be 'instant' or 'duration'",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "valid_query_types": ["instant", "duration"]
+        # Initialize the OVN latency collector
+        collector = OVNLatencyCollector(prometheus_client)
+        
+        # Determine timeout based on query type and duration
+        timeout = 300.0  # Default for instant queries
+        if request.duration:
+            # Increase timeout for longer duration queries
+            duration_seconds = _parse_duration_to_seconds(request.duration)
+            if duration_seconds > 3600:  # > 1 hour
+                timeout = 1200.0
+            elif duration_seconds > 300:  # > 5 minutes
+                timeout = 600.0
+            else:
+                timeout = 300.0
+        
+        # Collect comprehensive metrics with timeout
+        metrics_data = await asyncio.wait_for(
+            collector.collect_comprehensive_enhanced_metrics(
+                time=None,
+                duration=request.duration,
+                end_time=request.end_time,
+                categories=request.metric_categories
+            ),
+            timeout=timeout
+        )
+        
+        # Apply category filtering if specified
+        if request.metric_categories:
+            filtered_data = {
+                'collection_timestamp': metrics_data.get('collection_timestamp'),
+                'timezone': metrics_data.get('timezone'),
+                'collection_type': metrics_data.get('collection_type'),
+                'query_type': metrics_data.get('query_type'),
+                'query_parameters': metrics_data.get('query_parameters', {}),
+                'overall_summary': {}  # Will be regenerated
             }
+            
+            # Category mapping to metric sections
+            category_mapping = {
+                'ready_duration': 'ready_duration_metrics',
+                'percentile_latency': 'percentile_latency_metrics', 
+                'pod_latency': 'pod_latency_metrics',
+                'cni_latency': 'cni_latency_metrics',
+                'service_latency': 'service_latency_metrics',
+                'network_programming': 'network_programming_metrics'
+            }
+            
+            # Filter based on requested categories
+            for category in request.metric_categories:
+                if category in category_mapping:
+                    section_key = category_mapping[category]
+                    if section_key in metrics_data:
+                        filtered_data[section_key] = metrics_data[section_key]
+            
+            # Regenerate summary for filtered data
+            collector._generate_enhanced_summary(filtered_data)
+            metrics_data = filtered_data
+            
+            logger.info(f"Applied category filtering: {request.metric_categories}")
         
-        return result
+        # Apply component-specific filtering
+        if not request.include_controller_metrics:
+            # Remove controller-specific metrics
+            sections_to_filter = ['percentile_latency_metrics', 'pod_latency_metrics', 
+                                'service_latency_metrics', 'network_programming_metrics']
+            for section in sections_to_filter:
+                if section in metrics_data:
+                    # Filter out controller metrics within each section
+                    filtered_section = {k: v for k, v in metrics_data[section].items() 
+                                      if v.get('component') != 'controller'}
+                    metrics_data[section] = filtered_section
+            
+            logger.info("Controller metrics filtered out")
+        
+        if not request.include_node_metrics:
+            # Remove node-specific metrics
+            sections_to_filter = ['ready_duration_metrics', 'percentile_latency_metrics', 'cni_latency_metrics']
+            for section in sections_to_filter:
+                if section in metrics_data:
+                    # Filter out node metrics within each section
+                    filtered_section = {k: v for k, v in metrics_data[section].items() 
+                                      if v.get('component') != 'node'}
+                    metrics_data[section] = filtered_section
+            
+            logger.info("Node metrics filtered out")
+        
+        # Apply top N filtering to detailed results
+        if request.top_n_results != 10:  # Only modify if different from default
+            _apply_top_n_filtering(metrics_data, request.top_n_results)
+            logger.info(f"Applied top {request.top_n_results} filtering to detailed results")
+        
+        # Remove statistics if not requested
+        if not request.include_statistics:
+            _remove_statistics_from_results(metrics_data)
+            logger.info("Statistics removed from results")
+        
+        
+        # Add collection metadata
+        metrics_data['collection_metadata'] = {
+            'tool_name': 'get_ovnk_latency_metrics',
+            'parameters_applied': {
+                'duration': request.duration,
+                'end_time': request.end_time,
+                'include_controller_metrics': request.include_controller_metrics,
+                'include_node_metrics': request.include_node_metrics,
+                'include_pod_latency': request.include_pod_latency,
+                'include_service_latency': request.include_service_latency,
+                'metric_categories': request.metric_categories,
+                'top_n_results': request.top_n_results,
+                'include_statistics': request.include_statistics,
+                # 'save_to_file': request.save_to_file
+            },
+            'collection_timeout_seconds': timeout,
+            'query_type': request.duration and 'duration' or 'instant'
+        }
+        
+        # Log collection summary
+        summary = metrics_data.get('overall_summary', {})
+        total_metrics = summary.get('total_metrics_collected', 0)
+        successful_metrics = summary.get('successful_metrics', 0)
+        failed_metrics = summary.get('failed_metrics', 0)
+        
+        top_latency = None
+        if summary.get('overall_max_latency'):
+            max_latency = summary['overall_max_latency']
+            top_latency = f"{max_latency['readable']['value']}{max_latency['readable']['unit']} ({max_latency['metric']})"
+        
+        logger.info(f"OVN latency collection completed - "
+                   f"Metrics: {successful_metrics}/{total_metrics} successful, "
+                   f"Failed: {failed_metrics}, "
+                   f"Top latency: {top_latency or 'N/A'}")
+        
+        return metrics_data
         
     except asyncio.TimeoutError:
-        timeout_seconds = 30 if request.query_type == "instant" else 45
         return {
-            "error": f"Timeout collecting OVN sync duration metrics - operation exceeded {timeout_seconds} seconds",
+            "error": f"Timeout collecting OVN latency metrics after {timeout} seconds - cluster may be under heavy load or experiencing performance issues",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "timeout_seconds": timeout_seconds,
-            "query_type": request.query_type,
-            "suggestion": "Cluster may be experiencing performance issues or have extensive OVN resources. Try shorter duration or check cluster responsiveness."
+            "timeout_seconds": timeout,
+            "suggestion": "Try reducing the duration range, limiting categories, or checking cluster performance"
         }
     except Exception as e:
-        logger.error(f"Error querying OVN sync duration metrics: {e}")
+        logger.error(f"Error collecting OVN latency metrics: {e}")
         return {
-            "error": str(e), 
+            "error": str(e),
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tool_name": "query_ovnk_sync_duration_seconds_metrics",
-            "query_type": request.query_type
+            "tool_name": "get_ovnk_latency_metrics"
         }
+
 
 @app.tool(
     name="query_kube_api_metrics",
@@ -1835,6 +1926,51 @@ async def shutdown_handler():
     logger.info("Shutdown handler called")
     await cleanup_resources()
     logger.info("Shutdown complete")
+
+# Add these helper functions at the end of the file, before main()
+
+def _parse_duration_to_seconds(duration: str) -> int:
+    """Parse Prometheus duration string to seconds"""
+    import re
+    
+    # Handle common duration formats
+    match = re.match(r'^(\d+)([smhd])$', duration.lower())
+    if not match:
+        return 300  # Default 5 minutes
+    
+    value = int(match.group(1))
+    unit = match.group(2)
+    
+    multipliers = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+    return value * multipliers.get(unit, 60)
+
+
+def _apply_top_n_filtering(metrics_data: Dict[str, Any], top_n: int) -> None:
+    """Apply top N filtering to statistics sections in metrics data"""
+    for section_key, section_data in metrics_data.items():
+        if isinstance(section_data, dict) and section_key.endswith('_metrics'):
+            for metric_key, metric_data in section_data.items():
+                if isinstance(metric_data, dict) and 'statistics' in metric_data:
+                    stats = metric_data['statistics']
+                    if 'top_6' in stats:
+                        # Adjust the top results count
+                        current_results = stats.get('top_6', [])
+                        stats[f'top_{min(top_n, len(current_results))}'] = current_results[:top_n]
+                        # Keep original key for compatibility but limit results
+                        stats['top_6'] = current_results[:min(6, top_n)]
+
+
+def _remove_statistics_from_results(metrics_data: Dict[str, Any]) -> None:
+    """Remove statistical analysis from metrics data"""
+    for section_key, section_data in metrics_data.items():
+        if isinstance(section_data, dict) and section_key.endswith('_metrics'):
+            for metric_key, metric_data in section_data.items():
+                if isinstance(metric_data, dict) and 'statistics' in metric_data:
+                    # Keep only basic info, remove detailed statistics
+                    basic_stats = {
+                        'count': metric_data['statistics'].get('count', 0)
+                    }
+                    metric_data['statistics'] = basic_stats
 
 
 async def main():

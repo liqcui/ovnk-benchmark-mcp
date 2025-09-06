@@ -423,9 +423,9 @@ class OVNKubePerformanceMonitor:
     """High-level monitoring class that combines collection and analysis"""
     
     def __init__(self, prometheus_client, analyzer: Optional[OVNKubeSyncDurationAnalyzer] = None):
-        from ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
+        from ovnk_benchmark_prometheus_ovnk_latency import OVNLatencyCollector
         
-        self.collector = OVNSyncDurationCollector(prometheus_client)
+        self.collector = OVNLatencyCollector(prometheus_client)
         self.analyzer = analyzer or OVNKubeSyncDurationAnalyzer()
     
     async def monitor_instant_performance(self, save_results: bool = True) -> Dict[str, Any]:

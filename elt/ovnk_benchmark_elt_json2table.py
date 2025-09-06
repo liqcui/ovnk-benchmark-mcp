@@ -19,7 +19,7 @@ from .ovnk_benchmark_elt_pods_usage import PodsUsageELT
 from .ovnk_benchmark_elt_utility import EltUtility
 from .ovnk_benchmark_elt_cluster_stat import ClusterStatELT
 from .ovnk_benchmark_elt_ovs import OvsELT
-from .ovnk_benchmark_elt_sync import syncDurationELT
+from .ovnk_benchmark_elt_latency import ovnLatencyELT
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,8 @@ class PerformanceDataELT(EltUtility):
         self.pods_usage_elt = PodsUsageELT()
         self.cluster_stat_elt = ClusterStatELT() 
         self.ovs_elt = OvsELT()
-        self.sync_elt = syncDurationELT()
+        self.kube_api_elt = kubeAPIELT()
+        self.ovn_latency_elt = ovnLatencyELT()  # NEW: Add OVN latency ELT
 
     def extract_json_data(self, mcp_results: Union[Dict[str, Any], str]) -> Dict[str, Any]:
         """Extract relevant data from MCP tool results"""
@@ -69,8 +70,10 @@ class PerformanceDataELT(EltUtility):
                 extracted['structured_data'] = self.cluster_stat_elt.extract_cluster_stat(mcp_results)
             elif extracted['data_type'] == 'ovs_metrics':  # NEW: Handle OVS metrics
                 extracted['structured_data'] = self.ovs_elt.extract_ovs_data(mcp_results) 
-            elif extracted['data_type'] == 'sync_duration':  # NEW: Handle sync duration
-                extracted['structured_data'] = self.sync_elt.extract_sync_data(mcp_results)
+            elif extracted['data_type'] == 'ovn_latency_metrics':  # NEW: Handle OVN latency metrics
+                extracted['structured_data'] = self.ovn_latency_elt.extract_ovn_latency_data(mcp_results)
+            elif extracted['data_type'] == 'kube_api_metrics':  # NEW: Handle Kube API metrics
+                extracted['structured_data'] = self.kube_api_elt.extract_kube_api_data(mcp_results)                
             else:
                 extracted['structured_data'] = self._extract_generic_data(mcp_results)
             
@@ -83,10 +86,31 @@ class PerformanceDataELT(EltUtility):
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from MCP results"""
 
-        if ('controller_ready_duration' in data and 'node_ready_duration' in data and 
-            'controller_sync_duration' in data and 'controller_service_rate' in data and 
-            'overall_summary' in data):
-            return 'sync_duration'
+        # NEW: Check for OVN latency metrics data (comprehensive enhanced metrics)
+        if ('overall_summary' in data and 'collection_type' in data and 
+            data.get('collection_type') in ['enhanced_comprehensive', 'comprehensive'] and
+            any(key in data for key in ['ready_duration_metrics', 'sync_duration_metrics', 
+                                    'percentile_latency_metrics', 'pod_latency_metrics', 
+                                    'cni_latency_metrics', 'service_latency_metrics', 
+                                    'network_programming_metrics'])):
+            return 'ovn_latency_metrics'
+        
+        # Check for single OVN latency metric results
+        if ('metric_name' in data and 'statistics' in data and 'component' in data and
+            'unit' in data and any(component in data.get('component', '') for component in ['controller', 'node'])):
+            return 'ovn_latency_metrics'
+
+        # if ('controller_ready_duration' in data and 'node_ready_duration' in data and 
+        #     'controller_sync_duration' in data and 'controller_service_rate' in data and 
+        #     'overall_summary' in data):
+        #     return 'sync_duration'
+
+        if ('metrics' in data and 'summary' in data and 
+            'timestamp' in data and 'duration' in data):
+            metrics = data.get('metrics', {})
+            if ('readonly_latency' in metrics and 'mutating_latency' in metrics and 
+                'basic_api' in metrics):
+                return 'kube_api_metrics'
 
         # NEW: Check for OVS metrics data
         if ('cpu_usage' in data and 'memory_usage' in data and 
@@ -192,14 +216,10 @@ class PerformanceDataELT(EltUtility):
                 return self.cluster_stat_elt.summarize_cluster_stat(structured_data)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics summary
                 return self.ovs_elt.summarize_ovs_data(structured_data) 
-            elif data_type == 'sync_duration':  # NEW: Handle sync duration summary
-                return self.sync_elt.summarize_sync_data(structured_data)
-            elif data_type == 'prometheus_basic_info':
-                return self._summarize_prometheus_basic_info(structured_data)
-            elif data_type == 'kube_api_metrics':
-                return self._summarize_kube_api_metrics(structured_data)
-            elif data_type == 'pod_status':
-                return self._summarize_pod_status(structured_data)
+            elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency summary
+                return self.ovn_latency_elt.summarize_ovn_latency_data(structured_data)
+            elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics summary
+                return self.kube_api_elt.summarize_kube_api_data(structured_data)
             else:
                 return self._summarize_generic(structured_data)
         
@@ -231,8 +251,10 @@ class PerformanceDataELT(EltUtility):
                 return self.cluster_stat_elt.transform_to_dataframes(structured_data)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics transformation
                 return self.ovs_elt.transform_to_dataframes(structured_data) 
-            elif data_type == 'sync_duration':  # NEW: Handle sync duration transformation
-                return self.sync_elt.transform_to_dataframes(structured_data)                               
+            elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency transformation
+                return self.ovn_latency_elt.transform_to_dataframes(structured_data)
+            elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics transformation
+                return self.kube_api_elt.transform_to_dataframes(structured_data)                                           
             else:
                 # Default transformation for other data types
                 dataframes = {}
@@ -277,8 +299,10 @@ class PerformanceDataELT(EltUtility):
                 return self.cluster_stat_elt.generate_html_tables(dataframes)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics HTML generation
                 return self.ovs_elt.generate_html_tables(dataframes)     
-            elif data_type == 'sync_duration':  # NEW: Handle sync duration HTML generation
-                return self.sync_elt.generate_html_tables(dataframes)                           
+            elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency HTML generation
+                return self.ovn_latency_elt.generate_html_tables(dataframes)
+            elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics HTML generation
+                return self.kube_api_elt.generate_html_tables(dataframes)                                          
             else:
                 # Default HTML table generation
                 html_tables = {}

@@ -22,7 +22,7 @@ from analysis.ovnk_benchmark_analysis_cluster_stat import analyze_cluster_status
 
 from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
-from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
+from tools.ovnk_benchmark_prometheus_ovnk_latency import OVNLatencyCollector
 from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
 from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
@@ -115,10 +115,7 @@ class ClusterInfoRequest(BaseModel):
         default=True,
         description="Whether to include Machine Config Pool (MCP) status information showing update progress and any degraded pools"
     )
-    save_to_file: bool = Field(
-        default=False,
-        description="Whether to save the collected cluster information to a timestamped JSON file for documentation and audit purposes"
-    )
+    # save_to_file removed
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
@@ -556,20 +553,7 @@ async def get_openshift_cluster_info(request: ClusterInfoRequest) -> Dict[str, A
             cluster_data.pop('mcp_status', None)
             logger.info("Machine Config Pool status excluded from response")
         
-        # Save to file if requested
-        if request.save_to_file:
-            try:
-                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                filename = f"cluster_info_{timestamp}.json"
-                
-                with open(filename, 'w') as f:
-                    json.dump(cluster_data, f, indent=2, default=str)
-                
-                cluster_data['saved_file'] = filename
-                logger.info(f"Cluster information saved to {filename}")
-            except Exception as save_error:
-                logger.warning(f"Failed to save cluster info to file: {save_error}")
-                cluster_data['save_file_error'] = str(save_error)
+        # save_to_file handling removed
         
         # Add collection metadata
         cluster_data['collection_metadata'] = {
@@ -580,7 +564,7 @@ async def get_openshift_cluster_info(request: ClusterInfoRequest) -> Dict[str, A
                 'include_network_policies': request.include_network_policies,
                 'include_operator_status': request.include_operator_status,
                 'include_mcp_status': request.include_mcp_status,
-                'save_to_file': request.save_to_file
+                # 'save_to_file': request.save_to_file
             },
             'collection_duration_seconds': 60.0,
             'data_freshness': cluster_data.get('collection_timestamp'),

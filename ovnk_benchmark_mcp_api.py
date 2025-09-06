@@ -20,7 +20,7 @@ from tools.ovnk_benchmark_openshift_general_info import OpenShiftGeneralInfo
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery
 from tools.ovnk_benchmark_prometheus_kubeapi import kubeAPICollector
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector, collect_ovn_duration_usage
-from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
+from tools.ovnk_benchmark_prometheus_ovnk_latency import OVNLatencyCollector
 from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
 from tools.ovnk_benchmark_prometheus_nodes_usage import NodeUsageQuery
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
@@ -359,7 +359,7 @@ async def query_ovnk_sync_duration_seconds_metrics(request: MetricsRequest = Met
     try:
         if not prometheus_client:
             await initialize_components()
-        collector = OVNSyncDurationCollector(prometheus_client)
+        collector = OVNLatencyCollector(prometheus_client)
         return await collector.collect_sync_duration_seconds_metrics(request.duration)
     except Exception as e:
         raise HTTPException(
@@ -497,7 +497,7 @@ async def analyze_sync_duration_performance(request: AnalysisRequest):
         # Get metrics data if not provided
         metrics_data = request.metrics_data
         if not metrics_data:
-            collector = OVNSyncDurationCollector(prometheus_client)
+            collector = OVNLatencyCollector(prometheus_client)
             metrics_data = await collector.collect_sync_duration_seconds_metrics(request.duration)
         
         # Perform analysis
@@ -637,7 +637,7 @@ async def analyze_unified_performance(request: AnalysisRequest):
             
             # Collect sync duration metrics
             try:
-                sync_collector = OVNSyncDurationCollector(prometheus_client)
+                sync_collector = OVNLatencyCollector(prometheus_client)
                 components_data["sync_duration"] = await sync_collector.collect_sync_duration_seconds_metrics(request.duration)
             except Exception as e:
                 components_data["sync_duration"] = {"error": str(e)}

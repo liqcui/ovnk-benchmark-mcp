@@ -20,7 +20,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery, PrometheusQueryError
 from tools.ovnk_benchmark_prometheus_basicinfo import ovnBasicInfoCollector, get_pod_phase_counts
 from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
-from tools.ovnk_benchmark_prometheus_ovnk_sync import OVNSyncDurationCollector
+from tools.ovnk_benchmark_prometheus_ovnk_latency import OVNLatencyCollector
 from tools.ovnk_benchmark_prometheus_pods_usage import PodsUsageCollector
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 
@@ -144,7 +144,7 @@ class OVNKPerformanceAnalyzer:
             logger.info(f"Collecting sync metrics {f'for duration {duration}' if duration else 'instant'}...")
             
             async with PrometheusBaseQuery(self.prometheus_url, self.token) as prometheus_client:
-                sync_collector = OVNSyncDurationCollector(prometheus_client)
+                sync_collector = OVNLatencyCollector(prometheus_client)
                 
                 if duration:
                     return await sync_collector.collect_sync_duration_seconds_metrics(duration)
