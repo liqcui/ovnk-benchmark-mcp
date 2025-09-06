@@ -6,7 +6,7 @@
 project_root/
 ├── ovnk_benchmark_auth.py                              # Authentication module (provided)
 ├── ovnk_benchmark_prometheus_basequery.py             # Base Prometheus query module (provided)
-├── metrics.yml                                        # Metrics configuration file (optional)
+├── metrics-base.yml                                   # Metrics configuration file (optional)
 ├── tools/
 │   └── ovnk_benchmark_prometheus_ovnk_containers.py   # Main collector module
 └── analysis/
@@ -19,7 +19,7 @@ project_root/
 **Class: `OVNKContainersUsageCollector`**
 
 Features:
-- **YAML Configuration Support**: Reads PromQL queries from `metrics.yml` file
+- **YAML Configuration Support**: Reads PromQL queries from `metrics-base.yml` file
 - **Fallback to Hardcoded Queries**: Uses built-in PromQL if YAML file is missing/invalid
 - Collects CPU, memory, and DB size metrics for OVN Kubernetes containers
 - Supports both instant and duration-based collection
@@ -48,7 +48,7 @@ Features:
 - Generates human-readable performance reports
 - Configurable thresholds for different resource types
 
-### 3. `metrics.yml` - Configuration File
+### 3. `metrics-base.yml` - Configuration File
 **Format**: YAML with metrics definitions
 
 Features:
@@ -59,7 +59,7 @@ Features:
 
 ## Metrics Configuration Priority
 
-1. **YAML File** (`metrics.yml`): Primary source if file exists and is valid
+1. **YAML File** (`metrics-base.yml`): Primary source if file exists and is valid
 2. **Hardcoded Queries**: Fallback if YAML file is missing, empty, or invalid
 3. **Runtime Reload**: Configuration can be reloaded without restarting
 

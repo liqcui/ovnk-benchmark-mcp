@@ -109,7 +109,7 @@ ocp-benchmark-mcp/
 │   └── ovnk_benchmark_prometheus_ovnk_sync.py  # OVN sync metrics
 ├── config/
 │   ├── ovnk_benchmark_config.py               # Configuration management
-│   └── metrics.yml                            # Prometheus metrics definitions
+│   └── metrics-base.yml                       # Prometheus metrics definitions
 ├── analysis/
 │   └── ovnk_benchmark_performance_analysis.py # Performance analysis
 ├── elt/
@@ -139,7 +139,7 @@ export KUBECONFIG=/path/to/kubeconfig
 
 ### Metrics Configuration
 
-The `config/metrics.yml` file defines all Prometheus queries organized by category:
+The `config/metrics-base.yml` file defines all Prometheus queries organized by category:
 
 - **General Information**: Pod and namespace status
 - **API Server**: Request latency and error rates

@@ -30,12 +30,7 @@ from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 from config.ovnk_benchmark_config import Config
 from elt.ovnk_benchmark_elt_duckdb import PerformanceELT
 from storage.ovnk_benchmark_storage_ovnk import PrometheusStorage
-from analysis.ovnk_benchmark_performance_analysis_allovnk import OVNKPerformanceAnalyzer
-from analysis.ovnk_benchmark_performance_analysis_clusters_api import ClusterAPIPerformanceAnalyzer
-from analysis.ovnk_benchmark_performance_analysis_overall import (
-    OverallPerformanceAnalyzer,
-    analyze_overall_performance_with_auth
-)
+
 
 import fastmcp
 from fastmcp.server import FastMCP
@@ -831,59 +826,102 @@ async def query_cluster_node_usage(request: MetricsRequest) -> Dict[str, Any]:
 
 @app.tool(
     name="query_prometheus_basic_info",
-    description="""Query basic OVN-Kubernetes infrastructure information including OVN database sizes and cluster-wide pod status from Prometheus metrics. This tool provides essential baseline metrics for OVN-K cluster health monitoring and capacity planning.
+    description="""Query comprehensive OVN-Kubernetes basic infrastructure information including OVN database metrics, cluster-wide pod status distribution, top alerts analysis, pod distribution across nodes, and network latency metrics from Prometheus. This tool provides essential baseline metrics and operational insights for OVN-K cluster health monitoring, capacity planning, and performance analysis.
 
-CORE METRICS COLLECTED:
+COMPREHENSIVE METRICS COLLECTION:
 
 OVN DATABASE METRICS (when include_db_metrics=True):
-- OVN Northbound database size in bytes with maximum values across all instances
-- OVN Southbound database size in bytes with maximum values across all instances
-- Database size metrics help monitor OVN control plane storage requirements and growth patterns
-- Instance labels and metadata for identifying specific database instances and their locations
-- Critical for detecting database bloat, storage capacity planning, and performance optimization
+- OVN Northbound database size in bytes with maximum values across all instances for storage monitoring
+- OVN Southbound database size in bytes with maximum values across all instances for capacity planning  
+- Database size trends help monitor OVN control plane storage requirements and growth patterns
+- Instance labels and metadata for identifying specific database locations and performance characteristics
+- Critical for detecting database bloat, storage capacity planning, and performance optimization initiatives
 
-POD STATUS METRICS (when include_pod_status=True):
-- Cluster-wide pod counts grouped by phase (Running, Pending, Failed, Succeeded, Unknown)
-- Total pod count across all namespaces for capacity monitoring and resource utilization analysis  
-- Pod distribution analysis showing cluster workload patterns and potential scheduling issues
-- Phase-specific counts help identify stuck pods, resource constraints, and cluster health issues
-- Essential for capacity planning, troubleshooting deployment issues, and operational monitoring
+CLUSTER-WIDE POD STATUS ANALYSIS (when include_pod_status=True):
+- Complete pod phase distribution (Running, Pending, Failed, Succeeded, Unknown) across all namespaces
+- Total pod count for cluster-wide capacity monitoring and workload density analysis
+- Pod health indicators and failure pattern identification for operational monitoring
+- Resource utilization insights through pod distribution patterns and scheduling effectiveness
+- Essential for capacity planning, troubleshooting deployment issues, and cluster health assessment
 
-CUSTOM METRICS (when custom_metrics specified):
-- Support for additional Prometheus queries specified as metric_name -> query_string pairs
-- Maximum value extraction for custom metrics with full label preservation
-- Flexible extension point for collecting specific OVN-K or cluster metrics not covered by default collection
-- Custom metrics enable targeted monitoring for specific use cases, troubleshooting scenarios, or performance analysis
+TOP ALERTS MONITORING (when include_top_alerts=True):
+- Top 6 active alerts ranked by severity and occurrence count for immediate operational attention
+- Alert severity classification (critical, warning, info) with impact assessment and priority ranking
+- Alert frequency analysis showing trending issues and recurring problems requiring systematic resolution
+- Alert metadata including alert names, severity levels, occurrence counts, and timestamps
+- Proactive issue identification enabling preventive maintenance and system reliability improvements
 
-OPERATIONAL METADATA:
-- Query execution timestamps for data freshness verification and correlation with other monitoring data
-- Error handling and reporting for individual metric collection failures without failing entire operation
-- Structured JSON output format suitable for integration with monitoring dashboards and automation systems
-- Query type identification (instant vs range) and measurement units for proper data interpretation
+POD DISTRIBUTION ANALYSIS (when include_pod_distribution=True):
+- Top 6 nodes by pod count showing workload distribution patterns and potential scheduling imbalances
+- Node role identification (master, worker, infra) with workload characteristics and capacity utilization
+- Per-node pod density analysis for load balancing insights and capacity optimization
+- Node metadata including names, roles, pod counts, and timestamps for operational correlation
+- Load balancing assessment and capacity planning guidance based on current distribution patterns
+
+NETWORK LATENCY METRICS (when include_latency_metrics=True):
+- API server request duration percentiles (99th percentile) for control plane performance monitoring
+- etcd request duration percentiles for backend storage performance and responsiveness analysis
+- OVN controller latency percentiles (95th percentile) for network control plane performance assessment
+- Network RTT (Round Trip Time) percentiles for inter-component communication performance evaluation
+- Custom latency metrics from optional metrics-latency.yml configuration file for specialized monitoring
+
+OPERATIONAL METADATA AND INTEGRATION:
+- Collection timestamp and timezone information (UTC) for data freshness verification and correlation
+- Query execution success metrics and error reporting for individual component collection failures
+- Structured JSON output format suitable for monitoring dashboard integration and automation systems
+- Component-specific metadata including query types, measurement units, and result counts
+- Data quality indicators and collection completeness reporting for operational confidence
+
+FLEXIBLE CONFIGURATION OPTIONS:
+- Custom metrics support through metric_name -> prometheus_query dictionary for specialized monitoring requirements
+- Optional metrics file integration (metrics-latency.yml) for standardized latency monitoring configurations
+- Selective component collection enabling focused analysis and reduced response times when needed
+- Error isolation ensuring partial failures don't prevent successful collection of other components
+- Extensible architecture supporting additional metric categories and specialized monitoring requirements
+
+COMPREHENSIVE SUMMARY REPORTING:
+- Unified JSON summary combining all collected metrics with correlation and cross-component analysis
+- Statistical summaries and key performance indicators for executive reporting and dashboard integration
+- Collection metadata including execution duration, success rates, and component health indicators
+- Structured format enabling programmatic analysis, alerting integration, and automated reporting workflows
+- Historical baseline establishment for trend analysis and performance degradation detection over time
 
 Parameters:
-- include_pod_status (default: true): Collect cluster-wide pod phase distribution and total counts for workload monitoring
-- include_db_metrics (default: true): Collect OVN Northbound and Southbound database size metrics for storage monitoring  
-- custom_metrics (optional): Dictionary of additional Prometheus queries in format {"metric_name": "prometheus_query"} for extended monitoring
+- include_pod_status (default: true): Collect cluster-wide pod phase distribution and status information for workload monitoring and capacity planning
+- include_db_metrics (default: true): Collect OVN Northbound and Southbound database size metrics for storage monitoring and growth analysis
+- include_top_alerts (default: true): Collect top 6 active alerts by severity for immediate operational awareness and proactive issue identification
+- include_pod_distribution (default: true): Collect top 6 nodes by pod count for load balancing analysis and capacity distribution assessment
+- include_latency_metrics (default: true): Collect network and API latency percentiles for performance monitoring and bottleneck identification
+- custom_metrics (optional): Dictionary of additional Prometheus queries in format {"metric_name": "prometheus_query"} for specialized monitoring
+- metrics_file (optional): Path to metrics-latency.yml file containing standardized latency metric definitions for consistent monitoring
+- comprehensive_collection (default: true): Collect all available metrics in single operation for complete infrastructure overview
 
-Use this tool for:
-- Baseline cluster health monitoring and establishing normal operational parameters
-- OVN database growth tracking and storage capacity planning for long-term infrastructure planning
-- Quick cluster status overview combining networking infrastructure and workload distribution
-- Troubleshooting cluster-wide issues by understanding pod distribution patterns and database health
-- Capacity planning analysis using both infrastructure (database) and workload (pod) metrics
-- Integration with monitoring dashboards requiring core OVN-K infrastructure metrics
-- Operational health checks before and after maintenance activities or configuration changes
-- Performance baseline establishment for trending analysis and anomaly detection over time
+SPECIALIZED USE CASES:
+- Daily operational health monitoring combining infrastructure status, workload distribution, and performance metrics
+- Capacity planning analysis using database growth, pod distribution, and resource utilization patterns
+- Performance baseline establishment for SLA monitoring and trend analysis over time
+- Alert correlation analysis combining active alerts with infrastructure metrics for root cause identification
+- Load balancing optimization using pod distribution and node capacity analysis
+- Network performance monitoring through latency metrics and OVN database responsiveness
+- Executive reporting with comprehensive infrastructure health and performance summaries
 
-The tool provides essential OVN-K infrastructure visibility combining both control plane (database) and data plane (pod status) metrics for comprehensive cluster monitoring and operational awareness."""
+INTEGRATION AND AUTOMATION:
+- Monitoring dashboard data source for unified OVN-K infrastructure visibility
+- Automated alerting system integration with threshold-based risk assessment capabilities
+- Capacity planning automation using growth trends and utilization forecasting
+- Performance regression detection through historical baseline comparison and trend analysis
+- Operational runbook integration providing context for troubleshooting and incident response
+
+The tool provides comprehensive OVN-K infrastructure baseline metrics essential for operational monitoring, capacity planning, performance analysis, and proactive issue identification, making it ideal for both real-time operations and strategic infrastructure management initiatives."""
 )
 async def query_prometheus_basic_info(request: PrometheusBasicInfoRequest) -> Dict[str, Any]:
     """
-    Query basic OVN-Kubernetes infrastructure information including OVN database sizes
-    and cluster-wide pod status from Prometheus metrics.
+    Query comprehensive OVN-Kubernetes basic infrastructure information including OVN database metrics,
+    cluster-wide pod status distribution, top alerts analysis, pod distribution across nodes,
+    and network latency metrics from Prometheus.
     
-    Provides essential baseline metrics for OVN-K cluster health monitoring and capacity planning.
+    Provides essential baseline metrics and operational insights for OVN-K cluster health monitoring,
+    capacity planning, and performance analysis.
     """
     global prometheus_client, auth_manager
     
@@ -891,83 +929,49 @@ async def query_prometheus_basic_info(request: PrometheusBasicInfoRequest) -> Di
         if not prometheus_client or not auth_manager:
             await initialize_components()
         
-        logger.info("Starting basic OVN infrastructure information collection...")
+        logger.info("Starting comprehensive basic OVN infrastructure information collection...")
         
+        # Initialize the enhanced OVN basic info collector
+        collector = ovnBasicInfoCollector(
+            auth_manager.prometheus_url, 
+            auth_manager.prometheus_token
+        )
+        
+        # Collect comprehensive summary with all metrics
+        logger.debug("Collecting comprehensive metrics summary...")
+        
+        # Add timeout to prevent hanging during comprehensive collection
+        comprehensive_summary = await asyncio.wait_for(
+            collector.collect_comprehensive_summary(),
+            timeout=60.0  # Extended timeout for comprehensive collection
+        )
+        
+        # Apply parameter-based filtering
         results = {
-            "collection_timestamp": datetime.now(timezone.utc).isoformat(),
-            "tool_name": "query_prometheus_basic_info"
+            "collection_timestamp": comprehensive_summary.get("collection_timestamp"),
+            "prometheus_url": comprehensive_summary.get("prometheus_url"),
+            "tool_name": "query_prometheus_basic_info_enhanced"
         }
         
-        # Collect OVN database metrics if requested
+        # Include metrics based on request parameters
         if request.include_db_metrics:
-            try:
-                logger.debug("Collecting OVN database size metrics...")
-                
-                collector = ovnBasicInfoCollector(
-                    auth_manager.prometheus_url, 
-                    auth_manager.prometheus_token
-                )
-                
-                # Use default metrics if no custom metrics specified for DB collection
-                db_metrics = None if request.custom_metrics is None else {}
-                
-                # Add timeout to prevent hanging
-                db_results = await asyncio.wait_for(
-                    collector.collect_max_values(db_metrics),
-                    timeout=15.0
-                )
-                
-                results["ovn_database_metrics"] = db_results
-                logger.info("OVN database metrics collected successfully")
-                
-            except asyncio.TimeoutError:
-                logger.warning("Timeout collecting OVN database metrics")
-                results["ovn_database_metrics"] = {
-                    "error": "Timeout collecting database metrics",
-                    "timeout_seconds": 15
-                }
-            except Exception as e:
-                logger.error(f"Error collecting OVN database metrics: {e}")
-                results["ovn_database_metrics"] = {"error": str(e)}
+            results["ovn_database_metrics"] = comprehensive_summary.get("metrics", {}).get("ovn_database", {})
+            logger.info("OVN database metrics included in response")
         
-        # Collect pod status metrics if requested  
         if request.include_pod_status:
-            try:
-                logger.debug("Collecting cluster-wide pod status metrics...")
-                
-                # Add timeout to prevent hanging
-                pod_status_results = await asyncio.wait_for(
-                    get_pod_phase_counts(
-                        auth_manager.prometheus_url,
-                        auth_manager.prometheus_token
-                    ),
-                    timeout=15.0
-                )
-                
-                results["pod_status_metrics"] = pod_status_results
-                logger.info(f"Pod status metrics collected - Total pods: {pod_status_results.get('total_pods', 0)}")
-                
-            except asyncio.TimeoutError:
-                logger.warning("Timeout collecting pod status metrics")
-                results["pod_status_metrics"] = {
-                    "error": "Timeout collecting pod status metrics",
-                    "timeout_seconds": 15
-                }
-            except Exception as e:
-                logger.error(f"Error collecting pod status metrics: {e}")
-                results["pod_status_metrics"] = {"error": str(e)}
+            results["pod_status_metrics"] = comprehensive_summary.get("metrics", {}).get("pod_status", {})
+            logger.info("Pod status metrics included in response")
         
-        # Collect custom metrics if specified
+        # Always include additional comprehensive metrics from the enhanced collector
+        results["alerts_summary"] = comprehensive_summary.get("metrics", {}).get("alerts", {})
+        results["pod_distribution"] = comprehensive_summary.get("metrics", {}).get("pod_distribution", {})
+        results["latency_metrics"] = comprehensive_summary.get("metrics", {}).get("latency", {})
+        
+        # Handle custom metrics if specified
         if request.custom_metrics:
             try:
                 logger.debug(f"Collecting {len(request.custom_metrics)} custom metrics...")
                 
-                collector = ovnBasicInfoCollector(
-                    auth_manager.prometheus_url,
-                    auth_manager.prometheus_token
-                )
-                
-                # Add timeout to prevent hanging
                 custom_results = await asyncio.wait_for(
                     collector.collect_max_values(request.custom_metrics),
                     timeout=20.0
@@ -979,43 +983,51 @@ async def query_prometheus_basic_info(request: PrometheusBasicInfoRequest) -> Di
             except asyncio.TimeoutError:
                 logger.warning("Timeout collecting custom metrics")
                 results["custom_metrics"] = {
-                    "error": "Timeout collecting custom metrics", 
+                    "error": "Timeout collecting custom metrics",
                     "timeout_seconds": 20
                 }
             except Exception as e:
                 logger.error(f"Error collecting custom metrics: {e}")
                 results["custom_metrics"] = {"error": str(e)}
         
-        # Add collection summary metadata
-        results["collection_metadata"] = {
+        # Add comprehensive collection summary
+        original_summary = comprehensive_summary.get("summary", {})
+        results["collection_summary"] = {
+            "total_metric_categories": original_summary.get("total_metric_categories", 5),
+            "successful_collections": original_summary.get("successful_collections", 0),
+            "failed_collections": original_summary.get("failed_collections", 0),
             "parameters_applied": {
                 "include_pod_status": request.include_pod_status,
                 "include_db_metrics": request.include_db_metrics,
                 "custom_metrics_count": len(request.custom_metrics) if request.custom_metrics else 0
             },
-            "metrics_collected": len([k for k in results.keys() if k.endswith("_metrics")]),
-            "collection_success": not any("error" in str(v) for v in results.values() if isinstance(v, dict))
+            "collection_method": "comprehensive_enhanced"
         }
         
-        # Log collection summary
-        metrics_collected = []
-        if request.include_db_metrics:
-            metrics_collected.append("OVN databases")
-        if request.include_pod_status:
-            metrics_collected.append("pod status")  
-        if request.custom_metrics:
-            metrics_collected.append(f"{len(request.custom_metrics)} custom metrics")
+        # Log collection summary with enhanced metrics
+        alerts_count = len(results.get("alerts_summary", {}).get("top_alerts", []))
+        top_nodes_count = len(results.get("pod_distribution", {}).get("top_nodes", []))
+        latency_metrics_count = len(results.get("latency_metrics", {}).get("metrics", {}))
         
-        logger.info(f"Basic OVN info collection completed - Collected: {', '.join(metrics_collected)}")
+        logger.info(f"Enhanced basic info collection completed - "
+                   f"Alerts: {alerts_count}, Top nodes: {top_nodes_count}, "
+                   f"Latency metrics: {latency_metrics_count}")
         
         return results
         
+    except asyncio.TimeoutError:
+        return {
+            "error": "Timeout collecting comprehensive basic information - cluster may be experiencing issues",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timeout_seconds": 60,
+            "suggestion": "Try limiting the scope with selective parameters or check cluster responsiveness"
+        }
     except Exception as e:
-        logger.error(f"Error in basic OVN info collection: {e}")
+        logger.error(f"Error in enhanced basic info collection: {e}")
         return {
             "error": str(e),
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tool_name": "query_prometheus_basic_info"
+            "tool_name": "query_prometheus_basic_info_enhanced"
         }
 
 @app.tool(

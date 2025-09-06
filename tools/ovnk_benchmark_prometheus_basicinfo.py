@@ -1,19 +1,20 @@
 """
-OVN Basic Info Collector Module
-Collects basic OVN database information and pod status from Prometheus
+OVN Basic Info Collector Module - Enhanced
+Collects basic OVN database information, alerts, pod distribution, and latency metrics from Prometheus
 """
 
 import asyncio
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from .ovnk_benchmark_prometheus_basequery import PrometheusBaseQuery, PrometheusQueryError
+from .ovnk_benchmark_prometheus_utility import mcpToolsUtility
 
 logger = logging.getLogger(__name__)
 
 
 class ovnBasicInfoCollector:
-    """Collector for basic OVN database information"""
+    """Enhanced collector for OVN database information, alerts, pod distribution, and latency metrics"""
     
     def __init__(self, prometheus_url: str, token: Optional[str] = None):
         """
@@ -25,15 +26,61 @@ class ovnBasicInfoCollector:
         """
         self.prometheus_url = prometheus_url
         self.token = token
+        self.utility = mcpToolsUtility()
+        
+        # Default OVN database metrics
         self.default_metrics = {
             "ovn_northbound_db_size": 'ovn_db_db_size_bytes{db_name=~"OVN_Northbound"}',
             "ovn_southbound_db_size": 'ovn_db_db_size_bytes{db_name=~"OVN_Southbound"}'
         }
+        
+        # New metrics queries
+        self.alerts_query = 'topk(10,sum(ALERTS{severity!="none"}) by (alertname, severity))'
+        self.pod_distribution_query = 'count(kube_pod_info{}) by (node)'
+        
+        # Default latency metrics (hardcoded fallback)
+        self.default_latency_metrics = {
+            "apiserver_request_duration": 'histogram_quantile(0.99, sum(rate(apiserver_request_duration_seconds_bucket[5m])) by (le, verb, resource))',
+            "etcd_request_duration": 'histogram_quantile(0.99, sum(rate(etcd_request_duration_seconds_bucket[5m])) by (le, operation))',
+            "ovn_controller_latency": 'histogram_quantile(0.95, sum(rate(ovn_controller_sb_db_transaction_duration_seconds_bucket[5m])) by (le))',
+            "network_latency": 'histogram_quantile(0.95, sum(rate(network_rtt_seconds_bucket[5m])) by (le, destination))'
+        }
+        
         logger.debug(f"Initialized ovnBasicInfoCollector with URL={prometheus_url}")
+    
+    def _load_latency_metrics_from_file(self, file_path: str = "metrics-latency.yml") -> Dict[str, str]:
+        """
+        Load latency metrics from YAML file
+        
+        Args:
+            file_path: Path to metrics-latency.yml file
+            
+        Returns:
+            Dictionary of metric_name -> query_string
+        """
+        try:
+            import yaml
+            with open(file_path, 'r') as f:
+                data = yaml.safe_load(f)
+            
+            metrics = {}
+            if isinstance(data, dict) and 'metrics' in data:
+                for metric_name, config in data['metrics'].items():
+                    if isinstance(config, dict) and 'query' in config:
+                        metrics[metric_name] = config['query']
+                    elif isinstance(config, str):
+                        metrics[metric_name] = config
+            
+            logger.info(f"Loaded {len(metrics)} latency metrics from {file_path}")
+            return metrics if metrics else self.default_latency_metrics
+            
+        except Exception as e:
+            logger.warning(f"Could not load metrics from {file_path}: {e}. Using hardcoded defaults.")
+            return self.default_latency_metrics
     
     async def collect_max_values(self, metrics: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Collect maximum values for OVN database metrics
+        Collect maximum values for OVN database metrics (existing function - unchanged)
         
         Args:
             metrics: Optional dictionary of metric_name -> query_string
@@ -87,9 +134,235 @@ class ovnBasicInfoCollector:
             logger.info(f"Collected max values for {len(results)} metrics")
             return results
     
+    async def collect_top_alerts(self) -> Dict[str, Any]:
+        """
+        Collect top 10 alerts by severity
+        
+        Returns:
+            Dictionary with top 6 alerts information
+        """
+        logger.info("Collecting top alerts")
+        
+        async with PrometheusBaseQuery(self.prometheus_url, self.token) as prom:
+            try:
+                raw_result = await prom.query_instant(self.alerts_query)
+                formatted_result = prom.format_query_result(raw_result, include_labels=True)
+                
+                # Sort by value (count) descending and take top 6
+                sorted_alerts = sorted(
+                    [item for item in formatted_result if item.get('value') is not None],
+                    key=lambda x: x['value'],
+                    reverse=True
+                )[:6]
+                
+                alerts_data = []
+                for item in sorted_alerts:
+                    labels = item.get('labels', {})
+                    alerts_data.append({
+                        "alert_name": labels.get('alertname', 'unknown'),
+                        "severity": labels.get('severity', 'unknown'),
+                        "count": item.get('value', 0),
+                        "timestamp": item.get('timestamp')
+                    })
+                
+                return {
+                    "metric_name": "alerts_summary",
+                    "query": self.alerts_query,
+                    "top_alerts": alerts_data,
+                    "total_alert_types": len(alerts_data)
+                }
+                
+            except Exception as e:
+                logger.error(f"Error collecting alerts: {e}")
+                return {
+                    "metric_name": "alerts_summary",
+                    "error": str(e),
+                    "top_alerts": [],
+                    "total_alert_types": 0
+                }
+    
+    async def collect_pod_distribution(self) -> Dict[str, Any]:
+        """
+        Collect pod distribution across nodes
+        
+        Returns:
+            Dictionary with top 6 nodes by pod count
+        """
+        logger.info("Collecting pod distribution")
+        
+        async with PrometheusBaseQuery(self.prometheus_url, self.token) as prom:
+            try:
+                raw_result = await prom.query_instant(self.pod_distribution_query)
+                formatted_result = prom.format_query_result(raw_result, include_labels=True)
+                
+                # Sort by value (pod count) descending and take top 6
+                sorted_nodes = sorted(
+                    [item for item in formatted_result if item.get('value') is not None],
+                    key=lambda x: x['value'],
+                    reverse=True
+                )[:6]
+                
+                # Get node labels for role detection
+                node_labels = await self.utility.get_all_node_labels(prom)
+                
+                distribution_data = []
+                for item in sorted_nodes:
+                    labels = item.get('labels', {})
+                    node_name = labels.get('node', 'unknown')
+                    
+                    # Determine node role
+                    node_role = 'unknown'
+                    if node_name in node_labels:
+                        node_role = self.utility.determine_node_role(node_name, node_labels[node_name])
+                    
+                    distribution_data.append({
+                        "node_name": node_name,
+                        "node_role": node_role,
+                        "pod_count": int(item.get('value', 0)),
+                        "timestamp": item.get('timestamp')
+                    })
+                
+                return {
+                    "metric_name": "pod_distribution",
+                    "query": self.pod_distribution_query,
+                    "top_nodes": distribution_data,
+                    "total_nodes": len(distribution_data)
+                }
+                
+            except Exception as e:
+                logger.error(f"Error collecting pod distribution: {e}")
+                return {
+                    "metric_name": "pod_distribution",
+                    "error": str(e),
+                    "top_nodes": [],
+                    "total_nodes": 0
+                }
+    
+    async def collect_latency_metrics(self, metrics_file: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Collect latency metrics from file or use defaults
+        
+        Args:
+            metrics_file: Path to metrics-latency.yml file
+            
+        Returns:
+            Dictionary with latency metrics (top 6 results per metric)
+        """
+        logger.info("Collecting latency metrics")
+        
+        # Load metrics from file or use defaults
+        if metrics_file:
+            latency_metrics = self._load_latency_metrics_from_file(metrics_file)
+        else:
+            latency_metrics = self.default_latency_metrics
+        
+        async with PrometheusBaseQuery(self.prometheus_url, self.token) as prom:
+            results = {}
+            
+            for metric_name, query in latency_metrics.items():
+                try:
+                    logger.debug(f"Querying latency metric {metric_name}: {query}")
+                    
+                    raw_result = await prom.query_instant(query)
+                    formatted_result = prom.format_query_result(raw_result, include_labels=True)
+                    
+                    # Sort by value descending and take top 6
+                    sorted_results = sorted(
+                        [item for item in formatted_result if item.get('value') is not None],
+                        key=lambda x: x['value'],
+                        reverse=True
+                    )[:6]
+                    
+                    metric_data = []
+                    for item in sorted_results:
+                        metric_data.append({
+                            "value": item.get('value'),
+                            "labels": item.get('labels', {}),
+                            "timestamp": item.get('timestamp')
+                        })
+                    
+                    results[metric_name] = {
+                        "query": query,
+                        "top_values": metric_data,
+                        "unit": "seconds",
+                        "count": len(metric_data)
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Error querying latency metric {metric_name}: {e}")
+                    results[metric_name] = {
+                        "query": query,
+                        "error": str(e),
+                        "top_values": [],
+                        "count": 0
+                    }
+            
+            return {
+                "metric_name": "latency_summary",
+                "metrics": results,
+                "total_metrics": len(results)
+            }
+    
+    async def collect_comprehensive_summary(self, metrics_file: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Collect all metrics and assemble into comprehensive JSON summary
+        
+        Args:
+            metrics_file: Optional path to metrics-latency.yml file
+            
+        Returns:
+            Complete JSON summary with all metrics (max 5 levels deep)
+        """
+        logger.info("Collecting comprehensive metrics summary")
+        
+        try:
+            # Collect all metrics concurrently
+            tasks = [
+                self.collect_max_values(),
+                get_pod_phase_counts(self.prometheus_url, self.token),
+                self.collect_top_alerts(),
+                self.collect_pod_distribution(),
+                self.collect_latency_metrics(metrics_file)
+            ]
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Assemble summary
+            summary = {
+                "collection_timestamp": asyncio.get_event_loop().time(),
+                "prometheus_url": self.prometheus_url,
+                "metrics": {
+                    "ovn_database": results[0] if not isinstance(results[0], Exception) else {"error": str(results[0])},
+                    "pod_status": results[1] if not isinstance(results[1], Exception) else {"error": str(results[1])},
+                    "alerts": results[2] if not isinstance(results[2], Exception) else {"error": str(results[2])},
+                    "pod_distribution": results[3] if not isinstance(results[3], Exception) else {"error": str(results[3])},
+                    "latency": results[4] if not isinstance(results[4], Exception) else {"error": str(results[4])}
+                }
+            }
+            
+            # Add summary statistics
+            summary["summary"] = {
+                "total_metric_categories": 5,
+                "successful_collections": sum(1 for r in results if not isinstance(r, Exception)),
+                "failed_collections": sum(1 for r in results if isinstance(r, Exception))
+            }
+            
+            logger.info("Comprehensive summary collection completed")
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error collecting comprehensive summary: {e}")
+            return {
+                "collection_timestamp": asyncio.get_event_loop().time(),
+                "prometheus_url": self.prometheus_url,
+                "error": str(e),
+                "metrics": {},
+                "summary": {"total_metric_categories": 0, "successful_collections": 0, "failed_collections": 1}
+            }
+    
     def to_json(self, results: Dict[str, Any]) -> str:
         """
-        Convert results to JSON format
+        Convert results to JSON format (existing function - unchanged)
         
         Args:
             results: Results dictionary from collect_max_values()
@@ -102,7 +375,7 @@ class ovnBasicInfoCollector:
 
 async def get_pod_phase_counts(prometheus_url: str, token: Optional[str] = None) -> Dict[str, Any]:
     """
-    Get pod counts by phase from Prometheus
+    Get pod counts by phase from Prometheus (existing function - unchanged)
     
     Args:
         prometheus_url: Prometheus server URL
@@ -161,7 +434,7 @@ async def get_pod_phase_counts(prometheus_url: str, token: Optional[str] = None)
 
 def get_pod_phase_counts_json(prometheus_url: str, token: Optional[str] = None) -> str:
     """
-    Get pod counts by phase as JSON string
+    Get pod counts by phase as JSON string (existing function - unchanged)
     
     Args:
         prometheus_url: Prometheus server URL
@@ -182,32 +455,100 @@ def get_pod_phase_counts_json(prometheus_url: str, token: Optional[str] = None) 
     return json.dumps(result, indent=2)
 
 
+# Convenience functions for new metrics
+async def get_top_alerts_summary(prometheus_url: str, token: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get top alerts summary
+    
+    Args:
+        prometheus_url: Prometheus server URL
+        token: Optional authentication token
+        
+    Returns:
+        Dictionary with top alerts summary
+    """
+    collector = ovnBasicInfoCollector(prometheus_url, token)
+    return await collector.collect_top_alerts()
+
+
+async def get_pod_distribution_summary(prometheus_url: str, token: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get pod distribution summary
+    
+    Args:
+        prometheus_url: Prometheus server URL
+        token: Optional authentication token
+        
+    Returns:
+        Dictionary with pod distribution summary
+    """
+    collector = ovnBasicInfoCollector(prometheus_url, token)
+    return await collector.collect_pod_distribution()
+
+
+async def get_latency_metrics_summary(prometheus_url: str, token: Optional[str] = None, metrics_file: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get latency metrics summary
+    
+    Args:
+        prometheus_url: Prometheus server URL
+        token: Optional authentication token
+        metrics_file: Optional path to metrics-latency.yml
+        
+    Returns:
+        Dictionary with latency metrics summary
+    """
+    collector = ovnBasicInfoCollector(prometheus_url, token)
+    return await collector.collect_latency_metrics(metrics_file)
+
+
+async def get_comprehensive_metrics_summary(prometheus_url: str, token: Optional[str] = None, metrics_file: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get comprehensive metrics summary including all metric types
+    
+    Args:
+        prometheus_url: Prometheus server URL
+        token: Optional authentication token
+        metrics_file: Optional path to metrics-latency.yml
+        
+    Returns:
+        Complete JSON summary with all metrics
+    """
+    collector = ovnBasicInfoCollector(prometheus_url, token)
+    return await collector.collect_comprehensive_summary(metrics_file)
+
+
 # Example usage
 async def main():
-    """Example usage of the ovnBasicInfoCollector"""
+    """Example usage of the enhanced ovnBasicInfoCollector"""
     prometheus_url = "https://your-prometheus-server"
     token = "your-token-here"  # Optional
     
-    # Collect OVN database max values
+    # Collect comprehensive summary
     collector = ovnBasicInfoCollector(prometheus_url, token)
     
-    # Use default metrics
-    max_values = await collector.collect_max_values()
-    print("OVN Database Max Values:")
-    print(collector.to_json(max_values))
+    # Get comprehensive summary including all metrics
+    summary = await collector.collect_comprehensive_summary()
+    print("Comprehensive Metrics Summary:")
+    print(json.dumps(summary, indent=2))
     
-    # Use custom metrics
-    custom_metrics = {
-        "custom_metric": 'your_custom_query_here'
-    }
-    custom_max_values = await collector.collect_max_values(custom_metrics)
-    print("\nCustom Metrics Max Values:")
-    print(collector.to_json(custom_max_values))
+    # Individual metric collection examples
+    print("\n=== Individual Metric Examples ===")
     
-    # Get pod phase counts
-    pod_phases = await get_pod_phase_counts(prometheus_url, token)
-    print("\nPod Phase Counts:")
-    print(json.dumps(pod_phases, indent=2))
+    # Top alerts
+    alerts = await collector.collect_top_alerts()
+    print("\nTop Alerts:")
+    print(json.dumps(alerts, indent=2))
+    
+    # Pod distribution
+    pod_dist = await collector.collect_pod_distribution()
+    print("\nPod Distribution:")
+    print(json.dumps(pod_dist, indent=2))
+    
+    # Latency metrics
+    latency = await collector.collect_latency_metrics()
+    print("\nLatency Metrics:")
+    print(json.dumps(latency, indent=2))
 
 
 if __name__ == "__main__":

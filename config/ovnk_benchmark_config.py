@@ -51,7 +51,7 @@ class ReportConfig(BaseModel):
 class Config(BaseModel):
     """Main configuration class"""
     kubeconfig_path: Optional[str] = Field(default=None)
-    metrics_file: str = Field(default="config/metrics.yml")
+    metrics_file: str = Field(default="config/metrics-base.yml")
     prometheus: PrometheusConfig = Field(default_factory=PrometheusConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     reports: ReportConfig = Field(default_factory=ReportConfig)
