@@ -20,6 +20,7 @@ from .ovnk_benchmark_elt_utility import EltUtility
 from .ovnk_benchmark_elt_cluster_stat import ClusterStatELT
 from .ovnk_benchmark_elt_ovs import OvsELT
 from .ovnk_benchmark_elt_latency import ovnLatencyELT
+from .ovnk_benchmark_elt_kubeapi import kubeAPIELT
 
 logger = logging.getLogger(__name__)
 
