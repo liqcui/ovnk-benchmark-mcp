@@ -461,7 +461,8 @@ class ovnLatencyELT(EltUtility):
                         'value': f"{readable_value.get('value', 0)} {readable_value.get('unit', 'ms')}"
                     })
                     if 'resource_name' in entry:
-                        detailed_entry['resource'] = self.truncate_text(entry.get('resource_name', 'unknown'), 20)
+                        # Keep the column name as 'resource_name' to surface in HTML tables
+                        detailed_entry['resource_name'] = self.truncate_text(entry.get('resource_name', 'unknown'), 20)
                     if 'service_name' in entry:
                         detailed_entry['service'] = self.truncate_text(entry.get('service_name', 'N/A'), 20)
                         detailed_entry['pod_name'] = 'N/A'
@@ -536,7 +537,10 @@ class ovnLatencyELT(EltUtility):
                 if table_name in ['latency_metadata', 'latency_summary']:
                     limited_df = self.limit_dataframe_columns(df, 2, table_name)
                 else:
-                    limited_df = df
+                    # Work on a copy and drop the 'component' column if present
+                    limited_df = df.copy()
+                if 'component' in limited_df.columns:
+                    limited_df = limited_df.drop(columns=['component'])
                 html_table = self.create_html_table(limited_df, table_name)
                 html_tables[table_name] = html_table
             return html_tables
