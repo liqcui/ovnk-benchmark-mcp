@@ -363,18 +363,8 @@ class ovnLatencyELT(EltUtility):
             }
 
     def _format_latency_for_summary(self, value_seconds: float) -> Dict[str, Union[str, float]]:
-        """Format latency value for summary display"""
-        try:
-            if value_seconds < 1:
-                return {'value': round(value_seconds * 1000, 2), 'unit': 'ms'}
-            elif value_seconds < 60:
-                return {'value': round(value_seconds, 3), 'unit': 's'}
-            elif value_seconds < 3600:
-                return {'value': round(value_seconds / 60, 2), 'unit': 'min'}
-            else:
-                return {'value': round(value_seconds / 3600, 2), 'unit': 'h'}
-        except:
-            return {'value': value_seconds, 'unit': 'seconds'}
+        """Reuse common summary formatter from EltUtility."""
+        return self.format_latency_for_summary(value_seconds)
 
     # ================= ELT-style extraction and presentation methods =================
     def extract_ovn_latency_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -474,28 +464,8 @@ class ovnLatencyELT(EltUtility):
                 output_list.append(metric_info)
 
     def _resolve_pod_and_node_names(self, entry: Dict[str, Any]) -> Tuple[str, str]:
-        """Resolve pod_name and node_name robustly from an entry with multiple possible key variants."""
-        def first_non_empty(d: Dict[str, Any], keys: List[str], default: str) -> str:
-            for k in keys:
-                v = d.get(k)
-                if isinstance(v, str) and v.strip():
-                    return v
-            # Also look into nested 'labels' or 'metadata' dicts if present
-            labels = d.get('labels') if isinstance(d.get('labels'), dict) else {}
-            for k in keys:
-                v = labels.get(k)
-                if isinstance(v, str) and v.strip():
-                    return v
-            meta = d.get('metadata') if isinstance(d.get('metadata'), dict) else {}
-            for k in keys:
-                v = meta.get(k)
-                if isinstance(v, str) and v.strip():
-                    return v
-            return default
-
-        pod_name = first_non_empty(entry, ['pod_name', 'pod', 'podname', 'podName'], 'N/A')
-        node_name = first_non_empty(entry, ['node_name', 'node', 'instance', 'nodename', 'nodeName', 'host'], 'unknown')
-        return pod_name, node_name
+        """Delegate to common resolver in EltUtility for consistency."""
+        return self.resolve_pod_and_node_names(entry)
 
     def _extract_summary_data(self, overall_summary: Dict[str, Any]) -> List[Dict[str, str]]:
         summary_data: List[Dict[str, str]] = []

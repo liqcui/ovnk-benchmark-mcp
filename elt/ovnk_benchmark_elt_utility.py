@@ -5,7 +5,7 @@ Common functions used across multiple ELT modules
 
 import logging
 import re
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Tuple
 import pandas as pd
 from datetime import datetime
 
@@ -312,6 +312,20 @@ class EltUtility:
         except (ValueError, TypeError):
             return str(value)
 
+    def format_latency_for_summary(self, value_seconds: float) -> Dict[str, Union[str, float]]:
+        """Format latency for summary blocks as a dict with value and unit."""
+        try:
+            if value_seconds < 1:
+                return {'value': round(value_seconds * 1000, 2), 'unit': 'ms'}
+            elif value_seconds < 60:
+                return {'value': round(value_seconds, 3), 'unit': 's'}
+            elif value_seconds < 3600:
+                return {'value': round(value_seconds / 60, 2), 'unit': 'min'}
+            else:
+                return {'value': round(value_seconds / 3600, 2), 'unit': 'h'}
+        except Exception:
+            return {'value': value_seconds, 'unit': 'seconds'}
+
     def categorize_latency_severity(self, value: float, unit: str = 'seconds') -> str:
         """Categorize latency severity for color coding"""
         try:
@@ -381,6 +395,30 @@ class EltUtility:
         
         color = badge_colors.get(severity, 'secondary')
         return f'<span class="badge badge-{color}">{formatted_value}</span>'
+
+    def resolve_pod_and_node_names(self, entry: Dict[str, Any]) -> Tuple[str, str]:
+        """Resolve pod_name and node_name from multiple possible keys (including nested dicts)."""
+        def first_non_empty(d: Dict[str, Any], keys: List[str], default: str) -> str:
+            for k in keys:
+                v = d.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v
+            # Also check nested 'labels' and 'metadata' if present
+            labels = d.get('labels') if isinstance(d.get('labels'), dict) else {}
+            for k in keys:
+                v = labels.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v
+            meta = d.get('metadata') if isinstance(d.get('metadata'), dict) else {}
+            for k in keys:
+                v = meta.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v
+            return default
+
+        pod_name = first_non_empty(entry, ['pod_name', 'pod', 'podname', 'podName'], 'N/A')
+        node_name = first_non_empty(entry, ['node_name', 'node', 'instance', 'nodename', 'nodeName', 'host'], 'unknown')
+        return pod_name, node_name
 
     def sort_latency_metrics_by_priority(self, metrics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Sort latency metrics by priority/importance"""
