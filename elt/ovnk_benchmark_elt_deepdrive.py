@@ -128,7 +128,7 @@ class deepDriveELT(EltUtility):
             'database_sizes': db_info,
             'alerts': alerts_info
         }
-
+ 
     def _extract_resource_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
             """Extract resource usage data"""
             # OVNKube pods CPU usage
@@ -171,39 +171,39 @@ class deepDriveELT(EltUtility):
                     'Max Mem MB': round(detailed_memory_usage.get('max', 0.0), 1) if detailed_memory_usage else 0.0
                 })
 
-            # Control plane pods
+            # Control plane pods - get memory data from separate top_5_memory list
             cp_pods_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
+            cp_pods_memory = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_memory', [])
+            
+            # Create a map for quick memory lookup by pod_name for control plane pods
+            cp_memory_map = {}
+            for mem_pod in cp_pods_memory:
+                pod_name = mem_pod.get('pod_name', '')
+                if pod_name:
+                    cp_memory_map[pod_name] = mem_pod.get('metrics', {}).get('memory_usage', {})
+            
             for pod in cp_pods_cpu:
                 cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
-                memory_usage = pod.get('metrics', {}).get('memory_usage', {})
+                pod_name = pod.get('pod_name', '')
+                memory_usage = cp_memory_map.get(pod_name, {})
                 rank = len(top_cpu_pods) + 1
+                
                 top_cpu_pods.append({
                     'Rank': rank,
-                    'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
+                    'Pod': self.truncate_text(pod_name, 25),
                     'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
                     'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
                     'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage and memory_usage.get('avg', 0) > 0 else "N/A"
                 })
 
-                # For detailed table, get memory data from ovnkube_pods_memory if not available
-                detailed_memory_usage = memory_usage
-                if not memory_usage or memory_usage.get('avg', 0) == 0:
-                    # Try to find memory data from ovnkube_pods_memory
-                    ovnkube_pods_memory = data.get('ovnkube_pods_memory', {})
-                    cp_pods_memory = ovnkube_pods_memory.get('ovnkube_control_plane_pods', {}).get('top_5_memory', [])
-                    for mem_pod in cp_pods_memory:
-                        if mem_pod.get('pod_name') == pod.get('pod_name'):
-                            detailed_memory_usage = mem_pod.get('metrics', {}).get('memory_usage', {})
-                            break
-
                 pods_usage_detailed.append({
                     'Scope': 'Control Pod',
-                    'Pod': pod.get('pod_name', ''),
+                    'Pod': pod_name,
                     'Node': pod.get('node_name', ''),
                     'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
                     'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
-                    'Avg Mem MB': round(detailed_memory_usage.get('avg', 0.0), 1) if detailed_memory_usage else 0.0,
-                    'Max Mem MB': round(detailed_memory_usage.get('max', 0.0), 1) if detailed_memory_usage else 0.0
+                    'Avg Mem MB': round(memory_usage.get('avg', 0.0), 1) if memory_usage else 0.0,
+                    'Max Mem MB': round(memory_usage.get('max', 0.0), 1) if memory_usage else 0.0
                 })
 
             # OVN containers usage
@@ -373,7 +373,7 @@ class deepDriveELT(EltUtility):
                 'containers_usage_detailed': containers_usage_detailed,
                 'nodes_usage_detailed': nodes_usage_detailed,
                 'nodes_network_usage': nodes_network_usage  # NEW TABLE
-            }            
+            }
 
     def _extract_latency_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract latency analysis data"""
