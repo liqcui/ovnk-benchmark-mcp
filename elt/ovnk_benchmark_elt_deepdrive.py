@@ -130,81 +130,90 @@ class deepDriveELT(EltUtility):
         }
  
     def _extract_resource_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
-            """Extract resource usage data"""
-            # OVNKube pods CPU usage
-            ovnkube_pods = data.get('ovnkube_pods_cpu', {})
-            top_cpu_pods = []
-            pods_usage_detailed: List[Dict[str, Any]] = []
+
+        """Extract resource usage data"""
+        # OVNKube pods CPU usage
+        ovnkube_pods = data.get('ovnkube_pods_cpu', {})
+        top_cpu_pods = []
+        pods_usage_detailed: List[Dict[str, Any]] = []
+        
+        # Create memory lookup maps from both CPU and memory sections
+        node_pods_memory_map = {}
+        cp_pods_memory_map = {}
+        
+        # Build memory map from ovnkube_node_pods.top_5_memory
+        node_pods_memory = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_memory', [])
+        for mem_pod in node_pods_memory:
+            pod_name = mem_pod.get('pod_name', '')
+            if pod_name:
+                node_pods_memory_map[pod_name] = mem_pod.get('metrics', {})
+        
+        # Build memory map from ovnkube_control_plane_pods.top_5_memory  
+        cp_pods_memory = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_memory', [])
+        for mem_pod in cp_pods_memory:
+            pod_name = mem_pod.get('pod_name', '')
+            if pod_name:
+                cp_pods_memory_map[pod_name] = mem_pod.get('metrics', {})
+
+        # Node pods
+        node_pods_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
+        for pod in node_pods_cpu[:5]:
+            cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
+            pod_name = pod.get('pod_name', '')
             
-            # Node pods
-            node_pods_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
-            for pod in node_pods_cpu[:5]:
-                cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
-                memory_usage = pod.get('metrics', {}).get('memory_usage', {})
-                rank = pod.get('rank', 0)
-                top_cpu_pods.append({
-                    'Rank': f"🏆 {rank}" if rank == 1 else rank,
-                    'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
-                    'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
-                    'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
-                    'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage and memory_usage.get('avg', 0) > 0 else "N/A"
-                })
-
-                # For detailed table, get memory data from ovnkube_pods_memory if not available
-                detailed_memory_usage = memory_usage
-                if not memory_usage or memory_usage.get('avg', 0) == 0:
-                    # Try to find memory data from ovnkube_pods_memory
-                    ovnkube_pods_memory = data.get('ovnkube_pods_memory', {})
-                    node_pods_memory = ovnkube_pods_memory.get('ovnkube_node_pods', {}).get('top_5_memory', [])
-                    for mem_pod in node_pods_memory:
-                        if mem_pod.get('pod_name') == pod.get('pod_name'):
-                            detailed_memory_usage = mem_pod.get('metrics', {}).get('memory_usage', {})
-                            break
-
-                pods_usage_detailed.append({
-                    'Scope': 'Node Pod',
-                    'Pod': pod.get('pod_name', ''),
-                    'Node': pod.get('node_name', ''),
-                    'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
-                    'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
-                    'Avg Mem MB': round(detailed_memory_usage.get('avg', 0.0), 1) if detailed_memory_usage else 0.0,
-                    'Max Mem MB': round(detailed_memory_usage.get('max', 0.0), 1) if detailed_memory_usage else 0.0
-                })
-
-            # Control plane pods - get memory data from separate top_5_memory list
-            cp_pods_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
-            cp_pods_memory = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_memory', [])
+            # Get memory data from memory map
+            memory_metrics = node_pods_memory_map.get(pod_name, {})
+            memory_usage = memory_metrics.get('memory_usage', {})
             
-            # Create a map for quick memory lookup by pod_name for control plane pods
-            cp_memory_map = {}
-            for mem_pod in cp_pods_memory:
-                pod_name = mem_pod.get('pod_name', '')
-                if pod_name:
-                    cp_memory_map[pod_name] = mem_pod.get('metrics', {}).get('memory_usage', {})
-            
-            for pod in cp_pods_cpu:
-                cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
-                pod_name = pod.get('pod_name', '')
-                memory_usage = cp_memory_map.get(pod_name, {})
-                rank = len(top_cpu_pods) + 1
-                
-                top_cpu_pods.append({
-                    'Rank': rank,
-                    'Pod': self.truncate_text(pod_name, 25),
-                    'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
-                    'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
-                    'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage and memory_usage.get('avg', 0) > 0 else "N/A"
-                })
+            rank = pod.get('rank', 0)
+            top_cpu_pods.append({
+                'Rank': f"🏆 {rank}" if rank == 1 else rank,
+                'Pod': self.truncate_text(pod_name, 25),
+                'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
+                'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
+                'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage and memory_usage.get('avg', 0) > 0 else "N/A"
+            })
 
-                pods_usage_detailed.append({
-                    'Scope': 'Control Pod',
-                    'Pod': pod_name,
-                    'Node': pod.get('node_name', ''),
-                    'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
-                    'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
-                    'Avg Mem MB': round(memory_usage.get('avg', 0.0), 1) if memory_usage else 0.0,
-                    'Max Mem MB': round(memory_usage.get('max', 0.0), 1) if memory_usage else 0.0
-                })
+            pods_usage_detailed.append({
+                'Scope': 'Node Pod',
+                'Pod': pod_name,
+                'Node': pod.get('node_name', ''),
+                'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
+                'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
+                'Avg Mem MB': round(memory_usage.get('avg', 0.0), 1) if memory_usage else 0.0,
+                'Max Mem MB': round(memory_usage.get('max', 0.0), 1) if memory_usage else 0.0
+            })
+
+        # Control plane pods
+        cp_pods_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
+        
+        for pod in cp_pods_cpu:
+            cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
+            pod_name = pod.get('pod_name', '')
+            
+            # Get memory data from memory map
+            memory_metrics = cp_pods_memory_map.get(pod_name, {})
+            memory_usage = memory_metrics.get('memory_usage', {})
+            
+            rank = len(top_cpu_pods) + 1
+            
+            top_cpu_pods.append({
+                'Rank': rank,
+                'Pod': self.truncate_text(pod_name, 25),
+                'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
+                'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
+                'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage and memory_usage.get('avg', 0) > 0 else "N/A"
+            })
+
+            pods_usage_detailed.append({
+                'Scope': 'Control Pod',
+                'Pod': pod_name,
+                'Node': pod.get('node_name', ''),
+                'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
+                'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
+                'Avg Mem MB': round(memory_usage.get('avg', 0.0), 1) if memory_usage else 0.0,
+                'Max Mem MB': round(memory_usage.get('max', 0.0), 1) if memory_usage else 0.0
+            })
 
             # OVN containers usage
             container_usage = []
