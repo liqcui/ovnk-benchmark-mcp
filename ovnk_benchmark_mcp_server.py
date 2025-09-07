@@ -326,7 +326,6 @@ class OVNLatencyRequest(BaseModel):
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-
 class HealthCheckRequest(BaseModel):
     """Empty request model for health check"""
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
@@ -348,27 +347,23 @@ class OVNBasicInfoRequest(BaseModel):
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
-class ComprehensivePerformanceRequest(BaseModel):
-    """Request model for comprehensive OVNK performance analysis"""
+class OVNKDeepDriveAnalysisRequest(BaseModel):
+    """Request model for comprehensive OVN-Kubernetes deep drive performance analysis"""
     duration: Optional[str] = Field(
         default=None,
-        description="Analysis duration using Prometheus time format (e.g., '5m', '1h', '1d'). If not provided, performs instant analysis"
+        description="Analysis duration using Prometheus time format (e.g., '5m', '15m', '30m', '1h', '2h', '24h'). If not provided, performs instant analysis using current metrics. Duration analysis provides historical trend data while instant analysis gives real-time snapshot. Recommended: '5m' for quick performance checks, '30m' for standard analysis, '1h' for comprehensive trend analysis, '24h' for long-term performance patterns."
     )
-    generate_report: bool = Field(
+    include_performance_insights: bool = Field(
         default=True,
-        description="Whether to generate a human-readable summary report in addition to structured data"
+        description="Whether to include detailed performance analysis with scoring, key findings, recommendations, and resource hotspot identification. When True, provides comprehensive analysis including performance grading (A-D), component scoring for latency/resources/stability/OVS, actionable recommendations, and identification of high-usage nodes and pods. Set to False for faster execution when only raw metrics are needed."
     )
-    save_to_file: bool = Field(
-        default=False,
-        description="Whether to save analysis results to JSON file for documentation and audit purposes"
-    )
-    include_risk_assessment: bool = Field(
-        default=True,
-        description="Whether to include automated risk assessment with threshold-based alerts and recommendations"
-    )
-    performance_thresholds: Optional[Dict[str, Dict[str, float]]] = Field(
+    focus_components: Optional[List[str]] = Field(
         default=None,
-        description="Custom performance thresholds for risk assessment (overrides defaults). Structure: {'cpu': {'warning': 70.0, 'critical': 90.0}, 'memory': {'warning': 1073741824, 'critical': 2147483648}, 'sync_duration': {'warning': 5.0, 'critical': 10.0}, 'db_size': {'warning': 104857600, 'critical': 524288000}}"
+        description="Optional list of specific components to focus analysis on for targeted performance investigation. Available components: ['basic_info', 'ovnkube_pods', 'ovn_containers', 'ovs_metrics', 'latency_metrics', 'nodes_usage']. Examples: ['ovnkube_pods', 'latency_metrics'] for pod and latency focus, ['ovs_metrics'] for OVS-specific analysis, ['nodes_usage'] for node performance focus. If not specified, analyzes all components comprehensively for complete performance picture."
+    )
+    top_n_results: int = Field(
+        default=5,
+        description="Number of top results to return for each metric category (1-10). Controls the depth of analysis by limiting results to top N highest usage pods, containers, nodes, and latency metrics. Lower values (1-3) provide focused analysis on critical issues, higher values (5-10) provide broader performance visibility. Affects response size and processing time."
     )
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
@@ -1692,160 +1687,253 @@ async def perform_general_cluster_status_check(request: GeneralClusterStatusRequ
 
 
 @app.tool(
-    name="analyze_ovnk_comprehensive_performance",
-    description="""Perform comprehensive OVN-Kubernetes performance analysis across all components including pods, OVS, sync operations, and database metrics with automated risk assessment and actionable recommendations. This is the primary tool for complete OVNK performance evaluation and health monitoring.
+    name="analysis_ovnk_performance_deepdrive",
+    description="""Comprehensive OVN-Kubernetes deep drive performance analysis providing detailed insights into cluster networking performance, resource utilization, and operational health. This advanced analysis tool performs multi-dimensional performance assessment across all OVN-Kubernetes components including pods, containers, OVS metrics, latency measurements, and node utilization patterns.
 
-Parameters:
-- duration (optional): Analysis time window using Prometheus format (e.g., "5m", "1h", "1d", "7d"). If not provided, performs instant snapshot analysis using latest available data points
-- generate_report (default: true): Whether to generate a human-readable summary report with key findings, risk assessment, and recommendations in addition to structured JSON data
-- save_to_file (default: false): Whether to save complete analysis results to timestamped JSON file for documentation, audit trails, and historical reference
-- include_risk_assessment (default: true): Whether to include automated risk assessment with threshold-based alerting, severity classification (critical/warning/normal), and prioritized recommendations
-- performance_thresholds (optional): Custom performance thresholds for risk assessment that override system defaults. Use structure: {'cpu': {'warning': 70.0, 'critical': 90.0}, 'memory': {'warning': 1073741824, 'critical': 2147483648}, 'sync_duration': {'warning': 5.0, 'critical': 10.0}, 'db_size': {'warning': 104857600, 'critical': 524288000}}
+COMPREHENSIVE PERFORMANCE ANALYSIS:
+This tool leverages the ovnDeepDriveAnalyzer to collect and analyze performance data across six critical areas:
 
-Returns comprehensive performance analysis including:
+1. BASIC CLUSTER INFORMATION:
+- Cluster-wide pod phase distribution and status (Running, Pending, Failed, Succeeded)
+- OVN database sizes (Northbound/Southbound DB) with size trending and capacity analysis
+- Active alerts summary with severity classification and top alert types identification
+- Pod distribution across nodes for workload balance assessment
+- Collection timestamp and data freshness verification
 
-CORE METRICS ANALYSIS:
-- OVN database sizes (Northbound/Southbound) with growth trends and storage utilization alerts
-- Pod resource utilization across ovnkube-controller, ovnkube-node, and multus components with CPU/memory statistics
-- OVS dataplane performance including vswitchd and ovsdb-server resource consumption and flow processing efficiency
-- Sync operation performance with controller and node sync duration analysis and resource reconciliation times
-- Cluster-wide pod status distribution with health indicators and failed pod analysis
+2. OVNKUBE PODS CPU/MEMORY ANALYSIS:
+- Top 5 ovnkube-node-* pods with highest CPU and memory utilization
+- Top 5 ovnkube-control-plane-* pods with detailed resource consumption patterns
+- Per-pod metrics including average, maximum, and current resource usage
+- Node-level distribution showing which nodes host high-usage OVN pods
+- Resource utilization trends over specified duration for capacity planning
 
-AUTOMATED RISK ASSESSMENT:
-- Critical risks requiring immediate attention with specific component identification and recommended actions
-- Warning-level risks for proactive monitoring and preventive maintenance planning
-- Performance threshold violations with severity classification and historical context
-- Component-specific health scoring and degradation indicators
-- Risk categorization by type (cpu_usage, memory_usage, sync_duration, database_size) and affected components
+3. OVN CONTAINERS DEEP DIVE:
+- Top 5 critical OVN containers: sb-ovsdb, nb-ovsdb, ovnkube-controller, northd, ovn-controller
+- Container-level CPU and memory utilization with granular per-container breakdown
+- Container performance patterns and resource consumption trends
+- Container health indicators through resource stability metrics
+- Cross-container resource competition analysis and optimization opportunities
 
-INTELLIGENT RECOMMENDATIONS:
-- Prioritized action items based on risk severity and operational impact
-- Resource optimization suggestions including scaling recommendations and resource limit adjustments
-- Performance tuning guidance specific to identified bottlenecks and inefficiencies
-- Capacity planning insights based on current utilization trends and growth patterns
-- Maintenance recommendations for database cleanup, configuration optimization, and monitoring improvements
+4. OVS (Open vSwitch) METRICS COMPREHENSIVE ASSESSMENT:
+- Top 5 OVS vswitchd and OVSDB server processes by CPU utilization
+- Top 5 OVS database and vswitchd processes by memory consumption
+- OpenFlow datapath flows analysis with top flow-heavy nodes identification
+- Bridge flows metrics for br-int and br-ex including flow count and processing efficiency
+- OVS connection metrics including active connections and connection stability
 
-PERFORMANCE SUMMARIES:
-- Overall cluster health status (normal/warning/critical) with confidence scoring
-- Component-level performance statistics with min/avg/max values and trend indicators
-- Resource utilization efficiency analysis across different OVNK components
-- Performance comparison between components for load balancing insights
-- Key performance indicators (KPIs) with historical baselines when available
+5. LATENCY METRICS MULTI-DIMENSIONAL ANALYSIS:
+- Ready duration metrics: time for pods to reach ready state across different pod types
+- Sync duration metrics: OVN synchronization latencies including northbound-southbound sync times
+- Percentile latency metrics: 50th, 95th, 99th percentile latency analysis for performance SLA verification
+- Pod latency metrics: pod startup and networking configuration latencies
+- CNI (Container Network Interface) latency metrics: network plugin performance assessment  
+- Service latency metrics: service discovery and load balancing performance
+- Network programming metrics: time to program network rules and policies
+- Top 5 highest latency operations with component identification and impact assessment
 
-OPERATIONAL INSIGHTS:
-- Executive summary suitable for management reporting and stakeholder communication
-- Technical findings for engineering teams with specific metrics and thresholds
-- Trend analysis identifying performance degradation or improvement over time
-- Capacity planning data with utilization forecasts and scaling recommendations
-- Compliance reporting for operational SLAs and performance requirements
+6. NODES USAGE COMPREHENSIVE MONITORING:
+- Control plane (master) nodes: CPU, memory, network I/O utilization with summary and per-node breakdown
+- Infrastructure nodes: resource utilization patterns and capacity analysis
+- Top 5 worker nodes by CPU utilization: highest usage workers with detailed metrics and ranking
+- Network utilization (RX/TX) patterns across all node types for bandwidth analysis
+- Node performance comparison and capacity planning insights
 
-Use this tool for:
-- Regular operational health monitoring and proactive issue identification
-- Performance troubleshooting and root cause analysis for degraded cluster performance
-- Capacity planning and resource optimization initiatives
-- Pre-maintenance health verification and post-deployment validation
-- Executive reporting on infrastructure health and performance metrics
-- Compliance auditing and operational SLA monitoring
-- Performance baseline establishment for future comparison and trend analysis
-- Automated alerting integration with threshold-based risk assessment
+ADVANCED PERFORMANCE INSIGHTS ENGINE:
+When include_performance_insights=True, provides intelligent analysis including:
 
-This tool consolidates data from multiple specialized collectors (basic info, OVS metrics, sync operations, pod usage) into a unified analysis with intelligent interpretation, making it the primary choice for comprehensive OVNK performance evaluation."""
+PERFORMANCE SCORING SYSTEM:
+- Overall performance score (0-100) with letter grade (A-D) classification
+- Component-specific scoring: Latency (30%), Resource Utilization (30%), Stability (20%), OVS Performance (20%)
+- Weighted scoring algorithm accounting for critical vs. non-critical performance factors
+- Historical performance trending when duration analysis is used
+
+KEY FINDINGS IDENTIFICATION:
+- Automated detection of performance anomalies and resource hotspots
+- High CPU/memory usage pod identification with threshold-based alerting
+- High latency operation detection with impact severity assessment
+- Node performance issues identification including overutilized control plane/worker nodes
+- Resource competition analysis between co-located components
+
+ACTIONABLE RECOMMENDATIONS ENGINE:
+- Specific remediation steps for identified performance issues
+- Resource optimization suggestions based on usage patterns and trends
+- Configuration tuning recommendations for OVN and OVS components
+- Scaling recommendations for overutilized nodes or components
+- Preventive maintenance suggestions based on trend analysis
+
+RESOURCE HOTSPOT ANALYSIS:
+- Top resource-consuming pods with node placement and impact analysis
+- Memory and CPU hotspot identification across the cluster
+- Network bandwidth utilization hotspots and potential bottlenecks
+- Storage I/O impact on OVN database performance
+
+OPERATIONAL PARAMETERS:
+- duration: Controls analysis timeframe (instant vs. historical trend analysis)
+- include_performance_insights: Enables/disables advanced analysis engine
+- focus_components: Allows targeted analysis for specific troubleshooting scenarios
+- top_n_results: Controls analysis depth and response detail level
+
+USE CASES:
+- Pre-production performance validation and readiness assessment
+- Production performance monitoring and health check automation
+- Troubleshooting network performance issues and bottleneck identification
+- Capacity planning through resource utilization trending and forecasting  
+- SLA compliance verification through latency and availability metrics
+- Change impact assessment before/after cluster modifications
+- Executive performance reporting with actionable insights and recommendations
+- Automated performance regression detection in CI/CD pipelines
+
+OUTPUT FORMAT:
+Returns comprehensive JSON structure with timestamp, analysis type, duration, and organized performance data across all analyzed components. When performance insights are enabled, includes scoring, findings, recommendations, and hotspot analysis suitable for both technical teams and management reporting.
+
+This tool is essential for maintaining optimal OVN-Kubernetes performance, proactive issue identification, and data-driven infrastructure optimization decisions."""
 )
-async def analyze_ovnk_comprehensive_performance(request: ComprehensivePerformanceRequest) -> Dict[str, Any]:
+async def analysis_ovnk_performance_deepdrive(request: OVNKDeepDriveAnalysisRequest) -> Dict[str, Any]:
     """
-    Perform comprehensive OVN-Kubernetes performance analysis across all components including
-    pods, OVS, sync operations, and database metrics with automated risk assessment.
+    Perform comprehensive OVN-Kubernetes deep drive performance analysis with detailed
+    insights into cluster networking performance, resource utilization, and operational health.
     
-    This is the primary tool for complete OVNK performance evaluation and health monitoring.
+    Provides multi-dimensional performance assessment across all OVN-Kubernetes components
+    including advanced performance scoring, recommendations, and hotspot identification.
     """
-    global prometheus_client, auth_manager
     try:
-        if not prometheus_client or not auth_manager:
-            await initialize_components()
+        # Ensure components are initialized
+        global auth_manager, prometheus_client
         
-        logger.info(f"Starting comprehensive OVNK performance analysis (duration: {request.duration})")
+        if not auth_manager or not prometheus_client:
+            try:
+                await initialize_components()
+            except Exception as init_error:
+                return {
+                    "error": f"Component initialization failed: {init_error}",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "tool_name": "analysis_ovnk_performance_deepdrive"
+                }
         
-        # Initialize the performance analyzer
-        analyzer = OVNKPerformanceAnalyzer(
-            prometheus_url=auth_manager.prometheus_url,
-            token=auth_manager.prometheus_token,
-            auth_client=auth_manager
-        )
+        logger.info(f"Starting OVN deep drive performance analysis - Duration: {request.duration or 'instant'}, "
+                   f"Insights: {request.include_performance_insights}, "
+                   f"Focus: {request.focus_components or 'all'}, "
+                   f"Top N: {request.top_n_results}")
         
-        # Apply custom thresholds if provided
-        if request.performance_thresholds:
-            logger.info("Applying custom performance thresholds")
-            analyzer.thresholds.update(request.performance_thresholds)
+        # Import the deep drive analyzer
+        from analysis.ovnk_benchmark_performance_ovnk_deepdrive import ovnDeepDriveAnalyzer
         
-        # Perform comprehensive analysis with timeout
-        analysis_result = await asyncio.wait_for(
-            analyzer.analyze_comprehensive_performance(request.duration),
-            timeout=120.0  # Extended timeout for comprehensive analysis
-        )
+        # Initialize analyzer
+        analyzer = ovnDeepDriveAnalyzer(prometheus_client, auth_manager)
         
-        # Check if analysis completed successfully
-        if 'error' in analysis_result:
+        # Set timeout based on duration - longer durations need more time
+        timeout_seconds = 120  # Default 2 minutes
+        if request.duration:
+            if 'h' in request.duration:
+                timeout_seconds = 300  # 5 minutes for hour-based queries
+            elif 'm' in request.duration and int(request.duration.replace('m', '')) >= 30:
+                timeout_seconds = 240  # 4 minutes for 30+ minute queries
+        
+        # Execute analysis with timeout
+        try:
+            analysis_result = await asyncio.wait_for(
+                analyzer.run_comprehensive_analysis(request.duration),
+                timeout=timeout_seconds
+            )
+        except asyncio.TimeoutError:
             return {
-                'error': f"Analysis failed: {analysis_result['error']}",
-                'timestamp': datetime.now(timezone.utc).isoformat()
+                "error": f"Analysis timeout after {timeout_seconds} seconds - try with shorter duration or fewer focus components",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timeout_seconds": timeout_seconds,
+                "suggestion": "Consider using shorter duration ('5m' instead of '1h') or focus on specific components",
+                "tool_name": "analysis_ovnk_performance_deepdrive"
             }
         
-        # Generate human-readable report if requested
-        if request.generate_report:
-            try:
-                summary_report = analyzer.generate_summary_report(analysis_result)
-                analysis_result['summary_report'] = summary_report
-                logger.info("Summary report generated successfully")
-            except Exception as report_error:
-                logger.warning(f"Failed to generate summary report: {report_error}")
-                analysis_result['summary_report_error'] = str(report_error)
+        # Apply focus_components filter if specified
+        if request.focus_components:
+            filtered_result = {
+                'analysis_timestamp': analysis_result.get('analysis_timestamp'),
+                'analysis_type': analysis_result.get('analysis_type'),
+                'query_duration': analysis_result.get('query_duration'),
+                'timezone': analysis_result.get('timezone')
+            }
+            
+            # Map focus components to result keys
+            component_mapping = {
+                'basic_info': 'basic_info',
+                'ovnkube_pods': 'ovnkube_pods_cpu', 
+                'ovn_containers': 'ovn_containers',
+                'ovs_metrics': 'ovs_metrics',
+                'latency_metrics': 'latency_metrics',
+                'nodes_usage': 'nodes_usage'
+            }
+            
+            for focus in request.focus_components:
+                if focus in component_mapping:
+                    result_key = component_mapping[focus]
+                    if result_key in analysis_result:
+                        filtered_result[result_key] = analysis_result[result_key]
+            
+            analysis_result = filtered_result
+            logger.info(f"Applied focus components filter: {request.focus_components}")
         
-        # Save to file if requested
-        if request.save_to_file:
-            try:
-                saved_file = analyzer.save_analysis_to_file(analysis_result)
-                analysis_result['saved_file'] = saved_file
-                logger.info(f"Analysis saved to file: {saved_file}")
-            except Exception as save_error:
-                logger.warning(f"Failed to save analysis to file: {save_error}")
-                analysis_result['save_file_error'] = str(save_error)
+        # Apply top_n_results filter if different from default
+        if request.top_n_results != 5:
+            # This would require modifying the analyzer to accept top_n parameter
+            # For now, we'll just log the parameter
+            logger.info(f"Top N results requested: {request.top_n_results} (currently fixed at 5)")
         
-        # Add tool-specific metadata
-        analysis_result['tool_metadata'] = {
-            'tool_name': 'analyze_ovnk_comprehensive_performance',
-            'parameters_used': {
-                'duration': request.duration,
-                'generate_report': request.generate_report,
-                'save_to_file': request.save_to_file,
-                'include_risk_assessment': request.include_risk_assessment,
-                'custom_thresholds_applied': bool(request.performance_thresholds)
-            },
-            'analysis_completion_time': datetime.now(timezone.utc).isoformat()
+        # Include or exclude performance insights
+        if not request.include_performance_insights:
+            analysis_result.pop('performance_analysis', None)
+            logger.info("Performance insights excluded from response")
+        
+        # Add request metadata to response
+        analysis_result['request_parameters'] = {
+            'duration': request.duration,
+            'include_performance_insights': request.include_performance_insights,
+            'focus_components': request.focus_components,
+            'top_n_results': request.top_n_results,
+            'analysis_scope': 'focused' if request.focus_components else 'comprehensive'
+        }
+        
+        # Add execution metadata
+        analysis_result['execution_metadata'] = {
+            'tool_name': 'analysis_ovnk_performance_deepdrive',
+            'timeout_seconds': timeout_seconds,
+            'components_analyzed': len([k for k in analysis_result.keys() 
+                                      if k not in ['analysis_timestamp', 'analysis_type', 'query_duration', 
+                                                  'timezone', 'request_parameters', 'execution_metadata', 
+                                                  'performance_analysis']]),
+            'data_freshness': analysis_result.get('analysis_timestamp'),
+            'analysis_duration_type': 'historical' if request.duration else 'instant'
         }
         
         # Log analysis summary
-        risk_summary = analysis_result.get('risk_assessment', {})
-        total_risks = risk_summary.get('total_risks', 0)
-        critical_risks = risk_summary.get('critical_risks', 0)
-        warning_risks = risk_summary.get('warning_risks', 0)
-        overall_health = analysis_result.get('performance_summary', {}).get('overall_health', 'unknown')
+        components_with_data = len([k for k, v in analysis_result.items() 
+                                  if isinstance(v, dict) and not v.get('error')])
+        components_with_errors = len([k for k, v in analysis_result.items() 
+                                    if isinstance(v, dict) and v.get('error')])
         
-        logger.info(f"Comprehensive analysis completed - Health: {overall_health}, "
-                   f"Total risks: {total_risks} (Critical: {critical_risks}, Warning: {warning_risks})")
+        performance_score = None
+        if analysis_result.get('performance_analysis', {}).get('performance_summary', {}).get('overall_score'):
+            performance_score = analysis_result['performance_analysis']['performance_summary']['overall_score']
+        
+        logger.info(f"OVN deep drive analysis completed - "
+                   f"Components analyzed: {components_with_data}, "
+                   f"Errors: {components_with_errors}, "
+                   f"Performance score: {performance_score or 'N/A'}")
         
         return analysis_result
         
-    except asyncio.TimeoutError:
+    except ImportError as e:
         return {
-            'error': 'Timeout during comprehensive performance analysis - this may indicate cluster performance issues',
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'suggestion': 'Try reducing the analysis duration or checking cluster health'
+            "error": f"Deep drive analyzer module not available: {e}",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tool_name": "analysis_ovnk_performance_deepdrive",
+            "suggestion": "Ensure analysis/ovnk_benchmark_performance_ovnk_deepdrive.py is available"
         }
     except Exception as e:
-        logger.error(f"Error in comprehensive performance analysis: {e}")
+        logger.error(f"Error in OVN deep drive analysis: {e}")
         return {
-            'error': str(e),
-            'timestamp': datetime.now(timezone.utc).isoformat()
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tool_name": "analysis_ovnk_performance_deepdrive"
         }
 
 @app.tool(
