@@ -577,12 +577,6 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(top_cpu_pods)
                 dataframes['top_cpu_pods'] = self.limit_dataframe_columns(df, 5, 'top_cpu_pods')
             
-            # Container usage
-            container_usage = resource_usage.get('container_usage', [])
-            if container_usage:
-                df = pd.DataFrame(container_usage)
-                dataframes['container_usage'] = self.limit_dataframe_columns(df, 5, 'container_usage')
-
             # Detailed pods usage table: avg/max CPU and RAM
             pods_usage_detailed = resource_usage.get('pods_usage_detailed', [])
             if pods_usage_detailed:
