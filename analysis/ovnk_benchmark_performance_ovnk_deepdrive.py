@@ -239,12 +239,14 @@ class ovnDeepDriveAnalyzer:
     async def collect_ovn_containers_usage(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """Collect top 5 OVN containers CPU/RAM usage (requirement 2.3)"""
         try:
+            # Use robust regex patterns to match container name variants across versions
+            # Examples observed: sb-ovsdb|sbdb|ovsdb-server-sb, nb-ovsdb|nbdb|ovsdb-server-nb
             container_patterns = {
-                'sbdb': 'sb-ovsdb',
-                'nbdb': 'nb-ovsdb', 
-                'ovnkube_controller': 'ovnkube-controller',
-                'northd': 'northd',
-                'ovn_controller': 'ovn-controller'
+                'sbdb': 'sbdb',
+                'nbdb': 'nbdb', 
+                'ovnkube_controller': '(ovnkube-controller|ovnkube-controller-.*)',
+                'northd': '(northd|ovn-northd)',
+                'ovn_controller': '(ovn-controller|ovn-controller-.*)'
             }
             
             result = {
@@ -255,22 +257,34 @@ class ovnDeepDriveAnalyzer:
             
             for container_name, pattern in container_patterns.items():
                 try:
-                    # Remove the include_containers parameter - it's determined automatically by container_pattern
+                    # Query by container name pattern within OVN namespace; group by container automatically
                     if duration:
                         usage_data = await self.pods_usage_collector.collect_duration_usage(
                             duration=duration,
-                            container_pattern=f".*{pattern}.*",
+                            container_pattern=pattern,
                             namespace_pattern="openshift-ovn-kubernetes"
                         )
                     else:
                         usage_data = await self.pods_usage_collector.collect_instant_usage(
-                            container_pattern=f".*{pattern}.*",
+                            container_pattern=pattern,
                             namespace_pattern="openshift-ovn-kubernetes"
                         )
                     
+                    top_cpu = self._extract_top_5_from_usage_data(usage_data, 'cpu')
+                    top_mem = self._extract_top_5_from_usage_data(usage_data, 'memory')
+
+                    # Fallback: if empty, try instant window as a quick sample
+                    if not top_cpu and not top_mem and duration:
+                        instant_usage = await self.pods_usage_collector.collect_instant_usage(
+                            container_pattern=pattern,
+                            namespace_pattern="openshift-ovn-kubernetes"
+                        )
+                        top_cpu = self._extract_top_5_from_usage_data(instant_usage, 'cpu') or top_cpu
+                        top_mem = self._extract_top_5_from_usage_data(instant_usage, 'memory') or top_mem
+
                     result['containers'][container_name] = {
-                        'top_5_cpu': self._extract_top_5_from_usage_data(usage_data, 'cpu'),
-                        'top_5_memory': self._extract_top_5_from_usage_data(usage_data, 'memory')
+                        'top_5_cpu': top_cpu,
+                        'top_5_memory': top_mem
                     }
                     
                 except Exception as e:
