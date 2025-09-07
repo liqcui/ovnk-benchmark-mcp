@@ -539,11 +539,11 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(pod_status)
                 dataframes['cluster_overview'] = self.limit_dataframe_columns(df, 2, 'cluster_overview')
             
-            # Database sizes
+            # OVN DB Size (renamed from Database sizes)
             db_sizes = basic_info.get('database_sizes', [])
             if db_sizes:
                 df = pd.DataFrame(db_sizes)
-                dataframes['database_sizes'] = self.limit_dataframe_columns(df, 2, 'database_sizes')
+                dataframes['ovn_db_size'] = self.limit_dataframe_columns(df, 2, 'ovn_db_size')
             
             # Alerts
             alerts = basic_info.get('alerts', [])
@@ -658,11 +658,12 @@ class deepDriveELT(EltUtility):
             # Define table priorities and styling
             table_priorities = {
                 'cluster_overview': 1,  # Move Cluster Overview to the top
-                'latency_categories': 2,
-                'top_latencies': 3,
-                'top_cpu_pods': 4,
-                'node_summary': 5,
-                'alerts': 6,
+                'ovn_db_size': 2,       # Place OVN DB Size right under Cluster Overview
+                'latency_categories': 3,
+                'top_latencies': 4,
+                'top_cpu_pods': 5,
+                'node_summary': 6,
+                'alerts': 7,
                 'performance_summary': 999  # Push Performance Summary to the bottom
             }
             
