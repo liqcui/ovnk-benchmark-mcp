@@ -655,12 +655,12 @@ class deepDriveELT(EltUtility):
             table_priorities = {
                 'cluster_overview': 1,     # Top
                 'ovn_db_size': 2,          # Under Cluster Overview
-                'nodes_usage_detailed': 3, # Move Nodes Usage Detailed under Cluster Overview
-                'top_worker_nodes': 4,     # Then Top Worker Nodes
-                'latency_categories': 5,
-                'top_latencies': 6,
-                'top_cpu_pods': 7,
-                'node_summary': 8,
+                'node_summary': 3,         # Node Summary above detailed
+                'nodes_usage_detailed': 4, # Then Nodes Usage Detailed
+                'top_worker_nodes': 5,     # Then Top Worker Nodes
+                'latency_categories': 6,
+                'top_latencies': 7,
+                'top_cpu_pods': 8,
                 'alerts': 9,
                 'performance_summary': 999 # Bottom
             }
