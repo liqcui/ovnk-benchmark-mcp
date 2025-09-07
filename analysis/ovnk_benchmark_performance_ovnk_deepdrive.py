@@ -235,7 +235,7 @@ class ovnDeepDriveAnalyzer:
             
         except Exception as e:
             return {'error': f'Failed to collect OVNKube pods usage: {str(e)}'}
-    
+ 
     async def collect_ovn_containers_usage(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """Collect top 5 OVN containers CPU/RAM usage (requirement 2.3)"""
         try:
@@ -255,16 +255,18 @@ class ovnDeepDriveAnalyzer:
             
             for container_name, pattern in container_patterns.items():
                 try:
-                    usage_data = await self.pods_usage_collector.collect_duration_usage(
-                        duration=duration or "5m",
-                        container_pattern=f".*{pattern}.*",
-                        namespace_pattern="openshift-ovn-kubernetes",
-                        include_containers=True
-                    ) if duration else await self.pods_usage_collector.collect_instant_usage(
-                        container_pattern=f".*{pattern}.*",
-                        namespace_pattern="openshift-ovn-kubernetes",
-                        include_containers=True
-                    )
+                    # Remove the include_containers parameter - it's determined automatically by container_pattern
+                    if duration:
+                        usage_data = await self.pods_usage_collector.collect_duration_usage(
+                            duration=duration,
+                            container_pattern=f".*{pattern}.*",
+                            namespace_pattern="openshift-ovn-kubernetes"
+                        )
+                    else:
+                        usage_data = await self.pods_usage_collector.collect_instant_usage(
+                            container_pattern=f".*{pattern}.*",
+                            namespace_pattern="openshift-ovn-kubernetes"
+                        )
                     
                     result['containers'][container_name] = {
                         'top_5_cpu': self._extract_top_5_from_usage_data(usage_data, 'cpu'),
@@ -278,7 +280,7 @@ class ovnDeepDriveAnalyzer:
             
         except Exception as e:
             return {'error': f'Failed to collect containers usage: {str(e)}'}
-    
+
     async def collect_ovs_metrics_summary(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """Collect top 5 OVS metrics (requirement 2.4)"""
         try:
