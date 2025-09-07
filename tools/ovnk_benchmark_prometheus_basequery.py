@@ -376,6 +376,52 @@ class PrometheusBaseQuery:
         return formatted_results
 
     # Backward-compatibility: some collectors call this for range queries
-    def format_range_query_result(self, result: Dict[str, Any], include_labels: bool = True) -> List[Dict[str, Any]]:
-        """Format range query results; delegates to format_query_result."""
-        return self.format_query_result(result, include_labels)
+    def format_range_query_result(self, result: Dict[str, Any], include_labels: bool = True, reduce: str = 'max') -> List[Dict[str, Any]]:
+        """
+        Format range query results into instant-like records by reducing time series
+        to a single numeric value per series (max/avg/last).
+        """
+        formatted_results: List[Dict[str, Any]] = []
+        if 'result' not in result:
+            return formatted_results
+
+        for item in result['result']:
+            series_values = []
+            for ts, val in item.get('values', []) or []:
+                try:
+                    v = float(val)
+                except (ValueError, TypeError):
+                    v = None
+                if v is not None:
+                    series_values.append(v)
+
+            if not series_values:
+                # keep empty to allow caller to count zero, or skip entirely
+                continue
+
+            if reduce == 'avg':
+                value = sum(series_values) / len(series_values)
+            elif reduce == 'last':
+                value = series_values[-1]
+            else:
+                # default to max which matches many "top" style queries
+                value = max(series_values)
+
+            formatted_item: Dict[str, Any] = {
+                'value': value
+            }
+
+            # Add metric name if available
+            metric_labels = item.get('metric', {})
+            if '__name__' in metric_labels:
+                formatted_item['metric_name'] = metric_labels['__name__']
+
+            # Add labels if requested
+            if include_labels:
+                formatted_item['labels'] = {
+                    k: v for k, v in metric_labels.items() if k != '__name__'
+                }
+
+            formatted_results.append(formatted_item)
+
+        return formatted_results

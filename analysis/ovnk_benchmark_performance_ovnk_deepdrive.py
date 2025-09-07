@@ -346,8 +346,10 @@ class ovnDeepDriveAnalyzer:
     async def collect_latency_metrics_summary(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """Collect top 5 latency metrics (requirement 2.5)"""
         try:
+            # Always use a duration window (default 5m) to avoid instant-query zeros
+            latency_window = duration or "5m"
             latency_data = await self.latency_collector.collect_comprehensive_enhanced_metrics(
-                duration=duration or "5m" if duration else None,
+                duration=latency_window,
                 top_n_results=5
             )
             
