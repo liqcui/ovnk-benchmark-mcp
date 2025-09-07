@@ -204,45 +204,51 @@ class deepDriveELT(EltUtility):
                         'Max Mem MB': round(mem_metrics.get('max', 0.0), 1) if mem_metrics else 0.0
                     })
 
-        # Nodes usage detailed (avg/max)
+        # Nodes usage detailed (per-node avg/max)
         nodes_usage = data.get('nodes_usage', {})
         nodes_usage_detailed: List[Dict[str, Any]] = []
         if nodes_usage:
-            # Controlplane summary
+            # Controlplane nodes (per node)
             cp = nodes_usage.get('controlplane_nodes', {})
-            cp_sum = cp.get('summary', {})
-            if cp_sum:
+            for node in cp.get('individual_nodes', []) or []:
+                metrics = node.get('metrics', {})
+                cpu = metrics.get('cpu_usage', {})
+                mem = metrics.get('memory_usage', {})
                 nodes_usage_detailed.append({
                     'Node Group': 'Control Plane',
-                    'Count': cp.get('count', 0),
-                    'Avg CPU %': round(cp_sum.get('cpu_usage', {}).get('avg', 0.0), 2),
-                    'Max CPU %': round(cp_sum.get('cpu_usage', {}).get('max', 0.0), 2),
-                    'Avg Mem MB': round(cp_sum.get('memory_usage', {}).get('avg', 0.0), 1),
-                    'Max Mem MB': round(cp_sum.get('memory_usage', {}).get('max', 0.0), 1)
+                    'Node Name': node.get('name') or node.get('instance', ''),
+                    'Avg CPU %': round(cpu.get('avg', 0.0), 2),
+                    'Max CPU %': round(cpu.get('max', 0.0), 2),
+                    'Avg Mem MB': round(mem.get('avg', 0.0), 1),
+                    'Max Mem MB': round(mem.get('max', 0.0), 1)
                 })
-            # Infra summary
+            # Infra nodes (per node)
             infra = nodes_usage.get('infra_nodes', {})
-            infra_sum = infra.get('summary', {})
-            if infra_sum:
+            for node in infra.get('individual_nodes', []) or []:
+                metrics = node.get('metrics', {})
+                cpu = metrics.get('cpu_usage', {})
+                mem = metrics.get('memory_usage', {})
                 nodes_usage_detailed.append({
                     'Node Group': 'Infra',
-                    'Count': infra.get('count', 0),
-                    'Avg CPU %': round(infra_sum.get('cpu_usage', {}).get('avg', 0.0), 2),
-                    'Max CPU %': round(infra_sum.get('cpu_usage', {}).get('max', 0.0), 2),
-                    'Avg Mem MB': round(infra_sum.get('memory_usage', {}).get('avg', 0.0), 1),
-                    'Max Mem MB': round(infra_sum.get('memory_usage', {}).get('max', 0.0), 1)
+                    'Node Name': node.get('name') or node.get('instance', ''),
+                    'Avg CPU %': round(cpu.get('avg', 0.0), 2),
+                    'Max CPU %': round(cpu.get('max', 0.0), 2),
+                    'Avg Mem MB': round(mem.get('avg', 0.0), 1),
+                    'Max Mem MB': round(mem.get('max', 0.0), 1)
                 })
-            # Top5 workers summary
+            # Top5 worker nodes (per node)
             top5 = nodes_usage.get('top5_worker_nodes', {})
-            top5_sum = top5.get('summary', {})
-            if top5_sum:
+            for node in top5.get('individual_nodes', []) or []:
+                metrics = node.get('metrics', {})
+                cpu = metrics.get('cpu_usage', {})
+                mem = metrics.get('memory_usage', {})
                 nodes_usage_detailed.append({
                     'Node Group': 'Top5 Workers',
-                    'Count': top5.get('count', 0),
-                    'Avg CPU %': round(top5_sum.get('cpu_usage', {}).get('avg', 0.0), 2),
-                    'Max CPU %': round(top5_sum.get('cpu_usage', {}).get('max', 0.0), 2),
-                    'Avg Mem MB': round(top5_sum.get('memory_usage', {}).get('avg', 0.0), 1),
-                    'Max Mem MB': round(top5_sum.get('memory_usage', {}).get('max', 0.0), 1)
+                    'Node Name': node.get('name') or node.get('instance', ''),
+                    'Avg CPU %': round(cpu.get('avg', 0.0), 2),
+                    'Max CPU %': round(cpu.get('max', 0.0), 2),
+                    'Avg Mem MB': round(mem.get('avg', 0.0), 1),
+                    'Max Mem MB': round(mem.get('max', 0.0), 1)
                 })
 
         return {
@@ -619,11 +625,7 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(node_summary)
                 dataframes['node_summary'] = self.limit_dataframe_columns(df, 5, 'node_summary')
             
-            # Top worker nodes
-            top_worker_nodes = node_analysis.get('top_worker_nodes', [])
-            if top_worker_nodes:
-                df = pd.DataFrame(top_worker_nodes)
-                dataframes['top_worker_nodes'] = self.limit_dataframe_columns(df, 4, 'top_worker_nodes')
+            # Remove 'Top Worker Nodes' table (duplicate with detailed per-node table)
             
             # OVS metrics
             ovs_metrics = structured_data.get('ovs_metrics', {})
@@ -656,12 +658,11 @@ class deepDriveELT(EltUtility):
                 'cluster_overview': 1,     # Top
                 'node_summary': 2,         # Node Summary above detailed
                 'nodes_usage_detailed': 3, # Then Nodes Usage Detailed
-                'top_worker_nodes': 4,     # Then Top Worker Nodes
-                'ovn_db_size': 5,          # OVN DB Size under Top Worker Nodes
-                'latency_categories': 6,
-                'top_latencies': 7,
-                'top_cpu_pods': 8,
-                'alerts': 9,
+                'ovn_db_size': 4,          # OVN DB Size follows node details
+                'latency_categories': 5,
+                'top_latencies': 6,
+                'top_cpu_pods': 7,
+                'alerts': 8,
                 'performance_summary': 999 # Bottom
             }
             
