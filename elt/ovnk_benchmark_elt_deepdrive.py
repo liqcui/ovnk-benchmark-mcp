@@ -75,10 +75,11 @@ class deepDriveELT(EltUtility):
         db_info = []
         db_sizes = basic_info.get('database_sizes', {})
         for db_name, db_data in db_sizes.items():
+            size_mb = db_data.get('size_mb', 0)
             db_info.append({
                 'Database': db_name.replace('_', ' ').title(),
-                'Size (MB)': db_data.get('size_mb', 0),
-                'Status': 'success' if db_data.get('size_mb', 0) < 10 else 'warning'
+                'Max DB Size': f"{size_mb:.1f} MB" if isinstance(size_mb, (int, float)) else size_mb,
+                'Status': 'success' if (isinstance(size_mb, (int, float)) and size_mb < 10) else 'warning'
             })
 
         # Alerts summary
@@ -543,7 +544,8 @@ class deepDriveELT(EltUtility):
             db_sizes = basic_info.get('database_sizes', [])
             if db_sizes:
                 df = pd.DataFrame(db_sizes)
-                dataframes['ovn_db_size'] = self.limit_dataframe_columns(df, 2, 'ovn_db_size')
+                # Keep all three columns: Database, Max DB Size, Status
+                dataframes['ovn_db_size'] = self.limit_dataframe_columns(df, 3, 'ovn_db_size')
             
             # Alerts
             alerts = basic_info.get('alerts', [])
