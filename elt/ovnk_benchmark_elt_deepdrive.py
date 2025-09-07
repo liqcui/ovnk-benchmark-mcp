@@ -29,14 +29,22 @@ class deepDriveELT(EltUtility):
             return default
 
     def _extract_stat(self, metrics: Dict[str, Any], metric_key: str, stat_candidates: List[str]) -> float:
+        """Extract statistical values from nested metrics structure"""
         try:
-            metric = metrics.get(metric_key, {}) if isinstance(metrics, dict) else {}
+            if not isinstance(metrics, dict):
+                return 0.0
+            
+            # Handle both direct access and nested access
+            metric_data = metrics.get(metric_key, {})
+            if not isinstance(metric_data, dict):
+                return 0.0
+                
             for key in stat_candidates:
-                if key in metric and metric.get(key) is not None:
-                    return self._to_float_safe(metric.get(key), 0.0)
+                if key in metric_data and metric_data.get(key) is not None:
+                    return self._to_float_safe(metric_data.get(key), 0.0)
+            return 0.0
         except Exception:
-            pass
-        return 0.0
+            return 0.0
 
     def extract_deepdrive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract deep drive analysis data from JSON"""
@@ -132,17 +140,16 @@ class deepDriveELT(EltUtility):
         node_pods_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
         for pod in node_pods_cpu[:5]:
             cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
-            memory_usage = pod.get('metrics', {}).get('memory_usage', {})  # Get memory data
+            memory_usage = pod.get('metrics', {}).get('memory_usage', {})
             rank = pod.get('rank', 0)
             top_cpu_pods.append({
-                'Rank': f"🏆 {rank}" if rank == 1 else rank,  # Highlight top pod
+                'Rank': f"🏆 {rank}" if rank == 1 else rank,
                 'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
                 'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
                 'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
                 'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage else "N/A"
             })
 
-            # Detailed entry with avg/max CPU and RAM
             pods_usage_detailed.append({
                 'Scope': 'Node Pod',
                 'Pod': pod.get('pod_name', ''),
@@ -157,7 +164,7 @@ class deepDriveELT(EltUtility):
         cp_pods_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
         for pod in cp_pods_cpu:
             cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
-            memory_usage = pod.get('metrics', {}).get('memory_usage', {})  # Get memory data
+            memory_usage = pod.get('metrics', {}).get('memory_usage', {})
             rank = len(top_cpu_pods) + 1
             top_cpu_pods.append({
                 'Rank': rank,
@@ -191,16 +198,13 @@ class deepDriveELT(EltUtility):
                     top_cpu = cpu_data[0]
                     cpu_metrics = top_cpu.get('metrics', {}).get('cpu_usage', {})
                     
-                    # Get memory metrics from the same pod or find matching memory entry
                     mem_metrics = top_cpu.get('metrics', {}).get('memory_usage', {})
                     if not mem_metrics and mem_data:
-                        # Try to find matching memory entry by pod name
                         pod_name = top_cpu.get('pod_name', '')
                         for mem_entry in mem_data:
                             if mem_entry.get('pod_name', '') == pod_name:
                                 mem_metrics = mem_entry.get('metrics', {}).get('memory_usage', {})
                                 break
-                        # If still not found, use first memory entry
                         if not mem_metrics and mem_data:
                             mem_metrics = mem_data[0].get('metrics', {}).get('memory_usage', {})
                     
@@ -213,7 +217,6 @@ class deepDriveELT(EltUtility):
                         'Status': status
                     })
 
-                    # Detailed entry with avg/max CPU and RAM
                     containers_usage_detailed.append({
                         'Container': container_name,
                         'Pod': top_cpu.get('pod_name', ''),
@@ -224,57 +227,121 @@ class deepDriveELT(EltUtility):
                         'Max Mem MB': round(mem_metrics.get('max', 0.0), 1) if mem_metrics else 0.0
                     })
 
-        # Nodes usage detailed (per-node avg/max)
+        # Nodes usage detailed (per-node avg/max) - FIXED
         nodes_usage = data.get('nodes_usage', {})
         nodes_usage_detailed: List[Dict[str, Any]] = []
+        nodes_network_usage: List[Dict[str, Any]] = []
+        
         if nodes_usage:
-            # Controlplane nodes (per node)
+            # Controlplane nodes
             cp = nodes_usage.get('controlplane_nodes', {})
             for node in (cp.get('individual_nodes', []) or []):
-                metrics = node.get('metrics', {})
-                avg_cpu = self._extract_stat(metrics, 'cpu_usage', ['avg', 'value', 'max'])
-                max_cpu = self._extract_stat(metrics, 'cpu_usage', ['max', 'avg', 'value'])
-                avg_mem = self._extract_stat(metrics, 'memory_usage', ['avg', 'value', 'max'])
-                max_mem = self._extract_stat(metrics, 'memory_usage', ['max', 'avg', 'value'])
+                node_name = node.get('name') or node.get('instance', '')
+                
+                # CPU and Memory from the JSON structure
+                avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
+                max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
+                avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
+                max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
+                
                 nodes_usage_detailed.append({
-                    'Node Group': 'Control Plane',
-                    'Node Name': node.get('name') or node.get('instance', ''),
+                    'Node Group': '🔥 Control Plane' if avg_cpu > 15 else 'Control Plane',
+                    'Node Name': node_name,
                     'Avg CPU %': round(avg_cpu, 2),
                     'Max CPU %': round(max_cpu, 2),
                     'Avg Mem MB': round(avg_mem, 1),
                     'Max Mem MB': round(max_mem, 1)
                 })
-            # Infra nodes (per node)
+                
+                # Network usage
+                avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
+                max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
+                avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
+                max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
+                
+                nodes_network_usage.append({
+                    'Node Group': '🔥 Control Plane' if avg_rx > 200000 else 'Control Plane',
+                    'Node Name': node_name,
+                    'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
+                    'Max Network RX': f"{max_rx/1024:.1f} KB/s",
+                    'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
+                    'Max Network TX': f"{max_tx/1024:.1f} KB/s"
+                })
+
+            # Infra nodes
             infra = nodes_usage.get('infra_nodes', {})
             for node in (infra.get('individual_nodes', []) or []):
-                metrics = node.get('metrics', {})
-                avg_cpu = self._extract_stat(metrics, 'cpu_usage', ['avg', 'value', 'max'])
-                max_cpu = self._extract_stat(metrics, 'cpu_usage', ['max', 'avg', 'value'])
-                avg_mem = self._extract_stat(metrics, 'memory_usage', ['avg', 'value', 'max'])
-                max_mem = self._extract_stat(metrics, 'memory_usage', ['max', 'avg', 'value'])
+                node_name = node.get('name') or node.get('instance', '')
+                
+                avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
+                max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
+                avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
+                max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
+                
                 nodes_usage_detailed.append({
-                    'Node Group': 'Infra',
-                    'Node Name': node.get('name') or node.get('instance', ''),
+                    'Node Group': '🔥 Infra' if avg_cpu > 15 else 'Infra',
+                    'Node Name': node_name,
                     'Avg CPU %': round(avg_cpu, 2),
                     'Max CPU %': round(max_cpu, 2),
                     'Avg Mem MB': round(avg_mem, 1),
                     'Max Mem MB': round(max_mem, 1)
                 })
-            # Top5 worker nodes (per node)
+                
+                # Network usage
+                avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
+                max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
+                avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
+                max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
+                
+                nodes_network_usage.append({
+                    'Node Group': '🔥 Infra' if avg_rx > 200000 else 'Infra',
+                    'Node Name': node_name,
+                    'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
+                    'Max Network RX': f"{max_rx/1024:.1f} KB/s",
+                    'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
+                    'Max Network TX': f"{max_tx/1024:.1f} KB/s"
+                })
+
+            # Top5 worker nodes
             top5 = nodes_usage.get('top5_worker_nodes', {})
-            for node in (top5.get('individual_nodes', []) or []):
-                metrics = node.get('metrics', {})
-                avg_cpu = self._extract_stat(metrics, 'cpu_usage', ['avg', 'value', 'max'])
-                max_cpu = self._extract_stat(metrics, 'cpu_usage', ['max', 'avg', 'value'])
-                avg_mem = self._extract_stat(metrics, 'memory_usage', ['avg', 'value', 'max'])
-                max_mem = self._extract_stat(metrics, 'memory_usage', ['max', 'avg', 'value'])
+            for idx, node in enumerate((top5.get('individual_nodes', []) or []), 1):
+                node_name = node.get('name') or node.get('instance', '')
+                
+                avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
+                max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
+                avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
+                max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
+                
+                group_name = f'🏆 Top{idx} Workers' if idx == 1 else f'Top{idx} Workers'
+                if avg_cpu > 70:
+                    group_name = f'🔥 {group_name}'
+                    
                 nodes_usage_detailed.append({
-                    'Node Group': 'Top5 Workers',
-                    'Node Name': node.get('name') or node.get('instance', ''),
+                    'Node Group': group_name,
+                    'Node Name': node_name,
                     'Avg CPU %': round(avg_cpu, 2),
                     'Max CPU %': round(max_cpu, 2),
                     'Avg Mem MB': round(avg_mem, 1),
                     'Max Mem MB': round(max_mem, 1)
+                })
+                
+                # Network usage
+                avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
+                max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
+                avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
+                max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
+                
+                net_group_name = f'🏆 Top{idx} Workers' if idx == 1 else f'Top{idx} Workers'
+                if avg_rx > 500000:  # High network usage threshold
+                    net_group_name = f'🔥 {net_group_name}'
+                    
+                nodes_network_usage.append({
+                    'Node Group': net_group_name,
+                    'Node Name': node_name,
+                    'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
+                    'Max Network RX': f"{max_rx/1024:.1f} KB/s",
+                    'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
+                    'Max Network TX': f"{max_tx/1024:.1f} KB/s"
                 })
 
         return {
@@ -282,8 +349,10 @@ class deepDriveELT(EltUtility):
             'container_usage': container_usage,
             'pods_usage_detailed': pods_usage_detailed,
             'containers_usage_detailed': containers_usage_detailed,
-            'nodes_usage_detailed': nodes_usage_detailed
-        }            
+            'nodes_usage_detailed': nodes_usage_detailed,
+            'nodes_network_usage': nodes_network_usage  # NEW TABLE
+        }
+
 
     def _extract_latency_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract latency analysis data"""
@@ -554,7 +623,7 @@ class deepDriveELT(EltUtility):
             if metadata:
                 metadata_list = []
                 for key, value in metadata.items():
-                    if value:  # Only include non-empty values
+                    if value:
                         metadata_list.append({
                             'Property': key.replace('_', ' ').title(),
                             'Value': str(value)
@@ -572,11 +641,10 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(pod_status)
                 dataframes['cluster_overview'] = self.limit_dataframe_columns(df, 2, 'cluster_overview')
             
-            # OVN DB Size (renamed from Database sizes)
+            # OVN DB Size
             db_sizes = basic_info.get('database_sizes', [])
             if db_sizes:
                 df = pd.DataFrame(db_sizes)
-                # Keep all three columns: Database, Max DB Size, Status
                 dataframes['ovn_db_size'] = self.limit_dataframe_columns(df, 3, 'ovn_db_size')
             
             # Alerts
@@ -603,9 +671,7 @@ class deepDriveELT(EltUtility):
             # Resource usage
             resource_usage = structured_data.get('resource_usage', {})
             
-            # Removed Top CPU Pods table (redundant with detailed pods/containers tables)
-            
-            # Detailed pods usage table: avg/max CPU and RAM
+            # Detailed pods usage table
             pods_usage_detailed = resource_usage.get('pods_usage_detailed', [])
             if pods_usage_detailed:
                 df = pd.DataFrame(pods_usage_detailed)
@@ -617,11 +683,17 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(containers_usage_detailed)
                 dataframes['containers_usage_detailed'] = df
 
-            # Nodes usage detailed
+            # Nodes usage detailed - FULL TABLE WITHOUT COLUMN LIMITS
             nodes_usage_detailed = resource_usage.get('nodes_usage_detailed', [])
             if nodes_usage_detailed:
                 df = pd.DataFrame(nodes_usage_detailed)
-                dataframes['nodes_usage_detailed'] = df
+                dataframes['nodes_usage_detailed'] = df  # No column limiting
+            
+            # NEW: Nodes network usage detailed - FULL TABLE WITHOUT COLUMN LIMITS
+            nodes_network_usage = resource_usage.get('nodes_network_usage', [])
+            if nodes_network_usage:
+                df = pd.DataFrame(nodes_network_usage)
+                dataframes['nodes_network_usage'] = df  # No column limiting
             
             # Latency analysis
             latency_analysis = structured_data.get('latency_analysis', {})
@@ -630,7 +702,7 @@ class deepDriveELT(EltUtility):
             top_latencies = latency_analysis.get('top_latencies', [])
             if top_latencies:
                 df = pd.DataFrame(top_latencies)
-                dataframes['top_latencies'] = df  # Don't limit columns for full metric visibility
+                dataframes['top_latencies'] = df
             
             # Category summary
             category_summary = latency_analysis.get('category_summary', [])
@@ -646,8 +718,6 @@ class deepDriveELT(EltUtility):
             if node_summary:
                 df = pd.DataFrame(node_summary)
                 dataframes['node_summary'] = self.limit_dataframe_columns(df, 5, 'node_summary')
-            
-            # Remove 'Top Worker Nodes' table (duplicate with detailed per-node table)
             
             # OVS metrics
             ovs_metrics = structured_data.get('ovs_metrics', {})
@@ -669,7 +739,7 @@ class deepDriveELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to transform deep drive data to DataFrames: {e}")
             return {}
-
+ 
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
         """Generate HTML tables with enhanced styling for deep drive analysis"""
         try:
@@ -677,18 +747,19 @@ class deepDriveELT(EltUtility):
             
             # Define table priorities and styling
             table_priorities = {
-                'analysis_metadata': 0,        # Top
+                'analysis_metadata': 0,
                 'cluster_overview': 1,
                 'node_summary': 2,
                 'nodes_usage_detailed': 3,
-                'ovn_db_size': 4,
-                'pods_usage_detailed': 5,
-                'containers_usage_detailed': 6,
-                'ovs_cpu_usage': 7,            # OVS tables under Containers Usage Detailed
-                'ovs_flows': 8,
-                'latency_categories': 9,
-                'top_latencies': 10,
-                'alerts': 11,
+                'nodes_network_usage': 4,  # NEW: Right after nodes usage detailed
+                'ovn_db_size': 5,
+                'pods_usage_detailed': 6,
+                'containers_usage_detailed': 7,
+                'ovs_cpu_usage': 8,
+                'ovs_flows': 9,
+                'latency_categories': 10,
+                'top_latencies': 11,
+                'alerts': 12,
                 'performance_summary': 999
             }
             
@@ -702,24 +773,23 @@ class deepDriveELT(EltUtility):
                 if df.empty:
                     continue
                 
-                # Add status-based styling
+                # Add status-based styling and highlighting
                 styled_df = df.copy()
                 
                 # Apply highlighting for critical metrics and top rankings
                 if table_name == 'top_latencies':
-                    # Highlight critical latencies
                     for idx, row in styled_df.iterrows():
-                        if 'Critical' in str(row.get('Severity', '')):
-                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-danger">{row.get("Severity", "")}</span>'
-                        elif 'High' in str(row.get('Severity', '')):
-                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-warning">{row.get("Severity", "")}</span>'
-                        elif 'Medium' in str(row.get('Severity', '')):
-                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-info">{row.get("Severity", "")}</span>'
+                        severity = str(row.get('Severity', ''))
+                        if 'Critical' in severity:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-danger">{severity}</span>'
+                        elif 'High' in severity:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-warning">{severity}</span>'
+                        elif 'Medium' in severity:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-info">{severity}</span>'
                         else:
-                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-success">{row.get("Severity", "")}</span>'
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-success">{severity}</span>'
                 
                 elif table_name == 'alerts':
-                    # Style alert severity
                     for idx, row in styled_df.iterrows():
                         severity = str(row.get('Severity', ''))
                         if 'CRITICAL' in severity:
@@ -730,7 +800,6 @@ class deepDriveELT(EltUtility):
                             styled_df.at[idx, 'Severity'] = f'<span class="badge badge-info">{severity}</span>'
                 
                 elif table_name == 'node_summary':
-                    # Style node status
                     for idx, row in styled_df.iterrows():
                         status = str(row.get('Status', ''))
                         if status == 'danger':
@@ -739,6 +808,29 @@ class deepDriveELT(EltUtility):
                             styled_df.at[idx, 'Status'] = f'<span class="badge badge-warning">Medium Load</span>'
                         else:
                             styled_df.at[idx, 'Status'] = f'<span class="badge badge-success">Normal</span>'
+                
+                # NEW: Highlight high CPU/Memory usage in nodes usage detailed
+                elif table_name == 'nodes_usage_detailed':
+                    for idx, row in styled_df.iterrows():
+                        max_cpu = row.get('Max CPU %', 0)
+                        if isinstance(max_cpu, (int, float)) and max_cpu > 70:
+                            styled_df.at[idx, 'Max CPU %'] = f'<span class="text-danger font-weight-bold">{max_cpu}%</span>'
+                        elif isinstance(max_cpu, (int, float)) and max_cpu > 50:
+                            styled_df.at[idx, 'Max CPU %'] = f'<span class="text-warning font-weight-bold">{max_cpu}%</span>'
+                
+                # NEW: Highlight high network usage in nodes network usage
+                elif table_name == 'nodes_network_usage':
+                    for idx, row in styled_df.iterrows():
+                        max_rx_str = str(row.get('Max Network RX', '0 KB/s'))
+                        # Extract numeric value from "XXX KB/s" format
+                        try:
+                            max_rx_val = float(max_rx_str.split()[0])
+                            if max_rx_val > 1000:  # > 1MB/s
+                                styled_df.at[idx, 'Max Network RX'] = f'<span class="text-danger font-weight-bold">{max_rx_str}</span>'
+                            elif max_rx_val > 500:  # > 500KB/s
+                                styled_df.at[idx, 'Max Network RX'] = f'<span class="text-warning font-weight-bold">{max_rx_str}</span>'
+                        except (ValueError, IndexError):
+                            pass
                 
                 # Generate HTML table
                 html_table = self.create_html_table(styled_df, table_name)
@@ -754,4 +846,3 @@ class deepDriveELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to generate deep drive HTML tables: {e}")
             return {}
-
