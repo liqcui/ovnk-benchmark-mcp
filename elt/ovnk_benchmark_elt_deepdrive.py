@@ -199,7 +199,10 @@ class deepDriveELT(EltUtility):
         category_summary = []
         for category, metrics in latency_data.items():
             if metrics:
-                max_latency = max(m.get('max_value', 0) for m in metrics.values() if m.get('max_value', 0) > 0)
+                valid_values = [m.get('max_value', 0) for m in metrics.values() if m.get('max_value', 0) > 0]
+                if not valid_values:
+                    continue
+                max_latency = max(valid_values)
                 if max_latency > 0:
                     formatted = self.format_latency_value(max_latency, 'seconds')
                     severity = self.categorize_latency_severity(max_latency, 'seconds')
