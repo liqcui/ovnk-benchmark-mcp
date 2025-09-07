@@ -105,6 +105,7 @@ class deepDriveELT(EltUtility):
         # OVNKube pods CPU usage
         ovnkube_pods = data.get('ovnkube_pods_cpu', {})
         top_cpu_pods = []
+        pods_usage_detailed: List[Dict[str, Any]] = []
         
         # Node pods
         node_pods_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
@@ -118,6 +119,17 @@ class deepDriveELT(EltUtility):
                 'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
                 'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
                 'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage else "N/A"
+            })
+
+            # Detailed entry with avg/max CPU and RAM
+            pods_usage_detailed.append({
+                'Scope': 'Node Pod',
+                'Pod': pod.get('pod_name', ''),
+                'Node': pod.get('node_name', ''),
+                'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
+                'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
+                'Avg Mem MB': round(memory_usage.get('avg', 0.0), 1) if memory_usage else 0.0,
+                'Max Mem MB': round(memory_usage.get('max', 0.0), 1) if memory_usage else 0.0
             })
 
         # Control plane pods
@@ -134,8 +146,19 @@ class deepDriveELT(EltUtility):
                 'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage else "N/A"
             })
 
+            pods_usage_detailed.append({
+                'Scope': 'Control Pod',
+                'Pod': pod.get('pod_name', ''),
+                'Node': pod.get('node_name', ''),
+                'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
+                'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
+                'Avg Mem MB': round(memory_usage.get('avg', 0.0), 1) if memory_usage else 0.0,
+                'Max Mem MB': round(memory_usage.get('max', 0.0), 1) if memory_usage else 0.0
+            })
+
         # OVN containers usage
         container_usage = []
+        containers_usage_detailed: List[Dict[str, Any]] = []
         ovn_containers = data.get('ovn_containers', {}).get('containers', {})
         
         for container_name, container_data in ovn_containers.items():
@@ -169,9 +192,64 @@ class deepDriveELT(EltUtility):
                         'Status': status
                     })
 
+                    # Detailed entry with avg/max CPU and RAM
+                    containers_usage_detailed.append({
+                        'Container': container_name,
+                        'Pod': top_cpu.get('pod_name', ''),
+                        'Node': top_cpu.get('node_name', ''),
+                        'Avg CPU %': round(cpu_metrics.get('avg', 0.0), 3),
+                        'Max CPU %': round(cpu_metrics.get('max', 0.0), 3),
+                        'Avg Mem MB': round(mem_metrics.get('avg', 0.0), 1) if mem_metrics else 0.0,
+                        'Max Mem MB': round(mem_metrics.get('max', 0.0), 1) if mem_metrics else 0.0
+                    })
+
+        # Nodes usage detailed (avg/max)
+        nodes_usage = data.get('nodes_usage', {})
+        nodes_usage_detailed: List[Dict[str, Any]] = []
+        if nodes_usage:
+            # Controlplane summary
+            cp = nodes_usage.get('controlplane_nodes', {})
+            cp_sum = cp.get('summary', {})
+            if cp_sum:
+                nodes_usage_detailed.append({
+                    'Node Group': 'Control Plane',
+                    'Count': cp.get('count', 0),
+                    'Avg CPU %': round(cp_sum.get('cpu_usage', {}).get('avg', 0.0), 2),
+                    'Max CPU %': round(cp_sum.get('cpu_usage', {}).get('max', 0.0), 2),
+                    'Avg Mem MB': round(cp_sum.get('memory_usage', {}).get('avg', 0.0), 1),
+                    'Max Mem MB': round(cp_sum.get('memory_usage', {}).get('max', 0.0), 1)
+                })
+            # Infra summary
+            infra = nodes_usage.get('infra_nodes', {})
+            infra_sum = infra.get('summary', {})
+            if infra_sum:
+                nodes_usage_detailed.append({
+                    'Node Group': 'Infra',
+                    'Count': infra.get('count', 0),
+                    'Avg CPU %': round(infra_sum.get('cpu_usage', {}).get('avg', 0.0), 2),
+                    'Max CPU %': round(infra_sum.get('cpu_usage', {}).get('max', 0.0), 2),
+                    'Avg Mem MB': round(infra_sum.get('memory_usage', {}).get('avg', 0.0), 1),
+                    'Max Mem MB': round(infra_sum.get('memory_usage', {}).get('max', 0.0), 1)
+                })
+            # Top5 workers summary
+            top5 = nodes_usage.get('top5_worker_nodes', {})
+            top5_sum = top5.get('summary', {})
+            if top5_sum:
+                nodes_usage_detailed.append({
+                    'Node Group': 'Top5 Workers',
+                    'Count': top5.get('count', 0),
+                    'Avg CPU %': round(top5_sum.get('cpu_usage', {}).get('avg', 0.0), 2),
+                    'Max CPU %': round(top5_sum.get('cpu_usage', {}).get('max', 0.0), 2),
+                    'Avg Mem MB': round(top5_sum.get('memory_usage', {}).get('avg', 0.0), 1),
+                    'Max Mem MB': round(top5_sum.get('memory_usage', {}).get('max', 0.0), 1)
+                })
+
         return {
             'top_cpu_pods': top_cpu_pods,
-            'container_usage': container_usage
+            'container_usage': container_usage,
+            'pods_usage_detailed': pods_usage_detailed,
+            'containers_usage_detailed': containers_usage_detailed,
+            'nodes_usage_detailed': nodes_usage_detailed
         }            
 
     def _extract_latency_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -495,13 +573,31 @@ class deepDriveELT(EltUtility):
             top_cpu_pods = resource_usage.get('top_cpu_pods', [])
             if top_cpu_pods:
                 df = pd.DataFrame(top_cpu_pods)
-                dataframes['top_cpu_pods'] = self.limit_dataframe_columns(df, 4, 'top_cpu_pods')
+                dataframes['top_cpu_pods'] = self.limit_dataframe_columns(df, 5, 'top_cpu_pods')
             
             # Container usage
             container_usage = resource_usage.get('container_usage', [])
             if container_usage:
                 df = pd.DataFrame(container_usage)
-                dataframes['container_usage'] = self.limit_dataframe_columns(df, 4, 'container_usage')
+                dataframes['container_usage'] = self.limit_dataframe_columns(df, 5, 'container_usage')
+
+            # Detailed pods usage table: avg/max CPU and RAM
+            pods_usage_detailed = resource_usage.get('pods_usage_detailed', [])
+            if pods_usage_detailed:
+                df = pd.DataFrame(pods_usage_detailed)
+                dataframes['pods_usage_detailed'] = df
+
+            # Detailed containers usage table
+            containers_usage_detailed = resource_usage.get('containers_usage_detailed', [])
+            if containers_usage_detailed:
+                df = pd.DataFrame(containers_usage_detailed)
+                dataframes['containers_usage_detailed'] = df
+
+            # Nodes usage detailed
+            nodes_usage_detailed = resource_usage.get('nodes_usage_detailed', [])
+            if nodes_usage_detailed:
+                df = pd.DataFrame(nodes_usage_detailed)
+                dataframes['nodes_usage_detailed'] = df
             
             # Latency analysis
             latency_analysis = structured_data.get('latency_analysis', {})
