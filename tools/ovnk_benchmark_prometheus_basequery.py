@@ -374,3 +374,8 @@ class PrometheusBaseQuery:
             formatted_results.append(formatted_item)
         
         return formatted_results
+
+    # Backward-compatibility: some collectors call this for range queries
+    def format_range_query_result(self, result: Dict[str, Any], include_labels: bool = True) -> List[Dict[str, Any]]:
+        """Format range query results; delegates to format_query_result."""
+        return self.format_query_result(result, include_labels)
