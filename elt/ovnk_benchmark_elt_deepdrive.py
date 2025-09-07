@@ -110,24 +110,28 @@ class deepDriveELT(EltUtility):
         node_pods_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
         for pod in node_pods_cpu[:5]:
             cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
+            memory_usage = pod.get('metrics', {}).get('memory_usage', {})  # Get memory data
             rank = pod.get('rank', 0)
             top_cpu_pods.append({
                 'Rank': f"🏆 {rank}" if rank == 1 else rank,  # Highlight top pod
                 'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
                 'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
-                'CPU %': f"{cpu_usage.get('avg', 0):.2f}"
+                'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
+                'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage else "N/A"
             })
 
         # Control plane pods
         cp_pods_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
         for pod in cp_pods_cpu:
             cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
+            memory_usage = pod.get('metrics', {}).get('memory_usage', {})  # Get memory data
             rank = len(top_cpu_pods) + 1
             top_cpu_pods.append({
                 'Rank': rank,
                 'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
                 'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
-                'CPU %': f"{cpu_usage.get('avg', 0):.2f}"
+                'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
+                'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage else "N/A"
             })
 
         # OVN containers usage
@@ -142,21 +146,33 @@ class deepDriveELT(EltUtility):
                 if cpu_data:
                     top_cpu = cpu_data[0]
                     cpu_metrics = top_cpu.get('metrics', {}).get('cpu_usage', {})
+                    
+                    # Get memory metrics from the same pod or find matching memory entry
                     mem_metrics = top_cpu.get('metrics', {}).get('memory_usage', {})
+                    if not mem_metrics and mem_data:
+                        # Try to find matching memory entry by pod name
+                        pod_name = top_cpu.get('pod_name', '')
+                        for mem_entry in mem_data:
+                            if mem_entry.get('pod_name', '') == pod_name:
+                                mem_metrics = mem_entry.get('metrics', {}).get('memory_usage', {})
+                                break
+                        # If still not found, use first memory entry
+                        if not mem_metrics and mem_data:
+                            mem_metrics = mem_data[0].get('metrics', {}).get('memory_usage', {})
                     
                     status = 'danger' if container_name == 'ovnkube_controller' and cpu_metrics.get('avg', 0) > 0.5 else 'success'
                     
                     container_usage.append({
                         'Container': container_name.replace('_', ' ').title(),
                         'CPU %': f"{cpu_metrics.get('avg', 0):.3f}",
-                        'Memory MB': f"{mem_metrics.get('avg', 0):.1f}" if mem_metrics else "N/A",
+                        'Memory MB': f"{mem_metrics.get('avg', 0):.1f}" if mem_metrics and mem_metrics.get('avg', 0) > 0 else "N/A",
                         'Status': status
                     })
 
         return {
             'top_cpu_pods': top_cpu_pods,
             'container_usage': container_usage
-        }
+        }            
 
     def _extract_latency_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract latency analysis data"""
@@ -614,3 +630,4 @@ class deepDriveELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to generate deep drive HTML tables: {e}")
             return {}
+
