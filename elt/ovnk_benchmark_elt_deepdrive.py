@@ -658,10 +658,11 @@ class deepDriveELT(EltUtility):
             # Define table priorities and styling
             table_priorities = {
                 'performance_summary': 1,
-                'top_latencies': 2,
-                'top_cpu_pods': 3,
-                'node_summary': 4,
-                'alerts': 5
+                'latency_categories': 2,  # Ensure Latency Categories appears before Top Latencies
+                'top_latencies': 3,
+                'top_cpu_pods': 4,
+                'node_summary': 5,
+                'alerts': 6
             }
             
             # Sort tables by priority
