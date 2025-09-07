@@ -603,11 +603,7 @@ class deepDriveELT(EltUtility):
             # Resource usage
             resource_usage = structured_data.get('resource_usage', {})
             
-            # Top CPU pods
-            top_cpu_pods = resource_usage.get('top_cpu_pods', [])
-            if top_cpu_pods:
-                df = pd.DataFrame(top_cpu_pods)
-                dataframes['top_cpu_pods'] = self.limit_dataframe_columns(df, 5, 'top_cpu_pods')
+            # Removed Top CPU Pods table (redundant with detailed pods/containers tables)
             
             # Detailed pods usage table: avg/max CPU and RAM
             pods_usage_detailed = resource_usage.get('pods_usage_detailed', [])
@@ -681,7 +677,8 @@ class deepDriveELT(EltUtility):
             
             # Define table priorities and styling
             table_priorities = {
-                'cluster_overview': 1,       # Top
+                'analysis_metadata': 0,      # Move Analysis Metadata to the top
+                'cluster_overview': 1,       # Then Cluster Overview
                 'node_summary': 2,           # Node Summary above detailed
                 'nodes_usage_detailed': 3,   # Then Nodes Usage Detailed
                 'ovn_db_size': 4,            # OVN DB Size
@@ -689,7 +686,6 @@ class deepDriveELT(EltUtility):
                 'containers_usage_detailed': 6, # Containers Usage Detailed under OVN DB Size
                 'latency_categories': 7,
                 'top_latencies': 8,
-                'top_cpu_pods': 9,
                 'alerts': 10,
                 'performance_summary': 999   # Bottom
             }
