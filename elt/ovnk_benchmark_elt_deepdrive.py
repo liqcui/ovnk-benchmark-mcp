@@ -130,229 +130,250 @@ class deepDriveELT(EltUtility):
         }
 
     def _extract_resource_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract resource usage data"""
-        # OVNKube pods CPU usage
-        ovnkube_pods = data.get('ovnkube_pods_cpu', {})
-        top_cpu_pods = []
-        pods_usage_detailed: List[Dict[str, Any]] = []
-        
-        # Node pods
-        node_pods_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
-        for pod in node_pods_cpu[:5]:
-            cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
-            memory_usage = pod.get('metrics', {}).get('memory_usage', {})
-            rank = pod.get('rank', 0)
-            top_cpu_pods.append({
-                'Rank': f"🏆 {rank}" if rank == 1 else rank,
-                'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
-                'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
-                'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
-                'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage else "N/A"
-            })
+            """Extract resource usage data"""
+            # OVNKube pods CPU usage
+            ovnkube_pods = data.get('ovnkube_pods_cpu', {})
+            top_cpu_pods = []
+            pods_usage_detailed: List[Dict[str, Any]] = []
+            
+            # Node pods
+            node_pods_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
+            for pod in node_pods_cpu[:5]:
+                cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
+                memory_usage = pod.get('metrics', {}).get('memory_usage', {})
+                rank = pod.get('rank', 0)
+                top_cpu_pods.append({
+                    'Rank': f"🏆 {rank}" if rank == 1 else rank,
+                    'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
+                    'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
+                    'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
+                    'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage and memory_usage.get('avg', 0) > 0 else "N/A"
+                })
 
-            pods_usage_detailed.append({
-                'Scope': 'Node Pod',
-                'Pod': pod.get('pod_name', ''),
-                'Node': pod.get('node_name', ''),
-                'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
-                'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
-                'Avg Mem MB': round(memory_usage.get('avg', 0.0), 1) if memory_usage else 0.0,
-                'Max Mem MB': round(memory_usage.get('max', 0.0), 1) if memory_usage else 0.0
-            })
+                # For detailed table, get memory data from ovnkube_pods_memory if not available
+                detailed_memory_usage = memory_usage
+                if not memory_usage or memory_usage.get('avg', 0) == 0:
+                    # Try to find memory data from ovnkube_pods_memory
+                    ovnkube_pods_memory = data.get('ovnkube_pods_memory', {})
+                    node_pods_memory = ovnkube_pods_memory.get('ovnkube_node_pods', {}).get('top_5_memory', [])
+                    for mem_pod in node_pods_memory:
+                        if mem_pod.get('pod_name') == pod.get('pod_name'):
+                            detailed_memory_usage = mem_pod.get('metrics', {}).get('memory_usage', {})
+                            break
 
-        # Control plane pods
-        cp_pods_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
-        for pod in cp_pods_cpu:
-            cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
-            memory_usage = pod.get('metrics', {}).get('memory_usage', {})
-            rank = len(top_cpu_pods) + 1
-            top_cpu_pods.append({
-                'Rank': rank,
-                'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
-                'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
-                'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
-                'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage else "N/A"
-            })
+                pods_usage_detailed.append({
+                    'Scope': 'Node Pod',
+                    'Pod': pod.get('pod_name', ''),
+                    'Node': pod.get('node_name', ''),
+                    'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
+                    'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
+                    'Avg Mem MB': round(detailed_memory_usage.get('avg', 0.0), 1) if detailed_memory_usage else 0.0,
+                    'Max Mem MB': round(detailed_memory_usage.get('max', 0.0), 1) if detailed_memory_usage else 0.0
+                })
 
-            pods_usage_detailed.append({
-                'Scope': 'Control Pod',
-                'Pod': pod.get('pod_name', ''),
-                'Node': pod.get('node_name', ''),
-                'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
-                'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
-                'Avg Mem MB': round(memory_usage.get('avg', 0.0), 1) if memory_usage else 0.0,
-                'Max Mem MB': round(memory_usage.get('max', 0.0), 1) if memory_usage else 0.0
-            })
+            # Control plane pods
+            cp_pods_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
+            for pod in cp_pods_cpu:
+                cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
+                memory_usage = pod.get('metrics', {}).get('memory_usage', {})
+                rank = len(top_cpu_pods) + 1
+                top_cpu_pods.append({
+                    'Rank': rank,
+                    'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
+                    'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
+                    'CPU %': f"{cpu_usage.get('avg', 0):.2f}",
+                    'Memory MB': f"{memory_usage.get('avg', 0):.1f}" if memory_usage and memory_usage.get('avg', 0) > 0 else "N/A"
+                })
 
-        # OVN containers usage
-        container_usage = []
-        containers_usage_detailed: List[Dict[str, Any]] = []
-        ovn_containers = data.get('ovn_containers', {}).get('containers', {})
-        
-        for container_name, container_data in ovn_containers.items():
-            if 'error' not in container_data:
-                cpu_data = container_data.get('top_5_cpu', [])
-                mem_data = container_data.get('top_5_memory', [])
-                
-                if cpu_data:
-                    top_cpu = cpu_data[0]
-                    cpu_metrics = top_cpu.get('metrics', {}).get('cpu_usage', {})
+                # For detailed table, get memory data from ovnkube_pods_memory if not available
+                detailed_memory_usage = memory_usage
+                if not memory_usage or memory_usage.get('avg', 0) == 0:
+                    # Try to find memory data from ovnkube_pods_memory
+                    ovnkube_pods_memory = data.get('ovnkube_pods_memory', {})
+                    cp_pods_memory = ovnkube_pods_memory.get('ovnkube_control_plane_pods', {}).get('top_5_memory', [])
+                    for mem_pod in cp_pods_memory:
+                        if mem_pod.get('pod_name') == pod.get('pod_name'):
+                            detailed_memory_usage = mem_pod.get('metrics', {}).get('memory_usage', {})
+                            break
+
+                pods_usage_detailed.append({
+                    'Scope': 'Control Pod',
+                    'Pod': pod.get('pod_name', ''),
+                    'Node': pod.get('node_name', ''),
+                    'Avg CPU %': round(cpu_usage.get('avg', 0.0), 2),
+                    'Max CPU %': round(cpu_usage.get('max', 0.0), 2),
+                    'Avg Mem MB': round(detailed_memory_usage.get('avg', 0.0), 1) if detailed_memory_usage else 0.0,
+                    'Max Mem MB': round(detailed_memory_usage.get('max', 0.0), 1) if detailed_memory_usage else 0.0
+                })
+
+            # OVN containers usage
+            container_usage = []
+            containers_usage_detailed: List[Dict[str, Any]] = []
+            ovn_containers = data.get('ovn_containers', {}).get('containers', {})
+            
+            for container_name, container_data in ovn_containers.items():
+                if 'error' not in container_data:
+                    cpu_data = container_data.get('top_5_cpu', [])
+                    mem_data = container_data.get('top_5_memory', [])
                     
-                    mem_metrics = top_cpu.get('metrics', {}).get('memory_usage', {})
-                    if not mem_metrics and mem_data:
-                        pod_name = top_cpu.get('pod_name', '')
-                        for mem_entry in mem_data:
-                            if mem_entry.get('pod_name', '') == pod_name:
-                                mem_metrics = mem_entry.get('metrics', {}).get('memory_usage', {})
-                                break
+                    if cpu_data:
+                        top_cpu = cpu_data[0]
+                        cpu_metrics = top_cpu.get('metrics', {}).get('cpu_usage', {})
+                        
+                        mem_metrics = top_cpu.get('metrics', {}).get('memory_usage', {})
                         if not mem_metrics and mem_data:
-                            mem_metrics = mem_data[0].get('metrics', {}).get('memory_usage', {})
+                            pod_name = top_cpu.get('pod_name', '')
+                            for mem_entry in mem_data:
+                                if mem_entry.get('pod_name', '') == pod_name:
+                                    mem_metrics = mem_entry.get('metrics', {}).get('memory_usage', {})
+                                    break
+                            if not mem_metrics and mem_data:
+                                mem_metrics = mem_data[0].get('metrics', {}).get('memory_usage', {})
+                        
+                        status = 'danger' if container_name == 'ovnkube_controller' and cpu_metrics.get('avg', 0) > 0.5 else 'success'
+                        
+                        container_usage.append({
+                            'Container': container_name.replace('_', ' ').title(),
+                            'CPU %': f"{cpu_metrics.get('avg', 0):.3f}",
+                            'Memory MB': f"{mem_metrics.get('avg', 0):.1f}" if mem_metrics and mem_metrics.get('avg', 0) > 0 else "N/A",
+                            'Status': status
+                        })
+
+                        containers_usage_detailed.append({
+                            'Container': container_name,
+                            'Pod': top_cpu.get('pod_name', ''),
+                            'Node': top_cpu.get('node_name', ''),
+                            'Avg CPU %': round(cpu_metrics.get('avg', 0.0), 3),
+                            'Max CPU %': round(cpu_metrics.get('max', 0.0), 3),
+                            'Avg Mem MB': round(mem_metrics.get('avg', 0.0), 1) if mem_metrics else 0.0,
+                            'Max Mem MB': round(mem_metrics.get('max', 0.0), 1) if mem_metrics else 0.0
+                        })
+
+            # Nodes usage detailed (per-node avg/max) - FIXED
+            nodes_usage = data.get('nodes_usage', {})
+            nodes_usage_detailed: List[Dict[str, Any]] = []
+            nodes_network_usage: List[Dict[str, Any]] = []
+            
+            if nodes_usage:
+                # Controlplane nodes
+                cp = nodes_usage.get('controlplane_nodes', {})
+                for node in (cp.get('individual_nodes', []) or []):
+                    node_name = node.get('name') or node.get('instance', '')
                     
-                    status = 'danger' if container_name == 'ovnkube_controller' and cpu_metrics.get('avg', 0) > 0.5 else 'success'
+                    # CPU and Memory from the JSON structure
+                    avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
+                    max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
+                    avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
+                    max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
                     
-                    container_usage.append({
-                        'Container': container_name.replace('_', ' ').title(),
-                        'CPU %': f"{cpu_metrics.get('avg', 0):.3f}",
-                        'Memory MB': f"{mem_metrics.get('avg', 0):.1f}" if mem_metrics and mem_metrics.get('avg', 0) > 0 else "N/A",
-                        'Status': status
+                    nodes_usage_detailed.append({
+                        'Node Group': '🔥 Control Plane' if avg_cpu > 15 else 'Control Plane',
+                        'Node Name': node_name,
+                        'Avg CPU %': round(avg_cpu, 2),
+                        'Max CPU %': round(max_cpu, 2),
+                        'Avg Mem MB': round(avg_mem, 1),
+                        'Max Mem MB': round(max_mem, 1)
+                    })
+                    
+                    # Network usage
+                    avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
+                    max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
+                    avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
+                    max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
+                    
+                    nodes_network_usage.append({
+                        'Node Group': '🔥 Control Plane' if avg_rx > 200000 else 'Control Plane',
+                        'Node Name': node_name,
+                        'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
+                        'Max Network RX': f"{max_rx/1024:.1f} KB/s",
+                        'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
+                        'Max Network TX': f"{max_tx/1024:.1f} KB/s"
                     })
 
-                    containers_usage_detailed.append({
-                        'Container': container_name,
-                        'Pod': top_cpu.get('pod_name', ''),
-                        'Node': top_cpu.get('node_name', ''),
-                        'Avg CPU %': round(cpu_metrics.get('avg', 0.0), 3),
-                        'Max CPU %': round(cpu_metrics.get('max', 0.0), 3),
-                        'Avg Mem MB': round(mem_metrics.get('avg', 0.0), 1) if mem_metrics else 0.0,
-                        'Max Mem MB': round(mem_metrics.get('max', 0.0), 1) if mem_metrics else 0.0
+                # Infra nodes
+                infra = nodes_usage.get('infra_nodes', {})
+                for node in (infra.get('individual_nodes', []) or []):
+                    node_name = node.get('name') or node.get('instance', '')
+                    
+                    avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
+                    max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
+                    avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
+                    max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
+                    
+                    nodes_usage_detailed.append({
+                        'Node Group': '🔥 Infra' if avg_cpu > 15 else 'Infra',
+                        'Node Name': node_name,
+                        'Avg CPU %': round(avg_cpu, 2),
+                        'Max CPU %': round(max_cpu, 2),
+                        'Avg Mem MB': round(avg_mem, 1),
+                        'Max Mem MB': round(max_mem, 1)
+                    })
+                    
+                    # Network usage
+                    avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
+                    max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
+                    avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
+                    max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
+                    
+                    nodes_network_usage.append({
+                        'Node Group': '🔥 Infra' if avg_rx > 200000 else 'Infra',
+                        'Node Name': node_name,
+                        'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
+                        'Max Network RX': f"{max_rx/1024:.1f} KB/s",
+                        'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
+                        'Max Network TX': f"{max_tx/1024:.1f} KB/s"
                     })
 
-        # Nodes usage detailed (per-node avg/max) - FIXED
-        nodes_usage = data.get('nodes_usage', {})
-        nodes_usage_detailed: List[Dict[str, Any]] = []
-        nodes_network_usage: List[Dict[str, Any]] = []
-        
-        if nodes_usage:
-            # Controlplane nodes
-            cp = nodes_usage.get('controlplane_nodes', {})
-            for node in (cp.get('individual_nodes', []) or []):
-                node_name = node.get('name') or node.get('instance', '')
-                
-                # CPU and Memory from the JSON structure
-                avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
-                max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
-                avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
-                max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
-                
-                nodes_usage_detailed.append({
-                    'Node Group': '🔥 Control Plane' if avg_cpu > 15 else 'Control Plane',
-                    'Node Name': node_name,
-                    'Avg CPU %': round(avg_cpu, 2),
-                    'Max CPU %': round(max_cpu, 2),
-                    'Avg Mem MB': round(avg_mem, 1),
-                    'Max Mem MB': round(max_mem, 1)
-                })
-                
-                # Network usage
-                avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
-                max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
-                avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
-                max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
-                
-                nodes_network_usage.append({
-                    'Node Group': '🔥 Control Plane' if avg_rx > 200000 else 'Control Plane',
-                    'Node Name': node_name,
-                    'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
-                    'Max Network RX': f"{max_rx/1024:.1f} KB/s",
-                    'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
-                    'Max Network TX': f"{max_tx/1024:.1f} KB/s"
-                })
-
-            # Infra nodes
-            infra = nodes_usage.get('infra_nodes', {})
-            for node in (infra.get('individual_nodes', []) or []):
-                node_name = node.get('name') or node.get('instance', '')
-                
-                avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
-                max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
-                avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
-                max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
-                
-                nodes_usage_detailed.append({
-                    'Node Group': '🔥 Infra' if avg_cpu > 15 else 'Infra',
-                    'Node Name': node_name,
-                    'Avg CPU %': round(avg_cpu, 2),
-                    'Max CPU %': round(max_cpu, 2),
-                    'Avg Mem MB': round(avg_mem, 1),
-                    'Max Mem MB': round(max_mem, 1)
-                })
-                
-                # Network usage
-                avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
-                max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
-                avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
-                max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
-                
-                nodes_network_usage.append({
-                    'Node Group': '🔥 Infra' if avg_rx > 200000 else 'Infra',
-                    'Node Name': node_name,
-                    'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
-                    'Max Network RX': f"{max_rx/1024:.1f} KB/s",
-                    'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
-                    'Max Network TX': f"{max_tx/1024:.1f} KB/s"
-                })
-
-            # Top5 worker nodes
-            top5 = nodes_usage.get('top5_worker_nodes', {})
-            for idx, node in enumerate((top5.get('individual_nodes', []) or []), 1):
-                node_name = node.get('name') or node.get('instance', '')
-                
-                avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
-                max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
-                avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
-                max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
-                
-                group_name = f'🏆 Top{idx} Workers' if idx == 1 else f'Top{idx} Workers'
-                if avg_cpu > 70:
-                    group_name = f'🔥 {group_name}'
+                # Top5 worker nodes
+                top5 = nodes_usage.get('top5_worker_nodes', {})
+                for idx, node in enumerate((top5.get('individual_nodes', []) or []), 1):
+                    node_name = node.get('name') or node.get('instance', '')
                     
-                nodes_usage_detailed.append({
-                    'Node Group': group_name,
-                    'Node Name': node_name,
-                    'Avg CPU %': round(avg_cpu, 2),
-                    'Max CPU %': round(max_cpu, 2),
-                    'Avg Mem MB': round(avg_mem, 1),
-                    'Max Mem MB': round(max_mem, 1)
-                })
-                
-                # Network usage
-                avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
-                max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
-                avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
-                max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
-                
-                net_group_name = f'🏆 Top{idx} Workers' if idx == 1 else f'Top{idx} Workers'
-                if avg_rx > 500000:  # High network usage threshold
-                    net_group_name = f'🔥 {net_group_name}'
+                    avg_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('avg'), 0.0)
+                    max_cpu = self._to_float_safe(node.get('cpu_usage', {}).get('max'), 0.0)
+                    avg_mem = self._to_float_safe(node.get('memory_usage', {}).get('avg'), 0.0)
+                    max_mem = self._to_float_safe(node.get('memory_usage', {}).get('max'), 0.0)
                     
-                nodes_network_usage.append({
-                    'Node Group': net_group_name,
-                    'Node Name': node_name,
-                    'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
-                    'Max Network RX': f"{max_rx/1024:.1f} KB/s",
-                    'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
-                    'Max Network TX': f"{max_tx/1024:.1f} KB/s"
-                })
+                    group_name = f'🏆 Top{idx} Workers' if idx == 1 else f'Top{idx} Workers'
+                    if avg_cpu > 70:
+                        group_name = f'🔥 {group_name}'
+                        
+                    nodes_usage_detailed.append({
+                        'Node Group': group_name,
+                        'Node Name': node_name,
+                        'Avg CPU %': round(avg_cpu, 2),
+                        'Max CPU %': round(max_cpu, 2),
+                        'Avg Mem MB': round(avg_mem, 1),
+                        'Max Mem MB': round(max_mem, 1)
+                    })
+                    
+                    # Network usage
+                    avg_rx = self._to_float_safe(node.get('network_rx', {}).get('avg'), 0.0)
+                    max_rx = self._to_float_safe(node.get('network_rx', {}).get('max'), 0.0)
+                    avg_tx = self._to_float_safe(node.get('network_tx', {}).get('avg'), 0.0)
+                    max_tx = self._to_float_safe(node.get('network_tx', {}).get('max'), 0.0)
+                    
+                    net_group_name = f'🏆 Top{idx} Workers' if idx == 1 else f'Top{idx} Workers'
+                    if avg_rx > 500000:  # High network usage threshold
+                        net_group_name = f'🔥 {net_group_name}'
+                        
+                    nodes_network_usage.append({
+                        'Node Group': net_group_name,
+                        'Node Name': node_name,
+                        'Avg Network RX': f"{avg_rx/1024:.1f} KB/s",
+                        'Max Network RX': f"{max_rx/1024:.1f} KB/s",
+                        'Avg Network TX': f"{avg_tx/1024:.1f} KB/s",
+                        'Max Network TX': f"{max_tx/1024:.1f} KB/s"
+                    })
 
-        return {
-            'top_cpu_pods': top_cpu_pods,
-            'container_usage': container_usage,
-            'pods_usage_detailed': pods_usage_detailed,
-            'containers_usage_detailed': containers_usage_detailed,
-            'nodes_usage_detailed': nodes_usage_detailed,
-            'nodes_network_usage': nodes_network_usage  # NEW TABLE
-        }
-
+            return {
+                'top_cpu_pods': top_cpu_pods,
+                'container_usage': container_usage,
+                'pods_usage_detailed': pods_usage_detailed,
+                'containers_usage_detailed': containers_usage_detailed,
+                'nodes_usage_detailed': nodes_usage_detailed,
+                'nodes_network_usage': nodes_network_usage  # NEW TABLE
+            }            
 
     def _extract_latency_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract latency analysis data"""
@@ -846,3 +867,4 @@ class deepDriveELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to generate deep drive HTML tables: {e}")
             return {}
+

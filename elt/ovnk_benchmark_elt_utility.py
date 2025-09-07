@@ -149,8 +149,8 @@ class EltUtility:
             max_cols = self.max_columns
         
         # Special handling for specific tables that should show all columns or have different limits
-        if table_name in ['controlplane_nodes_detail', 'infra_nodes_detail']:
-            return df  # Don't limit detail tables
+        if table_name in ['controlplane_nodes_detail', 'infra_nodes_detail', 'nodes_usage_detailed', 'nodes_network_usage']:
+            return df  # Don't limit detail tables - UPDATED to include both new node tables
         elif table_name == 'node_distribution':
             return df  # Don't limit node distribution table
         elif table_name == 'node_groups':  # Allow more columns for node groups
@@ -248,7 +248,7 @@ class EltUtility:
         while len(keep_cols) < max_cols and remaining_cols:
             keep_cols.append(remaining_cols.pop(0))
         
-        return df[keep_cols[:max_cols]]
+        return df[keep_cols[:max_cols]]            
 
     def create_property_value_table(self, data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Create a property-value table format"""
@@ -475,3 +475,4 @@ class EltUtility:
             return f'<span class="text-warning font-weight-bold">{value}{unit}</span>'
         else:
             return f'{value}{unit}'
+
