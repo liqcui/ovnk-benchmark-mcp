@@ -56,23 +56,35 @@ class ovnDeepDriveAnalyzer:
     
     def _calculate_performance_score(self, metrics_summary: Dict[str, Any]) -> Dict[str, Any]:
         """Calculate overall performance score based on collected metrics"""
+        def _to_float(val: Any, default: float = 0.0) -> float:
+            try:
+                if val is None:
+                    return default
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
         score_factors = {
             'latency_score': 0,
-            'resource_score': 0, 
+            'resource_score': 0,
             'stability_score': 0,
-            'ovs_score': 0
+            'ovs_score': 0,
         }
-        
+
         # Latency scoring (lower is better)
         latency_data = metrics_summary.get('latency_metrics', {})
         if latency_data and not latency_data.get('error'):
-            avg_latencies = []
-            for category, data in latency_data.items():
-                if isinstance(data, dict) and 'statistics' in data:
-                    avg_val = data['statistics'].get('avg_value', 0)
+            avg_latencies: List[float] = []
+            categories = latency_data.get('categories', {}) if isinstance(latency_data, dict) else {}
+            for _category, metrics in categories.items():
+                if not isinstance(metrics, dict):
+                    continue
+                for _metric_name, metric in metrics.items():
+                    stats = metric.get('statistics', {})
+                    avg_val = _to_float(stats.get('avg_value', 0.0), 0.0)
                     if avg_val > 0:
                         avg_latencies.append(avg_val)
-            
+
             if avg_latencies:
                 avg_latency = statistics.mean(avg_latencies)
                 if avg_latency < 0.1:  # < 100ms
@@ -83,44 +95,48 @@ class ovnDeepDriveAnalyzer:
                     score_factors['latency_score'] = 50
                 else:
                     score_factors['latency_score'] = 30
-        
-        # Resource utilization scoring
+
+        # Resource utilization scoring (OVNKube pods)
         cpu_usage = metrics_summary.get('ovnkube_pods_cpu', {})
         if cpu_usage and not cpu_usage.get('error'):
-            top_cpu = cpu_usage.get('top_5_cpu_usage', [])
-            if top_cpu:
-                max_cpu = max([entry.get('metrics', {}).get('cpu_usage', {}).get('avg', 0) 
-                              for entry in top_cpu[:3]])  # Top 3
+            node_list = cpu_usage.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
+            control_list = cpu_usage.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
+            combined = (node_list or []) + (control_list or [])
+            if combined:
+                max_cpu = 0.0
+                for entry in combined[:5]:
+                    avg_val = _to_float(entry.get('metrics', {}).get('cpu_usage', {}).get('avg', 0.0), 0.0)
+                    if avg_val > max_cpu:
+                        max_cpu = avg_val
                 if max_cpu < 50:  # < 50%
                     score_factors['resource_score'] = 90
                 elif max_cpu < 80:  # < 80%
                     score_factors['resource_score'] = 70
                 else:
                     score_factors['resource_score'] = 40
-        
-        # Stability scoring (based on alerts and pod status)
+
+        # Stability scoring (based on alerts)
         basic_info = metrics_summary.get('basic_info', {})
-        if basic_info and 'metrics' in basic_info:
-            alerts = basic_info['metrics'].get('alerts', {})
-            if alerts and not alerts.get('error'):
-                alert_count = len(alerts.get('top_alerts', []))
-                if alert_count == 0:
-                    score_factors['stability_score'] = 100
-                elif alert_count < 3:
-                    score_factors['stability_score'] = 80
-                elif alert_count < 6:
-                    score_factors['stability_score'] = 60
-                else:
-                    score_factors['stability_score'] = 40
-        
+        if basic_info:
+            alerts_summary = basic_info.get('alerts_summary', {})
+            alert_count = len(alerts_summary.get('top_alerts', []) or [])
+            if alert_count == 0:
+                score_factors['stability_score'] = 100
+            elif alert_count < 3:
+                score_factors['stability_score'] = 80
+            elif alert_count < 6:
+                score_factors['stability_score'] = 60
+            else:
+                score_factors['stability_score'] = 40
+
         # OVS performance scoring
         ovs_data = metrics_summary.get('ovs_metrics', {})
         if ovs_data and not ovs_data.get('error'):
             cpu_data = ovs_data.get('cpu_usage', {})
             if cpu_data and not cpu_data.get('error'):
-                ovs_top = cpu_data.get('summary', {}).get('ovs_vswitchd_top10', [])
+                ovs_top = cpu_data.get('ovs_vswitchd_top5', [])
                 if ovs_top:
-                    max_ovs_cpu = max([entry.get('max', 0) for entry in ovs_top[:3]])
+                    max_ovs_cpu = max([_to_float(entry.get('max', 0.0), 0.0) for entry in ovs_top[:3]] or [0.0])
                     if max_ovs_cpu < 30:  # < 30%
                         score_factors['ovs_score'] = 90
                     elif max_ovs_cpu < 60:  # < 60%
