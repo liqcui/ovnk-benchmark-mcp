@@ -30,7 +30,8 @@ from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 from config.ovnk_benchmark_config import Config
 from elt.ovnk_benchmark_elt_duckdb import PerformanceELT
 from storage.ovnk_benchmark_storage_ovnk import PrometheusStorage
-
+from analysis.ovnk_benchmark_performance_ovnk_deepdrive import ovnDeepDriveAnalyzer
+        
 
 import fastmcp
 from fastmcp.server import FastMCP
@@ -350,7 +351,7 @@ class OVNBasicInfoRequest(BaseModel):
 class OVNKDeepDriveAnalysisRequest(BaseModel):
     """Request model for comprehensive OVN-Kubernetes deep drive performance analysis"""
     duration: Optional[str] = Field(
-        default=None,
+        default="1h",
         description="Analysis duration using Prometheus time format (e.g., '5m', '15m', '30m', '1h', '2h', '24h'). If not provided, performs instant analysis using current metrics. Duration analysis provides historical trend data while instant analysis gives real-time snapshot. Recommended: '5m' for quick performance checks, '30m' for standard analysis, '1h' for comprehensive trend analysis, '24h' for long-term performance patterns."
     )
     include_performance_insights: bool = Field(
@@ -1814,10 +1815,7 @@ async def analysis_ovnk_performance_deepdrive(request: OVNKDeepDriveAnalysisRequ
                    f"Insights: {request.include_performance_insights}, "
                    f"Focus: {request.focus_components or 'all'}, "
                    f"Top N: {request.top_n_results}")
-        
-        # Import the deep drive analyzer
-        from analysis.ovnk_benchmark_performance_ovnk_deepdrive import ovnDeepDriveAnalyzer
-        
+
         # Initialize analyzer
         analyzer = ovnDeepDriveAnalyzer(prometheus_client, auth_manager)
         

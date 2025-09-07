@@ -198,6 +198,13 @@ class EltUtility:
         # UPDATED: OVN Latency specific handling - allow all columns for full metric names
         elif table_name in ['latency_metadata', 'latency_summary']:
             max_cols = 2  # Latency metadata and summary use 2 columns
+        # Deep Drive specific handling
+        elif table_name in ['analysis_metadata', 'performance_summary', 'cluster_overview', 'insights']:
+            max_cols = 2  # Deep drive metadata and summary tables use 2 columns
+        elif table_name in ['top_cpu_pods', 'top_memory_pods', 'ovs_cpu_usage', 'ovs_dp_flows', 'controlplane_nodes', 'top_worker_nodes']:
+            max_cols = 4  # Deep drive resource usage tables get 4 columns for readability
+        elif table_name == 'deep_drive_summary':
+            max_cols = 2  # Deep drive summary - simple property-value format            
         elif table_name == 'top_latencies':
             # Don't limit columns for top latencies to show full metric names
             return df

@@ -21,6 +21,7 @@ from .ovnk_benchmark_elt_cluster_stat import ClusterStatELT
 from .ovnk_benchmark_elt_ovs import OvsELT
 from .ovnk_benchmark_elt_latency import ovnLatencyELT
 from .ovnk_benchmark_elt_kubeapi import kubeAPIELT
+from .ovnk_benchmark_elt_deepdrive import deepDriveELT
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ class PerformanceDataELT(EltUtility):
         self.cluster_stat_elt = ClusterStatELT() 
         self.ovs_elt = OvsELT()
         self.kube_api_elt = kubeAPIELT()
-        self.ovn_latency_elt = ovnLatencyELT()  # NEW: Add OVN latency ELT
+        self.ovn_latency_elt = ovnLatencyELT()
+        self.deepdrive_elt = deepDriveELT()  
 
     def extract_json_data(self, mcp_results: Union[Dict[str, Any], str]) -> Dict[str, Any]:
         """Extract relevant data from MCP tool results"""
@@ -74,7 +76,9 @@ class PerformanceDataELT(EltUtility):
             elif extracted['data_type'] == 'ovn_latency_metrics':  # NEW: Handle OVN latency metrics
                 extracted['structured_data'] = self.ovn_latency_elt.extract_ovn_latency_data(mcp_results)
             elif extracted['data_type'] == 'kube_api_metrics':  # NEW: Handle Kube API metrics
-                extracted['structured_data'] = self.kube_api_elt.extract_kube_api_data(mcp_results)                
+                extracted['structured_data'] = self.kube_api_elt.extract_kube_api_data(mcp_results)   
+            elif extracted['data_type'] == 'ovn_deep_drive':  # NEW: Handle deep drive data
+                extracted['structured_data'] = self.deepdrive_elt.extract_deepdrive_data(mcp_results)                             
             else:
                 extracted['structured_data'] = self._extract_generic_data(mcp_results)
             
@@ -86,6 +90,12 @@ class PerformanceDataELT(EltUtility):
 
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from MCP results"""
+
+        # NEW: Check for OVN Deep Drive analysis data
+        if ('analysis_type' in data and data.get('analysis_type') == 'comprehensive_deep_drive' and
+            'basic_info' in data and 'ovnkube_pods_cpu' in data and 'ovs_metrics' in data and
+            'performance_analysis' in data):
+            return 'ovn_deep_drive'
 
         # NEW: Check for OVN latency metrics data (comprehensive enhanced metrics)
         if ('overall_summary' in data and 'collection_type' in data and 
@@ -100,11 +110,6 @@ class PerformanceDataELT(EltUtility):
         if ('metric_name' in data and 'statistics' in data and 'component' in data and
             'unit' in data and any(component in data.get('component', '') for component in ['controller', 'node'])):
             return 'ovn_latency_metrics'
-
-        # if ('controller_ready_duration' in data and 'node_ready_duration' in data and 
-        #     'controller_sync_duration' in data and 'controller_service_rate' in data and 
-        #     'overall_summary' in data):
-        #     return 'sync_duration'
 
         if ('metrics' in data and 'summary' in data and 
             'timestamp' in data and 'duration' in data):
@@ -221,6 +226,8 @@ class PerformanceDataELT(EltUtility):
                 return self.ovn_latency_elt.summarize_ovn_latency_data(structured_data)
             elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics summary
                 return self.kube_api_elt.summarize_kube_api_data(structured_data)
+            elif data_type == 'ovn_deep_drive':  # NEW: Handle deep drive summary
+                return self.deepdrive_elt.summarize_deepdrive_data(structured_data)                
             else:
                 return self._summarize_generic(structured_data)
         
@@ -255,7 +262,9 @@ class PerformanceDataELT(EltUtility):
             elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency transformation
                 return self.ovn_latency_elt.transform_to_dataframes(structured_data)
             elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics transformation
-                return self.kube_api_elt.transform_to_dataframes(structured_data)                                           
+                return self.kube_api_elt.transform_to_dataframes(structured_data)
+            elif data_type == 'ovn_deep_drive':  # NEW: Handle deep drive transformation
+                return self.deepdrive_elt.transform_to_dataframes(structured_data)                                                          
             else:
                 # Default transformation for other data types
                 dataframes = {}
@@ -303,7 +312,9 @@ class PerformanceDataELT(EltUtility):
             elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency HTML generation
                 return self.ovn_latency_elt.generate_html_tables(dataframes)
             elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics HTML generation
-                return self.kube_api_elt.generate_html_tables(dataframes)                                          
+                return self.kube_api_elt.generate_html_tables(dataframes)   
+            elif data_type == 'ovn_deep_drive':  # NEW: Handle deep drive HTML generation
+                return self.deepdrive_elt.generate_html_tables(dataframes)                                                       
             else:
                 # Default HTML table generation
                 html_tables = {}
