@@ -653,14 +653,16 @@ class deepDriveELT(EltUtility):
             
             # Define table priorities and styling
             table_priorities = {
-                'cluster_overview': 1,  # Move Cluster Overview to the top
-                'ovn_db_size': 2,       # Place OVN DB Size right under Cluster Overview
-                'latency_categories': 3,
-                'top_latencies': 4,
-                'top_cpu_pods': 5,
-                'node_summary': 6,
-                'alerts': 7,
-                'performance_summary': 999  # Push Performance Summary to the bottom
+                'cluster_overview': 1,     # Top
+                'ovn_db_size': 2,          # Under Cluster Overview
+                'nodes_usage_detailed': 3, # Move Nodes Usage Detailed under Cluster Overview
+                'top_worker_nodes': 4,     # Then Top Worker Nodes
+                'latency_categories': 5,
+                'top_latencies': 6,
+                'top_cpu_pods': 7,
+                'node_summary': 8,
+                'alerts': 9,
+                'performance_summary': 999 # Bottom
             }
             
             # Sort tables by priority
