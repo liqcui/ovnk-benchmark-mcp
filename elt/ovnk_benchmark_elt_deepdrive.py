@@ -18,6 +18,26 @@ class deepDriveELT(EltUtility):
     def __init__(self):
         super().__init__()
 
+    def _to_float_safe(self, value, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            if isinstance(value, (int, float)):
+                return float(value)
+            return float(str(value).strip())
+        except Exception:
+            return default
+
+    def _extract_stat(self, metrics: Dict[str, Any], metric_key: str, stat_candidates: List[str]) -> float:
+        try:
+            metric = metrics.get(metric_key, {}) if isinstance(metrics, dict) else {}
+            for key in stat_candidates:
+                if key in metric and metric.get(key) is not None:
+                    return self._to_float_safe(metric.get(key), 0.0)
+        except Exception:
+            pass
+        return 0.0
+
     def extract_deepdrive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract deep drive analysis data from JSON"""
         try:
@@ -210,45 +230,51 @@ class deepDriveELT(EltUtility):
         if nodes_usage:
             # Controlplane nodes (per node)
             cp = nodes_usage.get('controlplane_nodes', {})
-            for node in cp.get('individual_nodes', []) or []:
+            for node in (cp.get('individual_nodes', []) or []):
                 metrics = node.get('metrics', {})
-                cpu = metrics.get('cpu_usage', {})
-                mem = metrics.get('memory_usage', {})
+                avg_cpu = self._extract_stat(metrics, 'cpu_usage', ['avg', 'value', 'max'])
+                max_cpu = self._extract_stat(metrics, 'cpu_usage', ['max', 'avg', 'value'])
+                avg_mem = self._extract_stat(metrics, 'memory_usage', ['avg', 'value', 'max'])
+                max_mem = self._extract_stat(metrics, 'memory_usage', ['max', 'avg', 'value'])
                 nodes_usage_detailed.append({
                     'Node Group': 'Control Plane',
                     'Node Name': node.get('name') or node.get('instance', ''),
-                    'Avg CPU %': round(cpu.get('avg', 0.0), 2),
-                    'Max CPU %': round(cpu.get('max', 0.0), 2),
-                    'Avg Mem MB': round(mem.get('avg', 0.0), 1),
-                    'Max Mem MB': round(mem.get('max', 0.0), 1)
+                    'Avg CPU %': round(avg_cpu, 2),
+                    'Max CPU %': round(max_cpu, 2),
+                    'Avg Mem MB': round(avg_mem, 1),
+                    'Max Mem MB': round(max_mem, 1)
                 })
             # Infra nodes (per node)
             infra = nodes_usage.get('infra_nodes', {})
-            for node in infra.get('individual_nodes', []) or []:
+            for node in (infra.get('individual_nodes', []) or []):
                 metrics = node.get('metrics', {})
-                cpu = metrics.get('cpu_usage', {})
-                mem = metrics.get('memory_usage', {})
+                avg_cpu = self._extract_stat(metrics, 'cpu_usage', ['avg', 'value', 'max'])
+                max_cpu = self._extract_stat(metrics, 'cpu_usage', ['max', 'avg', 'value'])
+                avg_mem = self._extract_stat(metrics, 'memory_usage', ['avg', 'value', 'max'])
+                max_mem = self._extract_stat(metrics, 'memory_usage', ['max', 'avg', 'value'])
                 nodes_usage_detailed.append({
                     'Node Group': 'Infra',
                     'Node Name': node.get('name') or node.get('instance', ''),
-                    'Avg CPU %': round(cpu.get('avg', 0.0), 2),
-                    'Max CPU %': round(cpu.get('max', 0.0), 2),
-                    'Avg Mem MB': round(mem.get('avg', 0.0), 1),
-                    'Max Mem MB': round(mem.get('max', 0.0), 1)
+                    'Avg CPU %': round(avg_cpu, 2),
+                    'Max CPU %': round(max_cpu, 2),
+                    'Avg Mem MB': round(avg_mem, 1),
+                    'Max Mem MB': round(max_mem, 1)
                 })
             # Top5 worker nodes (per node)
             top5 = nodes_usage.get('top5_worker_nodes', {})
-            for node in top5.get('individual_nodes', []) or []:
+            for node in (top5.get('individual_nodes', []) or []):
                 metrics = node.get('metrics', {})
-                cpu = metrics.get('cpu_usage', {})
-                mem = metrics.get('memory_usage', {})
+                avg_cpu = self._extract_stat(metrics, 'cpu_usage', ['avg', 'value', 'max'])
+                max_cpu = self._extract_stat(metrics, 'cpu_usage', ['max', 'avg', 'value'])
+                avg_mem = self._extract_stat(metrics, 'memory_usage', ['avg', 'value', 'max'])
+                max_mem = self._extract_stat(metrics, 'memory_usage', ['max', 'avg', 'value'])
                 nodes_usage_detailed.append({
                     'Node Group': 'Top5 Workers',
                     'Node Name': node.get('name') or node.get('instance', ''),
-                    'Avg CPU %': round(cpu.get('avg', 0.0), 2),
-                    'Max CPU %': round(cpu.get('max', 0.0), 2),
-                    'Avg Mem MB': round(mem.get('avg', 0.0), 1),
-                    'Max Mem MB': round(mem.get('max', 0.0), 1)
+                    'Avg CPU %': round(avg_cpu, 2),
+                    'Max CPU %': round(max_cpu, 2),
+                    'Avg Mem MB': round(avg_mem, 1),
+                    'Max Mem MB': round(max_mem, 1)
                 })
 
         return {
