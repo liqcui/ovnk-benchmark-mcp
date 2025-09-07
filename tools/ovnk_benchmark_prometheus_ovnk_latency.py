@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Enhanced OVN-Kubernetes Latency Collector - Fixed Version
-Collects and analyzes latency metrics from OVN-Kubernetes components with optimized JSON output
+Enhanced OVN-Kubernetes Latency Collector - Fixed Version with Improved Pod/Node Resolution
+Collects and analyzes latency metrics from OVN-Kubernetes components with proper pod/node name resolution
 """
 
 import os
@@ -19,14 +19,19 @@ from ocauth.ovnk_benchmark_auth import auth
 
 
 class OVNLatencyCollector:
-    """Enhanced collector for OVN-Kubernetes latency metrics with optimized JSON output"""
+    """Enhanced collector for OVN-Kubernetes latency metrics with improved pod/node name resolution"""
     
     def __init__(self, prometheus_client: PrometheusBaseQuery):
         self.prometheus_client = prometheus_client
         self.auth = auth
         self.utility = mcpToolsUtility(auth_client=auth)
         
-        # Updated metrics configuration with better queries
+        # Cache for pod-to-node mappings to avoid repeated lookups
+        self._pod_node_cache = {}
+        self._cache_timestamp = None
+        self._cache_expiry_minutes = 10
+        
+        # Updated metrics configuration with better queries that preserve pod labels
         self.default_metrics = [
             {
                 'query': 'topk(10, ovnkube_controller_ready_duration_seconds)',
@@ -51,11 +56,11 @@ class OVNLatencyCollector:
             }
         ]
         
-        # Fixed extended metrics with better queries
+        # Fixed extended metrics with better queries that preserve pod information
         self.extended_metrics = [
+            # Use sum by (pod, le) to preserve pod labels in percentile calculations
             {
-                # Fixed: Check if metric exists and use proper bucket query
-                'query': 'histogram_quantile(0.95, sum(rate(ovnkube_controller_sync_duration_seconds_bucket[5m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.95, sum by (pod, le) (rate(ovnkube_controller_sync_duration_seconds_bucket[5m])) > 0)',
                 'metricName': 'ovnkube_controller_sync_duration_p95',
                 'unit': 'seconds',
                 'type': 'percentile_latency',
@@ -63,8 +68,7 @@ class OVNLatencyCollector:
                 'description': '95th percentile of controller sync duration over 5 minutes'
             },
             {
-                # Fixed: Check if metric exists and use proper bucket query
-                'query': 'histogram_quantile(0.95, sum(rate(ovnkube_node_sync_duration_seconds_bucket[5m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.95, sum by (pod, le) (rate(ovnkube_node_sync_duration_seconds_bucket[5m])) > 0)',
                 'metricName': 'ovnkube_node_sync_duration_p95',
                 'unit': 'seconds',
                 'type': 'percentile_latency',
@@ -72,68 +76,64 @@ class OVNLatencyCollector:
                 'description': '95th percentile of node sync duration over 5 minutes'
             },
             {
-                # Fixed: Use correct metric name and check existence
-                'query': 'histogram_quantile(0.99, sum(rate(ovnkube_controller_pod_annotation_latency_seconds_bucket[2m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_pod_annotation_latency_seconds_bucket[2m])) > 0)',
                 'metricName': 'Pod_Annotation_Latency_p99',
                 'unit': 'seconds',
                 'type': 'pod_latency',
                 'component': 'controller'
             },
+            # Fixed CNI queries with proper pod label preservation
             {
-                # Fixed: Use correct CNI metric names
-                'query': 'histogram_quantile(0.99, sum(rate(ovnkube_node_cni_request_duration_seconds_bucket{command="ADD"}[2m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_node_cni_request_duration_seconds_bucket{command="ADD"}[2m])) > 0)',
                 'metricName': 'CNI_Request_ADD_Latency_p99',
                 'unit': 'seconds',
                 'type': 'cni_latency',
                 'component': 'node'
             },
             {
-                'query': 'histogram_quantile(0.99, sum(rate(ovnkube_node_cni_request_duration_seconds_bucket{command="DEL"}[2m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_node_cni_request_duration_seconds_bucket{command="DEL"}[2m])) > 0)',
                 'metricName': 'CNI_Request_DEL_Latency_p99',
                 'unit': 'seconds',
                 'type': 'cni_latency',
                 'component': 'node'
             },
             {
-                # Fixed: Use correct pod creation metric names
-                'query': 'histogram_quantile(0.99, sum(rate(ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket[2m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket[2m])) > 0)',
                 'metricName': 'Pod_creation_latency_first_seen_lsp_p99',
                 'unit': 'seconds',
                 'type': 'pod_latency',
                 'component': 'controller'
             },
             {
-                'query': 'histogram_quantile(0.99, sum(rate(ovnkube_controller_pod_lsp_created_port_binding_duration_seconds_bucket[2m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_pod_lsp_created_port_binding_duration_seconds_bucket[2m])) > 0)',
                 'metricName': 'pod_creation_latency_port_binding_p99',
                 'unit': 'seconds',
                 'type': 'pod_latency',
                 'component': 'controller'
             },
             {
-                # Fixed: Use rate instead of raw sum for service latency
-                'query': 'sum(rate(ovnkube_controller_sync_service_latency_seconds_sum[2m])) by (pod) / sum(rate(ovnkube_controller_sync_service_latency_seconds_count[2m])) by (pod)',
+                'query': 'sum by (pod) (rate(ovnkube_controller_sync_service_latency_seconds_sum[2m])) / sum by (pod) (rate(ovnkube_controller_sync_service_latency_seconds_count[2m]))',
                 'metricName': 'sync_service_latency',
                 'unit': 'seconds',
                 'type': 'service_latency',
                 'component': 'controller'
             },
             {
-                'query': 'histogram_quantile(0.99, sum(rate(ovnkube_controller_sync_service_latency_seconds_bucket[2m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_sync_service_latency_seconds_bucket[2m])) > 0)',
                 'metricName': 'sync_service_latency_p99',
                 'unit': 'seconds',
                 'type': 'service_latency',
                 'component': 'controller'
             },
             {
-                # Fixed: Use correct network programming metric names
-                'query': 'histogram_quantile(0.99, sum(rate(ovnkube_controller_network_programming_duration_seconds_bucket[2m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[2m])) > 0)',
                 'metricName': 'apply_network_config_pod_duration_p99',
                 'unit': 'seconds',
                 'type': 'network_programming',
                 'component': 'controller'
             },
             {
-                'query': 'histogram_quantile(0.99, sum(rate(ovnkube_controller_network_programming_service_duration_seconds_bucket[2m])) by (le)) > 0',
+                'query': 'histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_network_programming_service_duration_seconds_bucket[2m])) > 0)',
                 'metricName': 'apply_network_config_service_duration_p99',
                 'unit': 'seconds',
                 'type': 'network_programming',
@@ -187,14 +187,178 @@ class OVNLatencyCollector:
             # Add hardcoded extended metrics
             self.metrics_config.extend(self.extended_metrics)
     
+    async def _refresh_pod_node_cache(self) -> None:
+        """Refresh the pod-to-node mapping cache using utility functions"""
+        current_time = datetime.now()
+        
+        # Check if cache is still valid
+        if (self._cache_timestamp and 
+            self._pod_node_cache and 
+            (current_time - self._cache_timestamp).total_seconds() < (self._cache_expiry_minutes * 60)):
+            return
+        
+        print("Refreshing pod-to-node mapping cache using utility functions...")
+        
+        try:
+            # Get comprehensive pod info across multiple namespaces using utility method
+            namespaces = [
+                'openshift-ovn-kubernetes', 
+                'openshift-multus', 
+                'kube-system', 
+                'default',
+                'openshift-monitoring',
+                'openshift-network-operator'
+            ]
+            
+            # Use the utility method to get all pod info
+            all_pod_info = self.utility.get_all_pods_info_across_namespaces(namespaces)
+            
+            # Build comprehensive cache with multiple lookup strategies
+            self._pod_node_cache = {}
+            
+            for pod_name, info in all_pod_info.items():
+                node_name = info.get('node_name', 'unknown')
+                namespace = info.get('namespace', 'unknown')
+                
+                # Store under multiple keys for flexible lookup
+                lookup_keys = [
+                    pod_name,  # Full pod name
+                ]
+                
+                # Add short name patterns
+                if '-' in pod_name:
+                    # For names like ovnkube-node-abc123, create lookup for "ovnkube-node"
+                    parts = pod_name.split('-')
+                    if len(parts) >= 2:
+                        base_name = '-'.join(parts[:2])  # e.g., "ovnkube-node"
+                        lookup_keys.append(base_name)
+                        
+                        # Also add the suffix for exact matching
+                        suffix = parts[-1]
+                        lookup_keys.append(f"{base_name}-{suffix}")
+                
+                # Add namespace-qualified keys
+                lookup_keys.extend([
+                    f"{namespace}/{pod_name}",
+                    f"{pod_name}.{namespace}"
+                ])
+                
+                # Store the mapping under all lookup keys
+                for key in lookup_keys:
+                    if key:  # Ensure key is not empty
+                        self._pod_node_cache[key] = {
+                            'node_name': node_name,
+                            'namespace': namespace,
+                            'full_pod_name': pod_name
+                        }
+            
+            self._cache_timestamp = current_time
+            print(f"Pod-to-node cache refreshed with {len(all_pod_info)} pods, {len(self._pod_node_cache)} lookup keys")
+            
+            # Debug: Print some cache entries for OVN pods
+            ovn_keys = [k for k in self._pod_node_cache.keys() if 'ovnkube' in k][:5]
+            print(f"Sample OVN cache keys: {ovn_keys}")
+            
+        except Exception as e:
+            print(f"Failed to refresh pod-node cache: {e}")
+            # Keep existing cache if refresh fails
+    
+    def _extract_pod_name_from_labels(self, labels: Dict[str, str]) -> str:
+        """Extract pod name from metric labels with improved logic"""
+        # Priority order for pod name extraction
+        pod_name_candidates = [
+            labels.get('pod'),
+            labels.get('kubernetes_pod_name'), 
+            labels.get('pod_name'),
+            labels.get('exported_pod'),
+        ]
+        
+        # Check direct pod name labels first
+        for candidate in pod_name_candidates:
+            if candidate and candidate != 'unknown' and candidate.strip():
+                return candidate.strip()
+        
+        # Extract from instance label (format: pod:port or pod-ip:port)
+        instance = labels.get('instance', '')
+        if instance and ':' in instance:
+            # Handle formats like: 'ovnkube-node-sjk5s:9409' or '10.0.0.1:9409'
+            pod_part = instance.split(':')[0]
+            # Check if it looks like a pod name (not an IP)
+            if not re.match(r'^\d+\.\d+\.\d+\.\d+$', pod_part) and pod_part.strip():
+                return pod_part.strip()
+        
+        # Extract from job label if it contains pod info
+        job = labels.get('job', '')
+        if job and 'ovnkube' in job:
+            return job.strip()
+        
+        # Look for any label that might contain pod name
+        for key, value in labels.items():
+            if key.lower() in ['container_name', 'name'] and 'ovnkube' in str(value):
+                return str(value).strip()
+        
+        # If all else fails, try to construct from available labels
+        namespace = labels.get('namespace', labels.get('kubernetes_namespace', ''))
+        if namespace and 'ovn' in namespace:
+            # Look for service or deployment labels
+            service = labels.get('service', labels.get('kubernetes_name', ''))
+            if service:
+                return service.strip()
+        
+        return 'unknown'
+    
+    def _find_node_name_for_pod(self, pod_name: str) -> str:
+        """Find node name for a given pod using the cache with improved matching"""
+        if not pod_name or pod_name == 'unknown':
+            return 'unknown'
+        
+        # Direct lookup first
+        if pod_name in self._pod_node_cache:
+            return self._pod_node_cache[pod_name]['node_name']
+        
+        # Fuzzy matching strategies for OVN pods
+        search_patterns = [pod_name]
+        
+        # Add patterns for ovnkube pods
+        if 'ovnkube' in pod_name:
+            if 'controller' in pod_name:
+                search_patterns.extend(['ovnkube-controller'])
+            elif 'node' in pod_name:
+                search_patterns.extend(['ovnkube-node'])
+                # Also try with the full pattern
+                if '-' in pod_name:
+                    parts = pod_name.split('-')
+                    if len(parts) >= 3:
+                        # Try exact match for ovnkube-node-suffix
+                        search_patterns.append(f"ovnkube-node-{parts[-1]}")
+            elif 'master' in pod_name:
+                search_patterns.extend(['ovnkube-master'])
+        
+        # Try each pattern
+        for pattern in search_patterns:
+            if pattern in self._pod_node_cache:
+                return self._pod_node_cache[pattern]['node_name']
+        
+        # Partial matching as last resort
+        for cached_key, cached_info in self._pod_node_cache.items():
+            if (pod_name in cached_key or 
+                cached_key in pod_name or 
+                (len(pod_name) > 5 and pod_name[:10] in cached_key)):
+                return cached_info['node_name']
+        
+        return 'unknown'
+    
     async def _collect_metric(self, metric_name: str, time: Optional[str] = None, duration: Optional[str] = None, end_time: Optional[str] = None) -> Dict[str, Any]:
-        """Generic method to collect any configured metric with proper error handling and validation"""
+        """Generic method to collect any configured metric with proper pod/node resolution"""
         metric_config = next((m for m in self.metrics_config if m['metricName'] == metric_name), None)
         if not metric_config:
             return {'error': f'{metric_name} metric not configured'}
         
+        # Ensure pod-node cache is fresh
+        await self._refresh_pod_node_cache()
+        
         try:
-            # First check if the metric exists
+            # Execute the query
             query = metric_config['query']
             print(f"Executing query for {metric_name}: {query}")
             
@@ -234,9 +398,8 @@ class OVNLatencyCollector:
                     'query_type': 'duration' if duration else 'instant'
                 }
             
-            processed_data = self._process_metric_data_points(formatted_result, metric_config)
-            enriched_data = await self._enrich_with_node_info(processed_data)
-            stats = self._calculate_statistics(enriched_data, metric_config)
+            processed_data = self._process_metric_data_points_with_node_resolution(formatted_result, metric_config)
+            stats = self._calculate_statistics(processed_data, metric_config)
             
             return {
                 'metric_name': metric_config['metricName'],
@@ -300,23 +463,8 @@ class OVNLatencyCollector:
         
         return resource_info
     
-    def _extract_pod_name_from_labels(self, labels: Dict[str, str]) -> str:
-        """Extract pod name from metric labels"""
-        if 'pod' in labels:
-            return labels['pod']
-        elif 'instance' in labels:
-            instance = labels['instance']
-            if ':' in instance:
-                return instance.split(':')[0]
-            else:
-                return instance
-        elif 'job' in labels:
-            return labels['job']
-        else:
-            return 'unknown'
-    
-    def _process_metric_data_points(self, formatted_result: List[Dict], metric_config: Dict) -> List[Dict[str, Any]]:
-        """Process metric data points and extract relevant information with better validation"""
+    def _process_metric_data_points_with_node_resolution(self, formatted_result: List[Dict], metric_config: Dict) -> List[Dict[str, Any]]:
+        """Process metric data points with proper pod and node name resolution"""
         processed_data = []
         metric_name = metric_config['metricName']
         unit = metric_config.get('unit', 'seconds')
@@ -329,16 +477,26 @@ class OVNLatencyCollector:
             
             # Skip invalid or zero values for latency metrics
             if value is None or (isinstance(value, (int, float)) and value <= 0):
-                print(f"Skipping invalid value: {value} for metric {metric_name}")
                 continue
             
             labels = item.get('labels', {})
+            
+            # Extract pod name with improved logic
             pod_name = self._extract_pod_name_from_labels(labels)
+            
+            # Resolve node name using cache
+            node_name = self._find_node_name_for_pod(pod_name)
+            
+            # Debug output for troubleshooting
+            if pod_name != 'unknown' and node_name != 'unknown':
+                print(f"Successfully resolved pod '{pod_name}' -> node '{node_name}'")
+            else:
+                print(f"Failed to resolve: pod='{pod_name}', node='{node_name}', available_labels={list(labels.keys())}")
             
             # Base data point structure
             data_point = {
                 'pod_name': pod_name,
-                'node_name': 'unknown',  # Will be populated later
+                'node_name': node_name,
                 'value': value,
                 'readable_value': self._convert_duration_to_readable(value) if unit == 'seconds' else {'value': round(value, 4), 'unit': unit}
             }
@@ -362,32 +520,6 @@ class OVNLatencyCollector:
         print(f"Processed {len(processed_data)} valid data points for {metric_name}")
         return processed_data
     
-    async def _enrich_with_node_info(self, processed_data: List[Dict]) -> List[Dict]:
-        """Enrich processed data with node information using utility functions"""
-        # Reuse utility function for better efficiency
-        all_pod_info = self.utility.get_all_pods_info_across_namespaces([
-            'openshift-ovn-kubernetes', 'openshift-multus', 'kube-system', 'default'
-        ])
-        
-        for data_point in processed_data:
-            pod_name = data_point.get('pod_name', 'N/A')
-            if pod_name != 'N/A':
-                # Direct lookup first
-                if pod_name in all_pod_info:
-                    data_point['node_name'] = all_pod_info[pod_name].get('node_name', 'unknown')
-                else:
-                    # Partial match lookup
-                    found = False
-                    for full_pod_name, info in all_pod_info.items():
-                        if pod_name in full_pod_name or full_pod_name.startswith(pod_name):
-                            data_point['node_name'] = info.get('node_name', 'unknown')
-                            found = True
-                            break
-                    if not found:
-                        data_point['node_name'] = 'unknown'
-        
-        return processed_data
-    
     def _calculate_statistics(self, data_points: List[Dict], metric_config: Dict) -> Dict[str, Any]:
         """Calculate statistics for data points with better validation"""
         if not data_points:
@@ -395,7 +527,6 @@ class OVNLatencyCollector:
         
         values = [dp['value'] for dp in data_points if dp.get('value') is not None and dp.get('value') > 0]
         if not values:
-            print(f"No valid values found for statistics calculation")
             return {'count': 0}
         
         # Sort data points by value (descending)
@@ -717,10 +848,6 @@ class OVNLatencyCollector:
         results['overall_summary'] = summary
 
 
-# Alias class for backward compatibility
-OVNLatencyCollector = OVNLatencyCollector
-
-
 # Enhanced convenience functions with better parameter support
 async def collect_enhanced_ovn_latency_metrics(prometheus_client: PrometheusBaseQuery, time: Optional[str] = None, duration: Optional[str] = None, end_time: Optional[str] = None, include_controller_metrics: bool = True, include_node_metrics: bool = True, include_pod_latency: bool = True, include_service_latency: bool = True, metric_categories: Optional[List[str]] = None, top_n_results: int = 5, include_statistics: bool = True) -> Dict[str, Any]:
     """Collect enhanced OVN latency metrics with better filtering options"""
@@ -836,7 +963,7 @@ async def get_ovn_sync_summary_json(prometheus_client: PrometheusBaseQuery, time
 
 
 async def main():
-    """Example usage of OVNLatencyCollector with improved error handling"""
+    """Example usage of OVNLatencyCollector with improved pod/node resolution"""
     # Initialize authentication
     await auth.initialize()
     
@@ -850,59 +977,57 @@ async def main():
     collector = OVNLatencyCollector(prometheus_client)
     
     try:
-        # Test instant query with better validation
+        # Test instant query with proper pod/node resolution
         print("=" * 60)
-        print("Testing Fixed Instant Query Collection...")
+        print("Testing Fixed Pod/Node Resolution...")
+        
+        # First test cache refresh
+        await collector._refresh_pod_node_cache()
+        print(f"Cache populated with {len(collector._pod_node_cache)} entries")
+        
+        # Test individual metric collection
+        print("\nTesting controller ready duration...")
+        controller_results = await collector.collect_controller_ready_duration()
+        if 'statistics' in controller_results and controller_results['statistics'].get('count', 0) > 0:
+            top_entries = controller_results['statistics'].get('top_5', [])
+            for entry in top_entries[:3]:
+                print(f"  Pod: {entry.get('pod_name')} -> Node: {entry.get('node_name')}")
+        
+        print("\nTesting comprehensive collection...")
         instant_results = await collector.collect_comprehensive_enhanced_metrics()
         
-        # Display instant summary
-        instant_summary = instant_results.get('overall_summary', {})
-        print(f"\nInstant Query Summary:")
-        print(f"  Total Metrics: {instant_summary.get('total_metrics_collected', 0)}")
-        print(f"  Successful: {instant_summary.get('successful_metrics', 0)}")
-        print(f"  Failed: {instant_summary.get('failed_metrics', 0)}")
+        # Check pod/node resolution across all metrics
+        pod_node_resolved = 0
+        total_entries = 0
         
-        # Check for valid data in each category
-        categories_to_check = [
-            'ready_duration_metrics', 
-            'sync_duration_metrics', 
-            'percentile_latency_metrics',
-            'pod_latency_metrics',
-            'cni_latency_metrics',
-            'service_latency_metrics',
-            'network_programming_metrics'
-        ]
+        for category_name, category_data in instant_results.items():
+            if category_name.endswith('_metrics'):
+                for metric_name, metric_result in category_data.items():
+                    if isinstance(metric_result, dict) and 'statistics' in metric_result:
+                        top_entries = metric_result['statistics'].get('top_5', [])
+                        for entry in top_entries:
+                            total_entries += 1
+                            if (entry.get('pod_name') != 'unknown' and 
+                                entry.get('node_name') != 'unknown'):
+                                pod_node_resolved += 1
         
-        for category in categories_to_check:
-            category_data = instant_results.get(category, {})
-            valid_metrics = 0
-            for metric_name, result in category_data.items():
-                if 'error' not in result:
-                    stats = result.get('statistics', {})
-                    if stats.get('count', 0) > 0:
-                        valid_metrics += 1
-            
-            print(f"  {category}: {valid_metrics}/{len(category_data)} metrics with valid data")
+        resolution_rate = (pod_node_resolved / total_entries * 100) if total_entries > 0 else 0
+        print(f"\nPod/Node Resolution Summary:")
+        print(f"  Resolved: {pod_node_resolved}/{total_entries} ({resolution_rate:.1f}%)")
         
-        if 'top_latencies' in instant_summary and instant_summary['top_latencies']:
-            print(f"\nTop 3 Latencies with Valid Data:")
-            for i, metric in enumerate(instant_summary['top_latencies'][:3], 1):
-                readable_max = metric.get('readable_max', {})
-                print(f"  {i}. {metric['metric_name']}: {readable_max.get('value')} {readable_max.get('unit')} ({metric['category']})")
-        else:
-            print("\nNo valid latency data found")
-        
-        # Test with specific categories only
-        print("\n" + "=" * 60)
-        print("Testing with specific categories...")
-        
-        category_results = await collector.collect_comprehensive_enhanced_metrics(
-            categories=['ready_duration', 'sync_duration'],
-            include_statistics=True
-        )
-        
-        category_summary = category_results.get('overall_summary', {})
-        print(f"Category-filtered results: {category_summary.get('successful_metrics', 0)} successful metrics")
+        # Show sample resolved entries
+        print(f"\nSample resolved entries:")
+        for category_name, category_data in instant_results.items():
+            if category_name.endswith('_metrics'):
+                for metric_name, metric_result in category_data.items():
+                    if isinstance(metric_result, dict) and 'statistics' in metric_result:
+                        top_entries = metric_result['statistics'].get('top_5', [])
+                        for entry in top_entries[:1]:  # Just first entry per metric
+                            if (entry.get('pod_name') != 'unknown' and 
+                                entry.get('node_name') != 'unknown'):
+                                print(f"  {metric_name}: {entry.get('pod_name')} -> {entry.get('node_name')}")
+                        break  # Only show one per category
+                break
         
     except Exception as e:
         print(f"Error during testing: {e}")
