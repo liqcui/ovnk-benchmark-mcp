@@ -390,6 +390,30 @@ class deepDriveELT(EltUtility):
                 components = metadata.get('components_analyzed', 0)
                 summary_parts.append(f"Comprehensive {analysis_type.replace('_', ' ')} analysis over {duration} covering {components} components")
             
+            # Top latency issues
+            latency_analysis = structured_data.get('latency_analysis', {})
+            top_latencies = latency_analysis.get('top_latencies', [])
+            if top_latencies:
+                top_latency = top_latencies[0]
+                summary_parts.append(f"Highest latency: {top_latency.get('Latency', 'unknown')} ({top_latency.get('Metric', 'unknown')})")
+            
+            # Resource usage
+            resource_usage = structured_data.get('resource_usage', {})
+            top_cpu_pods = resource_usage.get('top_cpu_pods', [])
+            if top_cpu_pods:
+                top_pod = top_cpu_pods[0]
+                summary_parts.append(f"Top CPU consuming pod: {top_pod.get('Pod', 'unknown')} ({top_pod.get('CPU %', '0')}%)")
+            
+            return " • ".join(summary_parts) if summary_parts else "Deep drive analysis completed with limited data available"
+
+            # Node analysis
+            node_analysis = structured_data.get('node_analysis', {})
+            top_workers = node_analysis.get('top_worker_nodes', [])
+            if top_workers:
+                top_worker = top_workers[0]
+                cpu_usage = top_worker.get('CPU %', '0')
+                summary_parts.append(f"Highest worker CPU usage: {cpu_usage}% on {top_worker.get('Node', 'unknown')}")
+            
             # Performance insights
             perf_insights = structured_data.get('performance_insights', {})
             perf_summary = perf_insights.get('performance_summary', [])
@@ -404,31 +428,7 @@ class deepDriveELT(EltUtility):
             
             if overall_score and grade:
                 summary_parts.append(f"Overall performance score: {overall_score} (Grade: {grade})")
-            
-            # Top latency issues
-            latency_analysis = structured_data.get('latency_analysis', {})
-            top_latencies = latency_analysis.get('top_latencies', [])
-            if top_latencies:
-                top_latency = top_latencies[0]
-                summary_parts.append(f"Highest latency: {top_latency.get('Latency', 'unknown')} ({top_latency.get('Metric', 'unknown')})")
-            
-            # Node analysis
-            node_analysis = structured_data.get('node_analysis', {})
-            top_workers = node_analysis.get('top_worker_nodes', [])
-            if top_workers:
-                top_worker = top_workers[0]
-                cpu_usage = top_worker.get('CPU %', '0')
-                summary_parts.append(f"Highest worker CPU usage: {cpu_usage}% on {top_worker.get('Node', 'unknown')}")
-            
-            # Resource usage
-            resource_usage = structured_data.get('resource_usage', {})
-            top_cpu_pods = resource_usage.get('top_cpu_pods', [])
-            if top_cpu_pods:
-                top_pod = top_cpu_pods[0]
-                summary_parts.append(f"Top CPU consuming pod: {top_pod.get('Pod', 'unknown')} ({top_pod.get('CPU %', '0')}%)")
-            
-            return " • ".join(summary_parts) if summary_parts else "Deep drive analysis completed with limited data available"
-            
+                        
         except Exception as e:
             logger.error(f"Failed to generate deep drive summary: {e}")
             return f"Deep drive analysis summary generation failed: {str(e)}"
