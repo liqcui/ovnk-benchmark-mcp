@@ -144,7 +144,7 @@ class EltUtility:
             return f'<div class="alert alert-danger">Error generating table: {str(e)}</div>'
  
     def limit_dataframe_columns(self, df: pd.DataFrame, max_cols: int = None, table_name: str = None) -> pd.DataFrame:
-        """Limit DataFrame columns to maximum number"""
+        """Limit DataFrame columns to maximum number - Updated with Deep Drive support"""
         if max_cols is None:
             max_cols = self.max_columns
         
@@ -177,27 +177,6 @@ class EltUtility:
             max_cols = 4  # Limit alerts to 4 columns
         elif table_name in ['cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:  # 2-column for status tables
             max_cols = 2
-        # Sync duration specific handling
-        elif table_name in ['controller_ready_duration', 'node_ready_duration', 'controller_service_rate']:
-            max_cols = 4  # Sync duration tables get 4 columns for readability
-        elif table_name == 'controller_sync_duration':
-            max_cols = 5  # Controller sync duration needs 5 columns (rank, pod, resource, node, duration)
-        elif table_name == 'sync_summary':
-            max_cols = 2  # Sync summary - simple property-value format
-        # Kube API metrics specific handling
-        elif table_name in ['health_summary', 'api_metadata']:
-            max_cols = 2  # Health and metadata summaries use 2 columns
-        elif table_name in ['readonly_latency', 'mutating_latency']:
-            max_cols = 4  # Latency tables get 4 columns (Rank, Resource, Value, Type)
-        elif table_name in ['top_issues']:
-            max_cols = 2  # Issues table uses 2 columns (Rank, Issue)
-        elif 'top' in (table_name or '') and 'kube' in str(table_name).lower():
-            max_cols = 4  # Kube API top metrics get 4 columns
-        elif 'metrics' in (table_name or '') and any(x in str(table_name) for x in ['watch_events', 'etcd_requests', 'rest_client', 'ovnkube_controller']):
-            max_cols = 4  # Component metrics get 4 columns
-        # UPDATED: OVN Latency specific handling - allow all columns for full metric names
-        elif table_name in ['latency_metadata', 'latency_summary']:
-            max_cols = 2  # Latency metadata and summary use 2 columns
         # Deep Drive specific handling
         elif table_name in ['analysis_metadata', 'performance_summary', 'cluster_overview', 'insights']:
             max_cols = 2  # Deep drive metadata and summary tables use 2 columns
@@ -208,61 +187,51 @@ class EltUtility:
         elif table_name == 'top_latencies':
             # Don't limit columns for top latencies to show full metric names
             return df
-        elif table_name in ['ready_duration', 'sync_duration', 'percentile_latency', 'pod_latency', 'cni_latency', 'service_latency', 'network_programming']:
-            # Don't limit columns for OVN latency category tables to show full metric names
-            return df
-        elif 'latency' in (table_name or '').lower() and 'ovn' in str(table_name).lower():
-            # Don't limit columns for any OVN latency related tables
-            return df
+        elif table_name in ['container_usage', 'node_summary', 'ovs_flows']:
+            max_cols = 4  # Deep drive component tables get 4 columns
+        elif table_name in ['database_sizes', 'latency_categories']:
+            max_cols = 3  # Allow 3 columns for these specific tables
 
         if len(df.columns) <= max_cols:
             return df
         
         # Keep most important columns based on table type
-        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status', 'usage_summary', 'health_summary', 'api_metadata', 'latency_metadata', 'latency_summary']:
+        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status', 'usage_summary', 'analysis_metadata', 'performance_summary', 'cluster_overview', 'insights']:
             # For summary/status tables, keep metric and value columns
-            priority_cols = ['metric', 'value', 'property']
+            priority_cols = ['metric', 'value', 'property', 'type', 'description']
         elif table_name == 'node_groups':
             # For node groups, prioritize key status columns
             priority_cols = ['node_type', 'node type', 'total', 'ready', 'health_score', 'health score', 'cpu_cores', 'cpu cores']
         elif table_name == 'alerts':
             # For alerts, prioritize severity and message
-            priority_cols = ['alert', 'severity', 'component', 'message']
-        elif table_name in ['cpu_usage_summary', 'memory_usage_summary']:
+            priority_cols = ['alert', 'severity', 'component', 'message', 'rank']
+        elif table_name in ['cpu_usage_summary', 'memory_usage_summary', 'ovs_cpu_usage']:
             # For OVS usage summaries, prioritize component, node/pod, and key metrics
-            priority_cols = ['component', 'node', 'pod', 'max', 'avg', 'cpu', 'memory']
-        elif table_name in ['dp_flows_top', 'bridge_flows_summary']:
+            priority_cols = ['component', 'node', 'pod', 'max', 'avg', 'cpu', 'memory', 'rank']
+        elif table_name in ['dp_flows_top', 'bridge_flows_summary', 'ovs_flows']:
             # For flow tables, prioritize instance/bridge and flow counts
-            priority_cols = ['instance', 'bridge', 'max', 'avg', 'flows']
+            priority_cols = ['instance', 'bridge', 'max', 'avg', 'flows', 'type']
         elif table_name in ['top_cpu_pods', 'top_memory_pods']:
             # For top pods usage tables, prioritize rank, pod, and usage metrics
             priority_cols = ['rank', 'pod', 'cpu', 'memory', 'usage', 'node']
         elif table_name in ['cpu_detailed', 'memory_detailed']:
             # For detailed pods metrics, prioritize pod name and key metrics
-            priority_cols = ['pod', 'min', 'avg', 'max', 'node', 'namespace']            
+            priority_cols = ['pod', 'min', 'avg', 'max', 'node', 'namespace']
+        elif table_name in ['container_usage']:
+            # For container usage, prioritize container name and metrics
+            priority_cols = ['container', 'cpu', 'memory', 'status']
+        elif table_name in ['node_summary', 'top_worker_nodes']:
+            # For node analysis, prioritize node info and usage
+            priority_cols = ['node', 'type', 'rank', 'cpu', 'memory', 'count', 'status']
+        elif table_name in ['database_sizes']:
+            # For database info, prioritize database and size
+            priority_cols = ['database', 'size', 'status']
+        elif table_name in ['latency_categories']:
+            # For latency categories, prioritize category and latency
+            priority_cols = ['category', 'latency', 'severity']
         elif 'top_' in (table_name or ''):
             # For top usage tables, keep rank, name, and main metric columns
-            priority_cols = ['rank', 'name', 'node', 'cpu', 'memory', 'max', 'avg']
-        elif table_name in ['controller_ready_duration', 'node_ready_duration', 'controller_service_rate']:
-            # For sync duration tables, prioritize rank, pod, node, and duration/rate
-            priority_cols = ['rank', 'pod', 'node', 'duration', 'rate']
-        elif table_name == 'controller_sync_duration':
-            # For controller sync duration, prioritize rank, pod, resource, node, duration
-            priority_cols = ['rank', 'pod', 'resource', 'node', 'duration']
-        elif table_name == 'sync_summary':
-            # For sync summary, prioritize property and value columns
-            priority_cols = ['property', 'value']
-        # Kube API metrics priority columns            
-        elif table_name in ['readonly_latency', 'mutating_latency']:
-            # For latency tables, prioritize rank, resource, and values
-            priority_cols = ['rank', 'resource', 'avg', 'max', 'p99', 'type', 'value']
-        elif table_name == 'top_issues':
-            # For issues table, prioritize rank and issue description
-            priority_cols = ['rank', 'issue']
-        elif 'metrics' in (table_name or '') or '_top' in (table_name or ''):
-            # For component metrics tables, prioritize rank, resource, and value
-            priority_cols = ['rank', 'resource', 'value', 'unit', 'metric']
-        # OVN Latency tables are handled above and return early - these won't be reached
+            priority_cols = ['rank', 'name', 'node', 'cpu', 'memory', 'max', 'avg', 'metric', 'component']
         else:
             # Default priority columns
             priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory', 'metric']
@@ -476,3 +445,33 @@ class EltUtility:
             return score
         
         return sorted(metrics, key=get_priority_score, reverse=True)
+
+    def create_status_badge(self, status: str, value: str = None) -> str:
+        """Create HTML badge for status with optional value"""
+        badge_colors = {
+            'success': 'success',
+            'warning': 'warning',
+            'danger': 'danger',
+            'info': 'info',
+            'critical': 'danger',
+            'high': 'warning',
+            'medium': 'info',
+            'low': 'success',
+            'normal': 'success'
+        }
+        
+        color = badge_colors.get(status.lower(), 'secondary')
+        display_text = value if value else status.title()
+        return f'<span class="badge badge-{color}">{display_text}</span>'
+
+    def highlight_critical_values(self, value: float, thresholds: Dict[str, float], unit: str = "") -> str:
+        """Highlight critical values with color coding"""
+        critical = thresholds.get('critical', 90)
+        warning = thresholds.get('warning', 70)
+        
+        if value >= critical:
+            return f'<span class="text-danger font-weight-bold">{value}{unit}</span>'
+        elif value >= warning:
+            return f'<span class="text-warning font-weight-bold">{value}{unit}</span>'
+        else:
+            return f'{value}{unit}'

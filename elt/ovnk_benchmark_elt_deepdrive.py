@@ -1,35 +1,37 @@
 """
-Extract, Load, Transform module for OVN Deep Drive Performance Data
-Handles comprehensive deep dive analysis results from ovnk_benchmark_performance_ovnk_deepdrive.py
+Deep Drive ELT module for OVN-Kubernetes comprehensive performance analysis
+Extract, Load, Transform module for deep drive analysis results
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 import pandas as pd
+from datetime import datetime
+
 from .ovnk_benchmark_elt_utility import EltUtility
 
 logger = logging.getLogger(__name__)
 
 class deepDriveELT(EltUtility):
-    """ELT module for OVN Deep Drive performance analysis data"""
+    """Extract, Load, Transform class for Deep Drive analysis data"""
     
     def __init__(self):
         super().__init__()
 
     def extract_deepdrive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract deep drive analysis data into structured format"""
+        """Extract deep drive analysis data from JSON"""
         try:
-            structured = {
+            extracted = {
                 'metadata': self._extract_metadata(data),
                 'basic_info': self._extract_basic_info(data),
-                'ovnkube_pods': self._extract_ovnkube_pods(data),
-                'ovn_containers': self._extract_ovn_containers(data),
-                'ovs_metrics': self._extract_ovs_metrics(data),
-                'latency_metrics': self._extract_latency_metrics(data),
-                'nodes_usage': self._extract_nodes_usage(data),
-                'performance_analysis': self._extract_performance_analysis(data)
+                'resource_usage': self._extract_resource_usage(data),
+                'latency_analysis': self._extract_latency_analysis(data),
+                'performance_insights': self._extract_performance_insights(data),
+                'node_analysis': self._extract_node_analysis(data),
+                'ovs_metrics': self._extract_ovs_summary(data)
             }
-            return structured
+            return extracted
+            
         except Exception as e:
             logger.error(f"Failed to extract deep drive data: {e}")
             return {'error': str(e)}
@@ -37,411 +39,575 @@ class deepDriveELT(EltUtility):
     def _extract_metadata(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract metadata information"""
         return {
-            'analysis_timestamp': data.get('analysis_timestamp', 'N/A'),
-            'analysis_type': data.get('analysis_type', 'N/A'),
-            'query_duration': data.get('query_duration', 'N/A'),
-            'timezone': data.get('timezone', 'N/A'),
+            'analysis_timestamp': data.get('analysis_timestamp', ''),
+            'analysis_type': data.get('analysis_type', ''),
+            'query_duration': data.get('query_duration', ''),
+            'timezone': data.get('timezone', 'UTC'),
             'components_analyzed': data.get('execution_metadata', {}).get('components_analyzed', 0),
-            'tool_name': data.get('execution_metadata', {}).get('tool_name', 'N/A')
+            'tool_name': data.get('execution_metadata', {}).get('tool_name', ''),
+            'timeout_seconds': data.get('execution_metadata', {}).get('timeout_seconds', 0)
         }
 
     def _extract_basic_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract basic cluster information"""
         basic_info = data.get('basic_info', {})
-        if basic_info.get('error'):
-            return {'error': basic_info['error']}
         
-        extracted = {
-            'pod_counts': basic_info.get('pod_counts', {}),
-            'database_sizes': basic_info.get('database_sizes', {}),
-            'alerts_summary': basic_info.get('alerts_summary', {}),
-            'pod_distribution': basic_info.get('pod_distribution', {})
-        }
-        return extracted
+        # Pod counts and phases
+        pod_info = []
+        pod_counts = basic_info.get('pod_counts', {})
+        if pod_counts:
+            pod_info.append({
+                'Metric': 'Total Pods',
+                'Value': pod_counts.get('total_pods', 0),
+                'Status': 'info'
+            })
+            
+            phases = pod_counts.get('phases', {})
+            for phase, count in phases.items():
+                status = 'success' if phase == 'Running' else 'warning' if phase == 'Failed' else 'info'
+                pod_info.append({
+                    'Metric': f'Pods {phase}',
+                    'Value': count,
+                    'Status': status
+                })
 
-    def _extract_ovnkube_pods(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract OVN Kubernetes pods usage data"""
-        pods_data = data.get('ovnkube_pods_cpu', {})
-        if pods_data.get('error'):
-            return {'error': pods_data['error']}
-        
+        # Database sizes
+        db_info = []
+        db_sizes = basic_info.get('database_sizes', {})
+        for db_name, db_data in db_sizes.items():
+            db_info.append({
+                'Database': db_name.replace('_', ' ').title(),
+                'Size (MB)': db_data.get('size_mb', 0),
+                'Status': 'success' if db_data.get('size_mb', 0) < 10 else 'warning'
+            })
+
+        # Alerts summary
+        alerts_info = []
+        alerts = basic_info.get('alerts_summary', {}).get('top_alerts', [])
+        for idx, alert in enumerate(alerts[:5], 1):
+            severity = alert.get('severity', 'unknown')
+            status = 'danger' if severity == 'critical' else 'warning' if severity == 'warning' else 'info'
+            alerts_info.append({
+                'Rank': f"🔥 {idx}" if idx == 1 else idx,  # Highlight top alert
+                'Alert': alert.get('alert_name', ''),
+                'Severity': severity.upper(),
+                'Status': status
+            })
+
         return {
-            'node_pods': pods_data.get('ovnkube_node_pods', {}),
-            'control_plane_pods': pods_data.get('ovnkube_control_plane_pods', {})
+            'pod_status': pod_info,
+            'database_sizes': db_info,
+            'alerts': alerts_info
         }
 
-    def _extract_ovn_containers(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract OVN containers usage data"""
-        containers_data = data.get('ovn_containers', {})
-        if containers_data.get('error'):
-            return {'error': containers_data['error']}
+    def _extract_resource_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract resource usage data"""
+        # OVNKube pods CPU usage
+        ovnkube_pods = data.get('ovnkube_pods_cpu', {})
+        top_cpu_pods = []
         
-        return containers_data.get('containers', {})
+        # Node pods
+        node_pods_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
+        for pod in node_pods_cpu[:5]:
+            cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
+            rank = pod.get('rank', 0)
+            top_cpu_pods.append({
+                'Rank': f"🏆 {rank}" if rank == 1 else rank,  # Highlight top pod
+                'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
+                'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
+                'CPU %': f"{cpu_usage.get('avg', 0):.2f}"
+            })
 
-    def _extract_ovs_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract OVS metrics data"""
+        # Control plane pods
+        cp_pods_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
+        for pod in cp_pods_cpu:
+            cpu_usage = pod.get('metrics', {}).get('cpu_usage', {})
+            rank = len(top_cpu_pods) + 1
+            top_cpu_pods.append({
+                'Rank': rank,
+                'Pod': self.truncate_text(pod.get('pod_name', ''), 25),
+                'Node': self.truncate_node_name(pod.get('node_name', ''), 20),
+                'CPU %': f"{cpu_usage.get('avg', 0):.2f}"
+            })
+
+        # OVN containers usage
+        container_usage = []
+        ovn_containers = data.get('ovn_containers', {}).get('containers', {})
+        
+        for container_name, container_data in ovn_containers.items():
+            if 'error' not in container_data:
+                cpu_data = container_data.get('top_5_cpu', [])
+                mem_data = container_data.get('top_5_memory', [])
+                
+                if cpu_data:
+                    top_cpu = cpu_data[0]
+                    cpu_metrics = top_cpu.get('metrics', {}).get('cpu_usage', {})
+                    mem_metrics = top_cpu.get('metrics', {}).get('memory_usage', {})
+                    
+                    status = 'danger' if container_name == 'ovnkube_controller' and cpu_metrics.get('avg', 0) > 0.5 else 'success'
+                    
+                    container_usage.append({
+                        'Container': container_name.replace('_', ' ').title(),
+                        'CPU %': f"{cpu_metrics.get('avg', 0):.3f}",
+                        'Memory MB': f"{mem_metrics.get('avg', 0):.1f}" if mem_metrics else "N/A",
+                        'Status': status
+                    })
+
+        return {
+            'top_cpu_pods': top_cpu_pods,
+            'container_usage': container_usage
+        }
+
+    def _extract_latency_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract latency analysis data"""
+        latency_data = data.get('latency_metrics', {}).get('categories', {})
+        top_latencies = []
+        
+        # Collect all latency metrics with values
+        all_metrics = []
+        for category, metrics in latency_data.items():
+            for metric_name, metric_info in metrics.items():
+                max_val = metric_info.get('max_value', 0)
+                if max_val > 0:
+                    all_metrics.append({
+                        'category': category,
+                        'metric_name': metric_name,
+                        'max_value': max_val,
+                        'component': metric_info.get('component', ''),
+                        'unit': metric_info.get('unit', 'seconds')
+                    })
+        
+        # Sort by max_value and take top 10
+        all_metrics.sort(key=lambda x: x['max_value'], reverse=True)
+        
+        for idx, metric in enumerate(all_metrics[:10], 1):
+            formatted_value = self.format_latency_value(metric['max_value'], metric['unit'])
+            severity = self.categorize_latency_severity(metric['max_value'], metric['unit'])
+            
+            # Highlight critical latencies
+            rank_display = f"⚠️ {idx}" if severity in ['critical', 'high'] and idx <= 3 else idx
+            
+            top_latencies.append({
+                'Rank': rank_display,
+                'Metric': self.truncate_metric_name(metric['metric_name'], 30),
+                'Component': metric['component'].title(),
+                'Latency': formatted_value,
+                'Severity': severity.title()
+            })
+
+        # Category summaries
+        category_summary = []
+        for category, metrics in latency_data.items():
+            if metrics:
+                max_latency = max(m.get('max_value', 0) for m in metrics.values() if m.get('max_value', 0) > 0)
+                if max_latency > 0:
+                    formatted = self.format_latency_value(max_latency, 'seconds')
+                    severity = self.categorize_latency_severity(max_latency, 'seconds')
+                    
+                    category_summary.append({
+                        'Category': category.replace('_', ' ').title(),
+                        'Max Latency': formatted,
+                        'Severity': severity.title()
+                    })
+
+        return {
+            'top_latencies': top_latencies,
+            'category_summary': category_summary
+        }
+
+    def _extract_performance_insights(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract performance insights"""
+        perf_analysis = data.get('performance_analysis', {})
+        perf_summary = perf_analysis.get('performance_summary', {})
+        
+        # Performance summary
+        summary_data = []
+        summary_data.append({
+            'Metric': 'Overall Score',
+            'Value': f"{perf_summary.get('overall_score', 0)}/100"
+        })
+        summary_data.append({
+            'Metric': 'Performance Grade',
+            'Value': perf_summary.get('performance_grade', 'D')
+        })
+        
+        component_scores = perf_summary.get('component_scores', {})
+        for component, score in component_scores.items():
+            summary_data.append({
+                'Metric': component.replace('_', ' ').title(),
+                'Value': f"{score}/100"
+            })
+
+        # Key findings and recommendations
+        findings = []
+        key_findings = perf_analysis.get('key_findings', [])
+        recommendations = perf_analysis.get('recommendations', [])
+        
+        for idx, finding in enumerate(key_findings[:5], 1):
+            findings.append({
+                'Type': 'Finding',
+                'Description': finding
+            })
+        
+        for idx, rec in enumerate(recommendations[:5], 1):
+            findings.append({
+                'Type': 'Recommendation',
+                'Description': rec
+            })
+
+        return {
+            'performance_summary': summary_data,
+            'insights': findings
+        }
+
+    def _extract_node_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract node analysis data"""
+        nodes_usage = data.get('nodes_usage', {})
+        node_summary = []
+        
+        # Control plane nodes
+        cp_nodes = nodes_usage.get('controlplane_nodes', {})
+        cp_summary = cp_nodes.get('summary', {})
+        if cp_summary:
+            cpu_max = cp_summary.get('cpu_usage', {}).get('max', 0)
+            mem_max = cp_summary.get('memory_usage', {}).get('max', 0)
+            status = 'warning' if cpu_max > 70 else 'success'
+            
+            node_summary.append({
+                'Node Type': 'Control Plane',
+                'Count': cp_nodes.get('count', 0),
+                'Max CPU %': f"{cpu_max:.1f}",
+                'Max Memory MB': f"{mem_max:.0f}",
+                'Status': status
+            })
+
+        # Worker nodes
+        worker_nodes = nodes_usage.get('top5_worker_nodes', {})
+        worker_summary = worker_nodes.get('summary', {})
+        if worker_summary:
+            cpu_max = worker_summary.get('cpu_usage', {}).get('max', 0)
+            mem_max = worker_summary.get('memory_usage', {}).get('max', 0)
+            status = 'danger' if cpu_max > 80 else 'warning' if cpu_max > 70 else 'success'
+            
+            highlight = "🔥 Worker" if cpu_max > 80 else "Worker"
+            
+            node_summary.append({
+                'Node Type': highlight,
+                'Count': worker_nodes.get('count', 0),
+                'Max CPU %': f"{cpu_max:.1f}",
+                'Max Memory MB': f"{mem_max:.0f}",
+                'Status': status
+            })
+
+        # Individual worker nodes
+        individual_workers = []
+        worker_nodes_list = worker_nodes.get('individual_nodes', [])
+        for node in worker_nodes_list[:5]:
+            cpu_max = node.get('cpu_usage', {}).get('max', 0)
+            rank = node.get('rank', 0)
+            
+            rank_display = f"🏆 {rank}" if rank == 1 else rank
+            
+            individual_workers.append({
+                'Rank': rank_display,
+                'Node': self.truncate_node_name(node.get('name', ''), 25),
+                'CPU %': f"{cpu_max:.1f}",
+                'Memory MB': f"{node.get('memory_usage', {}).get('max', 0):.0f}"
+            })
+
+        return {
+            'node_summary': node_summary,
+            'top_worker_nodes': individual_workers
+        }
+
+    def _extract_ovs_summary(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract OVS metrics summary"""
         ovs_data = data.get('ovs_metrics', {})
-        if ovs_data.get('error'):
-            return {'error': ovs_data['error']}
         
+        # CPU usage summary
+        cpu_summary = []
+        cpu_usage = ovs_data.get('cpu_usage', {})
+        
+        vswitchd_top = cpu_usage.get('ovs_vswitchd_top5', [])
+        for idx, node_data in enumerate(vswitchd_top[:3], 1):
+            status = 'warning' if node_data.get('avg', 0) > 2 else 'success'
+            rank_display = f"🔥 {idx}" if idx == 1 and node_data.get('avg', 0) > 2 else idx
+            
+            cpu_summary.append({
+                'Rank': rank_display,
+                'Component': 'OVS vSwitchd',
+                'Node': self.truncate_node_name(node_data.get('node_name', ''), 20),
+                'CPU %': f"{node_data.get('avg', 0):.2f}"
+            })
+
+        # Flow metrics
+        flows_summary = []
+        flows_data = ovs_data.get('flows_metrics', {})
+        
+        dp_flows = flows_data.get('dp_flows_top5', [])
+        for idx, flow_data in enumerate(dp_flows[:3], 1):
+            flows_summary.append({
+                'Type': 'DP Flows',
+                'Instance': flow_data.get('instance', ''),
+                'Avg Flows': f"{flow_data.get('avg', 0):.0f}",
+                'Max Flows': f"{flow_data.get('max', 0):.0f}"
+            })
+
         return {
-            'cpu_usage': ovs_data.get('cpu_usage', {}),
-            'memory_usage': ovs_data.get('memory_usage', {}),
-            'flows_metrics': ovs_data.get('flows_metrics', {}),
-            'connection_metrics': ovs_data.get('connection_metrics', {})
+            'cpu_usage_summary': cpu_summary,
+            'flows_summary': flows_summary
         }
 
-    def _extract_latency_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract latency metrics data"""
-        latency_data = data.get('latency_metrics', {})
-        if latency_data.get('error'):
-            return {'error': latency_data['error']}
-        
-        return latency_data.get('categories', {})
-
-    def _extract_nodes_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract nodes usage data"""
-        nodes_data = data.get('nodes_usage', {})
-        if nodes_data.get('error'):
-            return {'error': nodes_data['error']}
-        
-        return {
-            'controlplane_nodes': nodes_data.get('controlplane_nodes', {}),
-            'infra_nodes': nodes_data.get('infra_nodes', {}),
-            'top5_worker_nodes': nodes_data.get('top5_worker_nodes', {})
-        }
-
-    def _extract_performance_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract performance analysis results"""
-        perf_data = data.get('performance_analysis', {})
-        return {
-            'performance_summary': perf_data.get('performance_summary', {}),
-            'key_findings': perf_data.get('key_findings', []),
-            'recommendations': perf_data.get('recommendations', []),
-            'resource_hotspots': perf_data.get('resource_hotspots', {}),
-            'latency_analysis': perf_data.get('latency_analysis', {}),
-            'node_analysis': perf_data.get('node_analysis', {})
-        }
+    def summarize_deepdrive_data(self, structured_data: Dict[str, Any]) -> str:
+        """Generate summary for deep drive analysis data"""
+        try:
+            summary_parts = []
+            
+            # Basic cluster info
+            metadata = structured_data.get('metadata', {})
+            if metadata:
+                analysis_type = metadata.get('analysis_type', 'unknown')
+                duration = metadata.get('query_duration', 'unknown')
+                components = metadata.get('components_analyzed', 0)
+                summary_parts.append(f"Comprehensive {analysis_type.replace('_', ' ')} analysis over {duration} covering {components} components")
+            
+            # Performance insights
+            perf_insights = structured_data.get('performance_insights', {})
+            perf_summary = perf_insights.get('performance_summary', [])
+            
+            overall_score = None
+            grade = None
+            for item in perf_summary:
+                if item.get('Metric') == 'Overall Score':
+                    overall_score = item.get('Value', '0/100')
+                elif item.get('Metric') == 'Performance Grade':
+                    grade = item.get('Value', 'D')
+            
+            if overall_score and grade:
+                summary_parts.append(f"Overall performance score: {overall_score} (Grade: {grade})")
+            
+            # Top latency issues
+            latency_analysis = structured_data.get('latency_analysis', {})
+            top_latencies = latency_analysis.get('top_latencies', [])
+            if top_latencies:
+                top_latency = top_latencies[0]
+                summary_parts.append(f"Highest latency: {top_latency.get('Latency', 'unknown')} ({top_latency.get('Metric', 'unknown')})")
+            
+            # Node analysis
+            node_analysis = structured_data.get('node_analysis', {})
+            top_workers = node_analysis.get('top_worker_nodes', [])
+            if top_workers:
+                top_worker = top_workers[0]
+                cpu_usage = top_worker.get('CPU %', '0')
+                summary_parts.append(f"Highest worker CPU usage: {cpu_usage}% on {top_worker.get('Node', 'unknown')}")
+            
+            # Resource usage
+            resource_usage = structured_data.get('resource_usage', {})
+            top_cpu_pods = resource_usage.get('top_cpu_pods', [])
+            if top_cpu_pods:
+                top_pod = top_cpu_pods[0]
+                summary_parts.append(f"Top CPU consuming pod: {top_pod.get('Pod', 'unknown')} ({top_pod.get('CPU %', '0')}%)")
+            
+            return " • ".join(summary_parts) if summary_parts else "Deep drive analysis completed with limited data available"
+            
+        except Exception as e:
+            logger.error(f"Failed to generate deep drive summary: {e}")
+            return f"Deep drive analysis summary generation failed: {str(e)}"
 
     def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-        """Transform structured data into DataFrames"""
-        dataframes = {}
-        
+        """Transform structured data to DataFrames"""
         try:
-            # Metadata table
-            if 'metadata' in structured_data:
-                metadata_rows = []
-                for key, value in structured_data['metadata'].items():
-                    metadata_rows.append({
-                        'Property': key.replace('_', ' ').title(),
-                        'Value': str(value)
-                    })
-                if metadata_rows:
-                    dataframes['metadata'] = pd.DataFrame(metadata_rows)
-
+            dataframes = {}
+            
+            # Analysis metadata
+            metadata = structured_data.get('metadata', {})
+            if metadata:
+                metadata_list = []
+                for key, value in metadata.items():
+                    if value:  # Only include non-empty values
+                        metadata_list.append({
+                            'Property': key.replace('_', ' ').title(),
+                            'Value': str(value)
+                        })
+                if metadata_list:
+                    df = pd.DataFrame(metadata_list)
+                    dataframes['analysis_metadata'] = self.limit_dataframe_columns(df, 2, 'analysis_metadata')
+            
             # Basic info tables
-            if 'basic_info' in structured_data and not structured_data['basic_info'].get('error'):
-                basic_info = structured_data['basic_info']
-                
-                # Pod counts
-                pod_counts = basic_info.get('pod_counts', {})
-                if pod_counts:
-                    pod_rows = [
-                        {'Property': 'Total Pods', 'Value': str(pod_counts.get('total_pods', 0))}
-                    ]
-                    phases = pod_counts.get('phases', {})
-                    for phase, count in phases.items():
-                        pod_rows.append({'Property': f'{phase} Pods', 'Value': str(count)})
-                    dataframes['pod_status'] = pd.DataFrame(pod_rows)
-
-                # Database sizes
-                db_sizes = basic_info.get('database_sizes', {})
-                if db_sizes:
-                    db_rows = []
-                    for db_name, db_info in db_sizes.items():
-                        if isinstance(db_info, dict):
-                            db_rows.append({
-                                'Database': db_name.replace('_', ' ').title(),
-                                'Size (MB)': f"{db_info.get('size_mb', 0):.2f}"
-                            })
-                    if db_rows:
-                        dataframes['database_sizes'] = pd.DataFrame(db_rows)
-
-                # Alerts summary
-                alerts = basic_info.get('alerts_summary', {})
-                if alerts and alerts.get('top_alerts'):
-                    alert_rows = []
-                    for i, alert in enumerate(alerts['top_alerts'][:5], 1):
-                        alert_rows.append({
-                            'Rank': i,
-                            'Alert': alert.get('alert_name', 'N/A'),
-                            'Severity': alert.get('severity', 'N/A'),
-                            'Count': alert.get('count', 0)
-                        })
-                    if alert_rows:
-                        dataframes['alerts'] = pd.DataFrame(alert_rows)
-
-                # Pod distribution
-                pod_dist = basic_info.get('pod_distribution', {})
-                if pod_dist and pod_dist.get('top_nodes'):
-                    node_rows = []
-                    for i, node in enumerate(pod_dist['top_nodes'][:5], 1):
-                        node_rows.append({
-                            'Rank': i,
-                            'Node': self.truncate_node_name(node.get('node_name', 'N/A')),
-                            'Role': node.get('node_role', 'N/A'),
-                            'Pod Count': node.get('pod_count', 0)
-                        })
-                    if node_rows:
-                        dataframes['pod_distribution'] = pd.DataFrame(node_rows)
-
-            # OVN Kubernetes pods
-            if 'ovnkube_pods' in structured_data and not structured_data['ovnkube_pods'].get('error'):
-                pods_data = structured_data['ovnkube_pods']
-                
-                # Node pods CPU
-                node_pods = pods_data.get('node_pods', {})
-                if node_pods.get('top_5_cpu'):
-                    cpu_rows = []
-                    for i, pod in enumerate(node_pods['top_5_cpu'][:5], 1):
-                        metrics = pod.get('metrics', {}).get('cpu_usage', {})
-                        cpu_rows.append({
-                            'Rank': i,
-                            'Pod': self.truncate_text(pod.get('pod_name', 'N/A'), 20),
-                            'Node': self.truncate_node_name(pod.get('node_name', 'N/A'), 20),
-                            'Avg CPU %': f"{metrics.get('avg', 0):.2f}",
-                            'Max CPU %': f"{metrics.get('max', 0):.2f}"
-                        })
-                    if cpu_rows:
-                        dataframes['ovnkube_node_cpu'] = pd.DataFrame(cpu_rows)
-
-                # Node pods Memory
-                if node_pods.get('top_5_memory'):
-                    mem_rows = []
-                    for i, pod in enumerate(node_pods['top_5_memory'][:5], 1):
-                        metrics = pod.get('metrics', {}).get('memory_usage', {})
-                        mem_rows.append({
-                            'Rank': i,
-                            'Pod': self.truncate_text(pod.get('pod_name', 'N/A'), 20),
-                            'Node': self.truncate_node_name(pod.get('node_name', 'N/A'), 20),
-                            'Avg MB': f"{metrics.get('avg', 0):.1f}",
-                            'Max MB': f"{metrics.get('max', 0):.1f}"
-                        })
-                    if mem_rows:
-                        dataframes['ovnkube_node_memory'] = pd.DataFrame(mem_rows)
-
-                # Control plane pods
-                cp_pods = pods_data.get('control_plane_pods', {})
-                if cp_pods.get('top_5_cpu'):
-                    cp_rows = []
-                    for i, pod in enumerate(cp_pods['top_5_cpu'][:5], 1):
-                        metrics = pod.get('metrics', {}).get('cpu_usage', {})
-                        cp_rows.append({
-                            'Rank': i,
-                            'Pod': self.truncate_text(pod.get('pod_name', 'N/A'), 25),
-                            'Avg CPU %': f"{metrics.get('avg', 0):.2f}",
-                            'Max CPU %': f"{metrics.get('max', 0):.2f}"
-                        })
-                    if cp_rows:
-                        dataframes['control_plane_cpu'] = pd.DataFrame(cp_rows)
-
+            basic_info = structured_data.get('basic_info', {})
+            
+            # Pod status
+            pod_status = basic_info.get('pod_status', [])
+            if pod_status:
+                df = pd.DataFrame(pod_status)
+                dataframes['cluster_overview'] = self.limit_dataframe_columns(df, 2, 'cluster_overview')
+            
+            # Database sizes
+            db_sizes = basic_info.get('database_sizes', [])
+            if db_sizes:
+                df = pd.DataFrame(db_sizes)
+                dataframes['database_sizes'] = self.limit_dataframe_columns(df, 2, 'database_sizes')
+            
+            # Alerts
+            alerts = basic_info.get('alerts', [])
+            if alerts:
+                df = pd.DataFrame(alerts)
+                dataframes['alerts'] = self.limit_dataframe_columns(df, 4, 'alerts')
+            
+            # Performance insights
+            perf_insights = structured_data.get('performance_insights', {})
+            
+            # Performance summary
+            perf_summary = perf_insights.get('performance_summary', [])
+            if perf_summary:
+                df = pd.DataFrame(perf_summary)
+                dataframes['performance_summary'] = self.limit_dataframe_columns(df, 2, 'performance_summary')
+            
+            # Insights and recommendations
+            insights = perf_insights.get('insights', [])
+            if insights:
+                df = pd.DataFrame(insights)
+                dataframes['insights'] = self.limit_dataframe_columns(df, 2, 'insights')
+            
+            # Resource usage
+            resource_usage = structured_data.get('resource_usage', {})
+            
+            # Top CPU pods
+            top_cpu_pods = resource_usage.get('top_cpu_pods', [])
+            if top_cpu_pods:
+                df = pd.DataFrame(top_cpu_pods)
+                dataframes['top_cpu_pods'] = self.limit_dataframe_columns(df, 4, 'top_cpu_pods')
+            
+            # Container usage
+            container_usage = resource_usage.get('container_usage', [])
+            if container_usage:
+                df = pd.DataFrame(container_usage)
+                dataframes['container_usage'] = self.limit_dataframe_columns(df, 4, 'container_usage')
+            
+            # Latency analysis
+            latency_analysis = structured_data.get('latency_analysis', {})
+            
+            # Top latencies
+            top_latencies = latency_analysis.get('top_latencies', [])
+            if top_latencies:
+                df = pd.DataFrame(top_latencies)
+                dataframes['top_latencies'] = df  # Don't limit columns for full metric visibility
+            
+            # Category summary
+            category_summary = latency_analysis.get('category_summary', [])
+            if category_summary:
+                df = pd.DataFrame(category_summary)
+                dataframes['latency_categories'] = self.limit_dataframe_columns(df, 3, 'latency_categories')
+            
+            # Node analysis
+            node_analysis = structured_data.get('node_analysis', {})
+            
+            # Node summary
+            node_summary = node_analysis.get('node_summary', [])
+            if node_summary:
+                df = pd.DataFrame(node_summary)
+                dataframes['node_summary'] = self.limit_dataframe_columns(df, 5, 'node_summary')
+            
+            # Top worker nodes
+            top_worker_nodes = node_analysis.get('top_worker_nodes', [])
+            if top_worker_nodes:
+                df = pd.DataFrame(top_worker_nodes)
+                dataframes['top_worker_nodes'] = self.limit_dataframe_columns(df, 4, 'top_worker_nodes')
+            
             # OVS metrics
-            if 'ovs_metrics' in structured_data and not structured_data['ovs_metrics'].get('error'):
-                ovs_data = structured_data['ovs_metrics']
-                
-                # OVS CPU usage
-                cpu_usage = ovs_data.get('cpu_usage', {})
-                if cpu_usage.get('ovs_vswitchd_top5'):
-                    ovs_cpu_rows = []
-                    for i, node in enumerate(cpu_usage['ovs_vswitchd_top5'][:5], 1):
-                        ovs_cpu_rows.append({
-                            'Rank': i,
-                            'Node': self.truncate_node_name(node.get('node_name', 'N/A'), 25),
-                            'Avg CPU %': f"{node.get('avg', 0):.2f}",
-                            'Max CPU %': f"{node.get('max', 0):.2f}"
-                        })
-                    if ovs_cpu_rows:
-                        dataframes['ovs_cpu'] = pd.DataFrame(ovs_cpu_rows)
-
-                # OVS Memory usage
-                mem_usage = ovs_data.get('memory_usage', {})
-                if mem_usage.get('ovs_vswitchd_top5'):
-                    ovs_mem_rows = []
-                    for i, pod in enumerate(mem_usage['ovs_vswitchd_top5'][:5], 1):
-                        ovs_mem_rows.append({
-                            'Rank': i,
-                            'Pod': self.truncate_text(pod.get('pod_name', 'N/A'), 20),
-                            'Avg MB': f"{pod.get('avg', 0):.1f}",
-                            'Max MB': f"{pod.get('max', 0):.1f}"
-                        })
-                    if ovs_mem_rows:
-                        dataframes['ovs_memory'] = pd.DataFrame(ovs_mem_rows)
-
-                # Flow metrics
-                flows = ovs_data.get('flows_metrics', {})
-                if flows.get('dp_flows_top5'):
-                    flow_rows = []
-                    for i, flow in enumerate(flows['dp_flows_top5'][:5], 1):
-                        flow_rows.append({
-                            'Rank': i,
-                            'Instance': self.truncate_text(flow.get('instance', 'N/A'), 20),
-                            'Avg Flows': flow.get('avg', 0),
-                            'Max Flows': flow.get('max', 0)
-                        })
-                    if flow_rows:
-                        dataframes['datapath_flows'] = pd.DataFrame(flow_rows)
-
-            # Nodes usage
-            if 'nodes_usage' in structured_data and not structured_data['nodes_usage'].get('error'):
-                nodes_data = structured_data['nodes_usage']
-                
-                # Control plane nodes
-                cp_nodes = nodes_data.get('controlplane_nodes', {})
-                if cp_nodes.get('individual_nodes'):
-                    cp_node_rows = []
-                    for node in cp_nodes['individual_nodes'][:3]:
-                        cpu_usage = node.get('cpu_usage', {})
-                        mem_usage = node.get('memory_usage', {})
-                        cp_node_rows.append({
-                            'Node': self.truncate_node_name(node.get('name', 'N/A'), 25),
-                            'CPU %': f"{cpu_usage.get('avg', 0):.1f}",
-                            'Memory GB': f"{mem_usage.get('avg', 0)/1024:.1f}" if mem_usage.get('avg') else '0.0'
-                        })
-                    if cp_node_rows:
-                        dataframes['controlplane_nodes'] = pd.DataFrame(cp_node_rows)
-
-                # Top worker nodes
-                worker_nodes = nodes_data.get('top5_worker_nodes', {})
-                if worker_nodes.get('individual_nodes'):
-                    worker_rows = []
-                    for node in worker_nodes['individual_nodes'][:5]:
-                        cpu_usage = node.get('cpu_usage', {})
-                        mem_usage = node.get('memory_usage', {})
-                        worker_rows.append({
-                            'Rank': node.get('rank', 0),
-                            'Node': self.truncate_node_name(node.get('name', 'N/A'), 20),
-                            'CPU %': f"{cpu_usage.get('avg', 0):.1f}",
-                            'Memory GB': f"{mem_usage.get('avg', 0)/1024:.1f}" if mem_usage.get('avg') else '0.0'
-                        })
-                    if worker_rows:
-                        dataframes['worker_nodes'] = pd.DataFrame(worker_rows)
-
-            # Performance analysis
-            if 'performance_analysis' in structured_data:
-                perf_data = structured_data['performance_analysis']
-                
-                # Performance summary
-                perf_summary = perf_data.get('performance_summary', {})
-                if perf_summary:
-                    summary_rows = [
-                        {'Metric': 'Overall Score', 'Value': str(perf_summary.get('overall_score', 0))},
-                        {'Metric': 'Performance Grade', 'Value': perf_summary.get('performance_grade', 'N/A')}
-                    ]
-                    component_scores = perf_summary.get('component_scores', {})
-                    for comp, score in component_scores.items():
-                        summary_rows.append({
-                            'Metric': comp.replace('_', ' ').title(),
-                            'Value': str(score)
-                        })
-                    if summary_rows:
-                        dataframes['performance_summary'] = pd.DataFrame(summary_rows)
-
-                # Key findings
-                findings = perf_data.get('key_findings', [])
-                if findings:
-                    finding_rows = []
-                    for i, finding in enumerate(findings[:5], 1):
-                        finding_rows.append({
-                            'Rank': i,
-                            'Finding': str(finding)
-                        })
-                    dataframes['key_findings'] = pd.DataFrame(finding_rows)
-
-                # Recommendations
-                recommendations = perf_data.get('recommendations', [])
-                if recommendations:
-                    rec_rows = []
-                    for i, rec in enumerate(recommendations[:5], 1):
-                        rec_rows.append({
-                            'Rank': i,
-                            'Recommendation': str(rec)
-                        })
-                    dataframes['recommendations'] = pd.DataFrame(rec_rows)
-
-            # Apply column limits
-            limited_dataframes = {}
-            for name, df in dataframes.items():
-                if not df.empty:
-                    limited_df = self.limit_dataframe_columns(df, table_name=name)
-                    limited_dataframes[name] = limited_df
-
-            return limited_dataframes
-
+            ovs_metrics = structured_data.get('ovs_metrics', {})
+            
+            # CPU usage summary
+            cpu_summary = ovs_metrics.get('cpu_usage_summary', [])
+            if cpu_summary:
+                df = pd.DataFrame(cpu_summary)
+                dataframes['ovs_cpu_usage'] = self.limit_dataframe_columns(df, 4, 'ovs_cpu_usage')
+            
+            # Flows summary
+            flows_summary = ovs_metrics.get('flows_summary', [])
+            if flows_summary:
+                df = pd.DataFrame(flows_summary)
+                dataframes['ovs_flows'] = self.limit_dataframe_columns(df, 4, 'ovs_flows')
+            
+            return dataframes
+            
         except Exception as e:
             logger.error(f"Failed to transform deep drive data to DataFrames: {e}")
             return {}
 
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
-        """Generate HTML tables from DataFrames"""
-        html_tables = {}
-        
+        """Generate HTML tables with enhanced styling for deep drive analysis"""
         try:
-            for table_name, df in dataframes.items():
-                if not df.empty:
-                    html_tables[table_name] = self.create_html_table(df, table_name)
+            html_tables = {}
+            
+            # Define table priorities and styling
+            table_priorities = {
+                'performance_summary': 1,
+                'top_latencies': 2,
+                'top_cpu_pods': 3,
+                'node_summary': 4,
+                'alerts': 5
+            }
+            
+            # Sort tables by priority
+            sorted_tables = sorted(
+                dataframes.items(),
+                key=lambda x: table_priorities.get(x[0], 999)
+            )
+            
+            for table_name, df in sorted_tables:
+                if df.empty:
+                    continue
+                
+                # Add status-based styling
+                styled_df = df.copy()
+                
+                # Apply highlighting for critical metrics and top rankings
+                if table_name == 'top_latencies':
+                    # Highlight critical latencies
+                    for idx, row in styled_df.iterrows():
+                        if 'Critical' in str(row.get('Severity', '')):
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-danger">{row.get("Severity", "")}</span>'
+                        elif 'High' in str(row.get('Severity', '')):
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-warning">{row.get("Severity", "")}</span>'
+                        elif 'Medium' in str(row.get('Severity', '')):
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-info">{row.get("Severity", "")}</span>'
+                        else:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-success">{row.get("Severity", "")}</span>'
+                
+                elif table_name == 'alerts':
+                    # Style alert severity
+                    for idx, row in styled_df.iterrows():
+                        severity = str(row.get('Severity', ''))
+                        if 'CRITICAL' in severity:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-danger">{severity}</span>'
+                        elif 'WARNING' in severity:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-warning">{severity}</span>'
+                        else:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-info">{severity}</span>'
+                
+                elif table_name == 'node_summary':
+                    # Style node status
+                    for idx, row in styled_df.iterrows():
+                        status = str(row.get('Status', ''))
+                        if status == 'danger':
+                            styled_df.at[idx, 'Status'] = f'<span class="badge badge-danger">High Load</span>'
+                        elif status == 'warning':
+                            styled_df.at[idx, 'Status'] = f'<span class="badge badge-warning">Medium Load</span>'
+                        else:
+                            styled_df.at[idx, 'Status'] = f'<span class="badge badge-success">Normal</span>'
+                
+                # Generate HTML table
+                html_table = self.create_html_table(styled_df, table_name)
+                
+                # Add custom styling for important tables
+                if table_name in ['performance_summary', 'top_latencies', 'alerts']:
+                    html_table = f'<div class="border border-primary rounded p-2 mb-3">{html_table}</div>'
+                
+                html_tables[table_name] = html_table
             
             return html_tables
-        except Exception as e:
-            logger.error(f"Failed to generate HTML tables for deep drive data: {e}")
-            return {}
-
-    def summarize_deepdrive_data(self, structured_data: Dict[str, Any]) -> str:
-        """Generate a brief summary of the deep drive analysis"""
-        try:
-            summary_parts = ["OVN Deep Drive Analysis:"]
             
-            # Basic cluster info
-            basic_info = structured_data.get('basic_info', {})
-            if not basic_info.get('error'):
-                pod_counts = basic_info.get('pod_counts', {})
-                total_pods = pod_counts.get('total_pods', 0)
-                running_pods = pod_counts.get('phases', {}).get('Running', 0)
-                summary_parts.append(f"• Cluster: {total_pods} total pods ({running_pods} running)")
-                
-                alerts = basic_info.get('alerts_summary', {})
-                if alerts:
-                    alert_count = alerts.get('total_alert_types', 0)
-                    summary_parts.append(f"• Alerts: {alert_count} active alert types")
-
-            # Performance analysis
-            perf_analysis = structured_data.get('performance_analysis', {})
-            perf_summary = perf_analysis.get('performance_summary', {})
-            if perf_summary:
-                overall_score = perf_summary.get('overall_score', 0)
-                grade = perf_summary.get('performance_grade', 'N/A')
-                summary_parts.append(f"• Performance: {overall_score}/100 (Grade: {grade})")
-
-            # Key findings
-            findings = perf_analysis.get('key_findings', [])
-            if findings:
-                summary_parts.append(f"• Key findings: {len(findings)} identified")
-
-            # Recommendations
-            recommendations = perf_analysis.get('recommendations', [])
-            if recommendations:
-                summary_parts.append(f"• Recommendations: {len(recommendations)} provided")
-
-            # Node analysis
-            nodes_data = structured_data.get('nodes_usage', {})
-            if not nodes_data.get('error'):
-                cp_nodes = nodes_data.get('controlplane_nodes', {})
-                worker_nodes = nodes_data.get('top5_worker_nodes', {})
-                cp_count = cp_nodes.get('count', 0)
-                worker_count = worker_nodes.get('count', 0)
-                summary_parts.append(f"• Infrastructure: {cp_count} control plane, {worker_count} worker nodes analyzed")
-
-            return " ".join(summary_parts)
-
         except Exception as e:
-            logger.error(f"Failed to generate deep drive summary: {e}")
-            return f"Deep drive analysis summary generation failed: {str(e)}"
+            logger.error(f"Failed to generate deep drive HTML tables: {e}")
+            return {}
