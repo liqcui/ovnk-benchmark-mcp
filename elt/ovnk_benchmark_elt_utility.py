@@ -160,6 +160,13 @@ class EltUtility:
         # OVS-specific table handling
         elif table_name in ['cpu_usage_summary', 'memory_usage_summary', 'dp_flows_top', 'bridge_flows_summary']:
             max_cols = 4  # OVS usage tables get 4 columns for readability
+        # NEW: Deep Drive OVS-specific table handling
+        elif table_name in ['ovs_vswitchd_cpu', 'ovsdb_server_cpu', 'ovs_db_memory', 'ovs_vswitchd_memory']:
+            max_cols = 4  # OVS CPU and memory tables get 4 columns for readability
+        elif table_name in ['ovs_dp_flows', 'ovs_br_int_flows', 'ovs_br_ex_flows']:
+            max_cols = 4  # OVS flow tables get 4 columns for readability
+        elif table_name == 'ovs_connection_metrics':
+            max_cols = 4  # OVS connection metrics get 4 columns to show status            
         elif table_name in ['connection_metrics']:
             max_cols = 2  # Connection metrics are simple key-value
         # Pods usage specific handling
