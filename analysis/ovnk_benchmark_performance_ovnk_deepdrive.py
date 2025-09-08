@@ -25,7 +25,7 @@ from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
 
 # Import utility module
-from ovnk_benchmark_performance_utility import (
+from .ovnk_benchmark_performance_utility import (
     BasePerformanceAnalyzer, PerformanceLevel, AlertLevel, ResourceType,
     PerformanceThreshold, PerformanceAlert, AnalysisMetadata, ClusterHealth,
     MemoryConverter, StatisticsCalculator, ThresholdClassifier, 
@@ -1161,7 +1161,7 @@ async def get_controller_sync_duration_top20_json(prometheus_client: PrometheusB
     return json.dumps(results, indent=2, default=str)
 
 # Import utility function for backward compatibility
-from ovnk_benchmark_performance_utility import calculate_node_resource_efficiency
+from .ovnk_benchmark_performance_utility import calculate_node_resource_efficiency
 
 # Example usage
 async def main():
