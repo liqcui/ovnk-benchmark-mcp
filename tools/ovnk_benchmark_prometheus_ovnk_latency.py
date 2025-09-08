@@ -48,7 +48,7 @@ class OVNLatencyCollector:
                 'component': 'node'
             },
             {
-                'query': 'topk(20, ovnkube_controller_sync_duration_seconds)',
+                'query': 'topk(20, ovnkube_controller_sync_duration_seconds)', 
                 'metricName': 'ovnkube_controller_sync_duration_seconds',
                 'unit': 'seconds',
                 'type': 'sync_duration',
@@ -535,8 +535,13 @@ class OVNLatencyCollector:
         max_value = max(values)
         avg_value = sum(values) / len(values)
         
-        # Get top 5 entries only
-        top_5 = sorted_data[:5]
+       # Get top entries based on metric type - CHANGED: top 20 for sync duration metrics
+        if metric_config.get('type') == 'sync_duration' and metric_config.get('metricName') == 'ovnkube_controller_sync_duration_seconds':
+            top_entries = sorted_data[:20]  # CHANGED: from [:5] to [:20]
+            top_key = 'top_20'  # CHANGED: from 'top_5' to 'top_20'
+        else:
+            top_entries = sorted_data[:5]
+            top_key = 'top_5'
         
         return {
             'count': len(data_points),
@@ -544,7 +549,7 @@ class OVNLatencyCollector:
             'avg_value': avg_value,
             'readable_max': self._convert_duration_to_readable(max_value),
             'readable_avg': self._convert_duration_to_readable(avg_value),
-            'top_5': top_5
+            top_key: top_entries  # CHANGED: dynamic key based on metric type
         }
 
     # Individual metric collection functions

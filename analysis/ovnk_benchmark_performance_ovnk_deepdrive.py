@@ -713,6 +713,91 @@ class ovnDeepDriveAnalyzer:
             print(f"Error in comprehensive analysis: {e}")
             return analysis_result
 
+    async def collect_controller_sync_duration_top20(self, duration: Optional[str] = None, end_time: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Collect top 20 ovnkube_controller_sync_duration_seconds metrics with pod/node resolution
+        Uses existing OVNLatencyCollector for data collection
+        """
+        try:
+            # Use the existing latency collector to get controller sync duration data
+            sync_duration_data = await self.latency_collector.collect_controller_sync_duration(
+                time=None, 
+                duration=duration or "5m", 
+                end_time=end_time
+            )
+            
+            result = {
+                'collection_timestamp': datetime.now(timezone.utc).isoformat(),
+                'query_type': 'duration' if duration else 'instant',
+                'metric_name': 'ovnkube_controller_sync_duration_seconds',
+                'timezone': 'UTC',
+                'top_20_metrics': [],
+                'summary': {}
+            }
+            
+            # Check if we got valid data
+            if 'error' in sync_duration_data:
+                return {'error': sync_duration_data['error']}
+            
+            # Extract statistics from the collector result
+            statistics = sync_duration_data.get('statistics', {})
+            if not statistics or statistics.get('count', 0) == 0:
+                return {
+                    'collection_timestamp': datetime.now(timezone.utc).isoformat(),
+                    'metric_name': 'ovnkube_controller_sync_duration_seconds',
+                    'timezone': 'UTC',
+                    'top_20_metrics': [],
+                    'summary': {'count': 0, 'message': 'No data available'}
+                }
+            
+            # Get top entries - the collector already returns top_20 for sync duration metrics
+            top_entries = statistics.get('top_20', statistics.get('top_5', []))
+            
+            # Process and format the top 20 entries
+            processed_entries = []
+            for idx, entry in enumerate(top_entries[:20]):  # Ensure max 20 entries
+                processed_entry = {
+                    'rank': idx + 1,
+                    'pod_name': entry.get('pod_name', 'unknown'),
+                    'node_name': entry.get('node_name', 'unknown'),
+                    'resource_name': entry.get('resource_name', 'all watchers'),
+                    'value_seconds': entry.get('value', 0),
+                    'readable_value': entry.get('readable_value', {}),
+                    'avg_value': entry.get('value', 0),  # For sync duration, value is typically avg
+                    'max_value': entry.get('value', 0)   # Same as avg for most sync metrics
+                }
+                processed_entries.append(processed_entry)
+            
+            result['top_20_metrics'] = processed_entries
+            
+            # Add summary information
+            result['summary'] = {
+                'total_count': statistics.get('count', 0),
+                'returned_count': len(processed_entries),
+                'max_value_seconds': statistics.get('max_value', 0),
+                'avg_value_seconds': statistics.get('avg_value', 0),
+                'readable_max': statistics.get('readable_max', {}),
+                'readable_avg': statistics.get('readable_avg', {}),
+                'component': sync_duration_data.get('component', 'controller'),
+                'unit': sync_duration_data.get('unit', 'seconds')
+            }
+            
+            if duration:
+                start_time, end_time_actual = self.prometheus_client.get_time_range_from_duration(duration, end_time)
+                result['query_parameters'] = {
+                    'duration': duration, 
+                    'start_time': start_time, 
+                    'end_time': end_time_actual
+                }
+            
+            return result
+            
+        except Exception as e:
+            return {
+                'error': f'Failed to collect controller sync duration top 20: {str(e)}',
+                'collection_timestamp': datetime.now(timezone.utc).isoformat(),
+                'timezone': 'UTC'
+            }
 
 # Convenience functions
 async def run_ovn_deep_drive_analysis(prometheus_client: PrometheusBaseQuery, 
@@ -722,7 +807,6 @@ async def run_ovn_deep_drive_analysis(prometheus_client: PrometheusBaseQuery,
     analyzer = ovnDeepDriveAnalyzer(prometheus_client, auth)
     return await analyzer.run_comprehensive_analysis(duration)
 
-
 async def get_ovn_performance_json(prometheus_client: PrometheusBaseQuery,
                                  auth: Optional[OpenShiftAuth] = None, 
                                  duration: Optional[str] = None) -> str:
@@ -730,6 +814,26 @@ async def get_ovn_performance_json(prometheus_client: PrometheusBaseQuery,
     results = await run_ovn_deep_drive_analysis(prometheus_client, auth, duration)
     return json.dumps(results, indent=2, default=str)
 
+async def get_controller_sync_duration_top20(prometheus_client: PrometheusBaseQuery, 
+                                           auth: Optional[OpenShiftAuth] = None,
+                                           duration: Optional[str] = None,
+                                           end_time: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get top 20 ovnkube_controller_sync_duration_seconds metrics
+    Returns detailed metrics with pod_name, node_name, resource_name, and values
+    """
+    analyzer = ovnDeepDriveAnalyzer(prometheus_client, auth)
+    return await analyzer.collect_controller_sync_duration_top20(duration, end_time)
+
+async def get_controller_sync_duration_top20_json(prometheus_client: PrometheusBaseQuery,
+                                                 auth: Optional[OpenShiftAuth] = None,
+                                                 duration: Optional[str] = None,
+                                                 end_time: Optional[str] = None) -> str:
+    """
+    Get top 20 ovnkube_controller_sync_duration_seconds metrics as JSON string
+    """
+    results = await get_controller_sync_duration_top20(prometheus_client, auth, duration, end_time)
+    return json.dumps(results, indent=2, default=str)
 
 # Example usage
 async def main():
