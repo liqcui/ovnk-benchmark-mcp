@@ -154,7 +154,7 @@ class ovnDeepDriveAnalyzer:
             'performance_grade': 'A' if overall_score >= 80 else 'B' if overall_score >= 60 else 'C' if overall_score >= 40 else 'D'
         }
     
-    async def collect_basic_cluster_info(self) -> Dict[str, Any]:
+    async def collect_prometheus_basic_info(self) -> Dict[str, Any]:
         """Collect basic cluster information (requirement 2.1)"""
         try:
             basic_summary = await self.basic_info_collector.collect_comprehensive_summary()
@@ -188,13 +188,14 @@ class ovnDeepDriveAnalyzer:
                                 'unit': 'MB'
                             }
             
-            # Extract alerts summary
+            # Extract alerts summary - FIXED to match the actual structure
             if 'metrics' in basic_summary and 'alerts' in basic_summary['metrics']:
-                alerts = basic_summary['metrics']['alerts']
-                if not alerts.get('error'):
+                alerts_data = basic_summary['metrics']['alerts']
+                if not alerts_data.get('error'):
                     result['alerts_summary'] = {
-                        'total_alert_types': alerts.get('total_alert_types', 0),
-                        'top_alerts': alerts.get('top_alerts', [])[:5]  # Top 5
+                        'total_alert_types': alerts_data.get('total_alert_types', 0),
+                        'top_alerts': alerts_data.get('alerts', [])[:5],  # Changed from 'top_alerts' to 'alerts'
+                        'alertname_statistics': alerts_data.get('alertname_statistics', {})  # Add separated avg/max stats
                     }
             
             # Extract pod distribution
@@ -210,7 +211,7 @@ class ovnDeepDriveAnalyzer:
             
         except Exception as e:
             return {'error': f'Failed to collect basic info: {str(e)}'}
-    
+
     async def collect_ovnkube_pods_usage(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """Collect top 5 OVNKube pods CPU/RAM usage (requirement 2.2)"""
         try:
@@ -681,7 +682,7 @@ class ovnDeepDriveAnalyzer:
         try:
             # Collect all metrics concurrently
             tasks = [
-                self.collect_basic_cluster_info(),
+                self.collect_prometheus_basic_info(),
                 self.collect_ovnkube_pods_usage(duration),
                 self.collect_ovn_containers_usage(duration), 
                 self.collect_ovs_metrics_summary(duration),

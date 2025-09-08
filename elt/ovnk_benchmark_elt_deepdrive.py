@@ -75,7 +75,7 @@ class deepDriveELT(EltUtility):
             'tool_name': data.get('execution_metadata', {}).get('tool_name', ''),
             'timeout_seconds': data.get('execution_metadata', {}).get('timeout_seconds', 0)
         }
-
+ 
     def _extract_basic_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract basic cluster information"""
         basic_info = data.get('basic_info', {})
@@ -110,17 +110,59 @@ class deepDriveELT(EltUtility):
                 'Status': 'success' if (isinstance(size_mb, (int, float)) and size_mb < 10) else 'warning'
             })
 
-        # Alerts summary
+        # Alerts summary - FIXED to handle the correct data structure
         alerts_info = []
-        alerts = basic_info.get('alerts_summary', {}).get('top_alerts', [])
-        for idx, alert in enumerate(alerts[:5], 1):
+        alerts_summary = basic_info.get('alerts_summary', {})
+        
+        # Get alerts from the correct key and handle alertname_statistics
+        alerts_data = alerts_summary.get('alerts', [])  # Changed from 'top_alerts' to 'alerts'
+        alertname_stats = alerts_summary.get('alertname_statistics', {})
+        
+        # Create a combined view showing both individual alerts and statistics
+        processed_alertnames = set()
+        
+        for idx, alert in enumerate(alerts_data[:5], 1):  # Top 5 alerts
+            alert_name = alert.get('alert_name', '')
             severity = alert.get('severity', 'unknown')
+            count = alert.get('count', 0)
+            
+            # Get avg/max stats for this alertname if available
+            stats = alertname_stats.get(alert_name, {})
+            avg_count = stats.get('avg_count', count)
+            max_count = stats.get('max_count', count)
+            
             status = 'danger' if severity == 'critical' else 'warning' if severity == 'warning' else 'info'
+            
+            # Show count with avg/max if different
+            if avg_count != max_count:
+                count_display = f"{count} (avg: {avg_count}, max: {max_count})"
+            else:
+                count_display = str(count)
+            
             alerts_info.append({
-                'Rank': f"🔥 {idx}" if idx == 1 else idx,  # Highlight top alert
-                'Alert': alert.get('alert_name', ''),
+                'Rank': f"🔥 {idx}" if idx == 1 else idx,
+                'Alert': alert_name,
                 'Severity': severity.upper(),
+                'Count': count_display,
                 'Status': status
+            })
+            
+            processed_alertnames.add(alert_name)
+        
+        # Add any alertname statistics that weren't in the top alerts
+        remaining_stats = {name: stats for name, stats in alertname_stats.items() 
+                        if name not in processed_alertnames}
+        
+        for alert_name, stats in list(remaining_stats.items())[:3]:  # Add up to 3 more
+            avg_count = stats.get('avg_count', 0)
+            max_count = stats.get('max_count', 0)
+            
+            alerts_info.append({
+                'Rank': len(alerts_info) + 1,
+                'Alert': alert_name,
+                'Severity': 'UNKNOWN',
+                'Count': f"avg: {avg_count}, max: {max_count}",
+                'Status': 'info'
             })
 
         return {
@@ -128,7 +170,7 @@ class deepDriveELT(EltUtility):
             'database_sizes': db_info,
             'alerts': alerts_info
         }
- 
+
     def _extract_resource_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
 
         """Extract resource usage data"""

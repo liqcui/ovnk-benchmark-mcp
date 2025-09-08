@@ -34,8 +34,8 @@ class ovnBasicInfoCollector:
             "ovn_southbound_db_size": 'ovn_db_db_size_bytes{db_name=~"OVN_Southbound"}'
         }
         
-        # New metrics queries
-        self.alerts_query = 'topk(10,sum(ALERTS{severity!="none"}) by (alertname, severity))'
+        # Updated alerts query to get top 15
+        self.alerts_query = 'topk(15,sum(ALERTS{severity!="none"}) by (alertname, severity))'
         self.pod_distribution_query = 'count(kube_pod_info{}) by (node)'
         
         # Default latency metrics (hardcoded fallback)
@@ -136,25 +136,46 @@ class ovnBasicInfoCollector:
     
     async def collect_top_alerts(self) -> Dict[str, Any]:
         """
-        Collect top 10 alerts by severity
+        Collect top 15 alerts by severity with separated avg and max values per alertname
         
         Returns:
-            Dictionary with top 6 alerts information
+            Dictionary with top alerts information including per-alertname avg/max statistics
         """
-        logger.info("Collecting top alerts")
+        logger.info("Collecting top alerts with per-alertname avg and max")
         
         async with PrometheusBaseQuery(self.prometheus_url, self.token) as prom:
             try:
                 raw_result = await prom.query_instant(self.alerts_query)
                 formatted_result = prom.format_query_result(raw_result, include_labels=True)
                 
-                # Sort by value (count) descending and take top 6
-                sorted_alerts = sorted(
-                    [item for item in formatted_result if item.get('value') is not None],
-                    key=lambda x: x['value'],
-                    reverse=True
-                )[:6]
+                # Filter out items with valid values
+                valid_alerts = [item for item in formatted_result if item.get('value') is not None]
                 
+                if not valid_alerts:
+                    return {
+                        "metric_name": "alerts_summary",
+                        "query": self.alerts_query,
+                        "alerts": [],
+                        "total_alert_types": 0,
+                        "alertname_statistics": {}
+                    }
+                
+                # Group alerts by alertname
+                alertname_groups = {}
+                for item in valid_alerts:
+                    labels = item.get('labels', {})
+                    alertname = labels.get('alertname', 'unknown')
+                    count = item.get('value', 0)
+                    
+                    if alertname not in alertname_groups:
+                        alertname_groups[alertname] = []
+                    
+                    alertname_groups[alertname].append(count)
+                
+                # Sort all alerts by value (count) descending for display
+                sorted_alerts = sorted(valid_alerts, key=lambda x: x['value'], reverse=True)
+                
+                # Prepare alert data for display
                 alerts_data = []
                 for item in sorted_alerts:
                     labels = item.get('labels', {})
@@ -165,11 +186,20 @@ class ovnBasicInfoCollector:
                         "timestamp": item.get('timestamp')
                     })
                 
+                # Calculate separated avg/max for each alertname
+                alertname_statistics = {}
+                for alertname, counts in alertname_groups.items():
+                    alertname_statistics[alertname] = {
+                        "avg_count": round(sum(counts) / len(counts), 2),
+                        "max_count": max(counts)
+                    }
+                
                 return {
                     "metric_name": "alerts_summary",
                     "query": self.alerts_query,
-                    "top_alerts": alerts_data,
-                    "total_alert_types": len(alerts_data)
+                    "alerts": alerts_data,
+                    "total_alert_types": len(alerts_data),
+                    "alertname_statistics": alertname_statistics
                 }
                 
             except Exception as e:
@@ -177,8 +207,9 @@ class ovnBasicInfoCollector:
                 return {
                     "metric_name": "alerts_summary",
                     "error": str(e),
-                    "top_alerts": [],
-                    "total_alert_types": 0
+                    "alerts": [],
+                    "total_alert_types": 0,
+                    "alertname_statistics": {}
                 }
     
     async def collect_pod_distribution(self) -> Dict[str, Any]:
@@ -458,14 +489,14 @@ def get_pod_phase_counts_json(prometheus_url: str, token: Optional[str] = None) 
 # Convenience functions for new metrics
 async def get_top_alerts_summary(prometheus_url: str, token: Optional[str] = None) -> Dict[str, Any]:
     """
-    Get top alerts summary
+    Get top alerts summary with avg and max statistics
     
     Args:
         prometheus_url: Prometheus server URL
         token: Optional authentication token
         
     Returns:
-        Dictionary with top alerts summary
+        Dictionary with top alerts summary including statistics
     """
     collector = ovnBasicInfoCollector(prometheus_url, token)
     return await collector.collect_top_alerts()
@@ -535,9 +566,9 @@ async def main():
     # Individual metric collection examples
     print("\n=== Individual Metric Examples ===")
     
-    # Top alerts
+    # Top alerts with statistics
     alerts = await collector.collect_top_alerts()
-    print("\nTop Alerts:")
+    print("\nTop Alerts with Statistics:")
     print(json.dumps(alerts, indent=2))
     
     # Pod distribution
