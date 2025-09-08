@@ -548,43 +548,178 @@ class deepDriveELT(EltUtility):
             'node_summary': node_summary,
             'top_worker_nodes': individual_workers
         }
-
+ 
     def _extract_ovs_summary(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract OVS metrics summary"""
+        """Extract OVS metrics summary with separate tables for each component"""
         ovs_data = data.get('ovs_metrics', {})
         
-        # CPU usage summary
-        cpu_summary = []
-        cpu_usage = ovs_data.get('cpu_usage', {})
+        # CPU usage tables
+        ovs_vswitchd_cpu = []
+        ovsdb_server_cpu = []
         
-        vswitchd_top = cpu_usage.get('ovs_vswitchd_top5', [])
-        for idx, node_data in enumerate(vswitchd_top[:3], 1):
-            status = 'warning' if node_data.get('avg', 0) > 2 else 'success'
-            rank_display = f"🔥 {idx}" if idx == 1 and node_data.get('avg', 0) > 2 else idx
+        # OVS vSwitchd CPU
+        vswitchd_cpu_data = ovs_data.get('cpu_usage', {}).get('ovs_vswitchd_top5', [])
+        for idx, node_data in enumerate(vswitchd_cpu_data, 1):
+            avg_cpu = node_data.get('avg', 0)
+            max_cpu = node_data.get('max', 0)
             
-            cpu_summary.append({
+            # Highlight top performance and high usage
+            rank_display = f"🏆 {idx}" if idx == 1 else idx
+            if avg_cpu > 2:
+                rank_display = f"🔥 {idx}" if idx == 1 else f"⚠️ {idx}"
+            
+            ovs_vswitchd_cpu.append({
                 'Rank': rank_display,
-                'Component': 'OVS vSwitchd',
-                'Node': self.truncate_node_name(node_data.get('node_name', ''), 20),
-                'CPU %': f"{node_data.get('avg', 0):.2f}"
+                'Node': self.truncate_node_name(node_data.get('node_name', ''), 25),
+                'Avg CPU %': f"{avg_cpu:.2f}",
+                'Max CPU %': f"{max_cpu:.2f}"
             })
-
-        # Flow metrics
-        flows_summary = []
+        
+        # OVSDB Server CPU
+        ovsdb_cpu_data = ovs_data.get('cpu_usage', {}).get('ovsdb_server_top5', [])
+        for idx, node_data in enumerate(ovsdb_cpu_data, 1):
+            avg_cpu = node_data.get('avg', 0)
+            max_cpu = node_data.get('max', 0)
+            
+            rank_display = f"🏆 {idx}" if idx == 1 else idx
+            if avg_cpu > 0.15:
+                rank_display = f"🔥 {idx}" if idx == 1 else f"⚠️ {idx}"
+            
+            ovsdb_server_cpu.append({
+                'Rank': rank_display,
+                'Node': self.truncate_node_name(node_data.get('node_name', ''), 25),
+                'Avg CPU %': f"{avg_cpu:.2f}",
+                'Max CPU %': f"{max_cpu:.2f}"
+            })
+        
+        # Memory usage tables
+        ovs_db_memory = []
+        ovs_vswitchd_memory = []
+        
+        # OVS DB Memory
+        ovs_db_mem_data = ovs_data.get('memory_usage', {}).get('ovs_db_top5', [])
+        for idx, pod_data in enumerate(ovs_db_mem_data, 1):
+            avg_mem = pod_data.get('avg', 0)
+            max_mem = pod_data.get('max', 0)
+            
+            rank_display = f"🏆 {idx}" if idx == 1 else idx
+            if avg_mem > 15:  # > 15MB
+                rank_display = f"🔥 {idx}" if idx == 1 else f"⚠️ {idx}"
+            
+            ovs_db_memory.append({
+                'Rank': rank_display,
+                'Pod': self.truncate_text(pod_data.get('pod_name', ''), 25),
+                'Avg Memory MB': f"{avg_mem:.1f}",
+                'Max Memory MB': f"{max_mem:.1f}"
+            })
+        
+        # OVS vSwitchd Memory
+        ovs_vswitchd_mem_data = ovs_data.get('memory_usage', {}).get('ovs_vswitchd_top5', [])
+        for idx, pod_data in enumerate(ovs_vswitchd_mem_data, 1):
+            avg_mem = pod_data.get('avg', 0)
+            max_mem = pod_data.get('max', 0)
+            
+            rank_display = f"🏆 {idx}" if idx == 1 else idx
+            if avg_mem > 60:  # > 60MB
+                rank_display = f"🔥 {idx}" if idx == 1 else f"⚠️ {idx}"
+            
+            ovs_vswitchd_memory.append({
+                'Rank': rank_display,
+                'Pod': self.truncate_text(pod_data.get('pod_name', ''), 25),
+                'Avg Memory MB': f"{avg_mem:.1f}",
+                'Max Memory MB': f"{max_mem:.1f}"
+            })
+        
+        # Flow metrics tables
+        dp_flows_table = []
+        br_int_flows_table = []
+        br_ex_flows_table = []
+        
         flows_data = ovs_data.get('flows_metrics', {})
         
-        dp_flows = flows_data.get('dp_flows_top5', [])
-        for idx, flow_data in enumerate(dp_flows[:3], 1):
-            flows_summary.append({
-                'Type': 'DP Flows',
+        # DP Flows
+        dp_flows_data = flows_data.get('dp_flows_top5', [])
+        for idx, flow_data in enumerate(dp_flows_data, 1):
+            avg_flows = flow_data.get('avg', 0)
+            max_flows = flow_data.get('max', 0)
+            
+            rank_display = f"🏆 {idx}" if idx == 1 else idx
+            if avg_flows > 500:
+                rank_display = f"🔥 {idx}" if idx == 1 else f"⚠️ {idx}"
+            
+            dp_flows_table.append({
+                'Rank': rank_display,
                 'Instance': flow_data.get('instance', ''),
-                'Avg Flows': f"{flow_data.get('avg', 0):.0f}",
-                'Max Flows': f"{flow_data.get('max', 0):.0f}"
+                'Avg Flows': f"{avg_flows:.0f}",
+                'Max Flows': f"{max_flows:.0f}"
             })
+        
+        # BR-INT Flows
+        br_int_data = flows_data.get('br_int_top5', [])
+        for idx, flow_data in enumerate(br_int_data, 1):
+            avg_flows = flow_data.get('avg', 0)
+            max_flows = flow_data.get('max', 0)
+            
+            rank_display = f"🏆 {idx}" if idx == 1 else idx
+            if avg_flows > 4000:
+                rank_display = f"🔥 {idx}" if idx == 1 else f"⚠️ {idx}"
+            
+            br_int_flows_table.append({
+                'Rank': rank_display,
+                'Instance': flow_data.get('instance', ''),
+                'Avg Flows': f"{avg_flows:.0f}",
+                'Max Flows': f"{max_flows:.0f}"
+            })
+        
+        # BR-EX Flows
+        br_ex_data = flows_data.get('br_ex_top5', [])
+        for idx, flow_data in enumerate(br_ex_data, 1):
+            avg_flows = flow_data.get('avg', 0)
+            max_flows = flow_data.get('max', 0)
+            
+            rank_display = f"🏆 {idx}" if idx == 1 else idx
+            
+            br_ex_flows_table.append({
+                'Rank': rank_display,
+                'Instance': flow_data.get('instance', ''),
+                'Avg Flows': f"{avg_flows:.0f}",
+                'Max Flows': f"{max_flows:.0f}"
+            })
+        
+        # Connection metrics table
+        connection_metrics_table = []
+        conn_data = ovs_data.get('connection_metrics', {})
+        
+        for metric_name, metric_data in conn_data.items():
+            if isinstance(metric_data, dict):
+                avg_val = metric_data.get('avg', 0)
+                max_val = metric_data.get('max', 0)
+                
+                # Highlight problematic connections
+                status = 'success'
+                if metric_name in ['rconn_overflow', 'rconn_discarded'] and max_val > 0:
+                    status = 'danger'
+                elif metric_name == 'stream_open' and avg_val < 2:
+                    status = 'warning'
+                
+                display_name = metric_name.replace('_', ' ').title()
+                
+                connection_metrics_table.append({
+                    'Metric': display_name,
+                    'Avg Value': f"{avg_val:.0f}",
+                    'Max Value': f"{max_val:.0f}",
+                    'Status': status
+                })
 
         return {
-            'cpu_usage_summary': cpu_summary,
-            'flows_summary': flows_summary
+            'ovs_vswitchd_cpu': ovs_vswitchd_cpu,
+            'ovsdb_server_cpu': ovsdb_server_cpu,
+            'ovs_db_memory': ovs_db_memory,
+            'ovs_vswitchd_memory': ovs_vswitchd_memory,
+            'dp_flows': dp_flows_table,
+            'br_int_flows': br_int_flows_table,
+            'br_ex_flows': br_ex_flows_table,
+            'connection_metrics': connection_metrics_table
         }
 
     def summarize_deepdrive_data(self, structured_data: Dict[str, Any]) -> str:
@@ -752,6 +887,50 @@ class deepDriveELT(EltUtility):
             # OVS metrics
             ovs_metrics = structured_data.get('ovs_metrics', {})
             
+            # OVS CPU usage tables
+            ovs_vswitchd_cpu = ovs_metrics.get('ovs_vswitchd_cpu', [])
+            if ovs_vswitchd_cpu:
+                df = pd.DataFrame(ovs_vswitchd_cpu)
+                dataframes['ovs_vswitchd_cpu'] = self.limit_dataframe_columns(df, 4, 'ovs_vswitchd_cpu')
+            
+            ovsdb_server_cpu = ovs_metrics.get('ovsdb_server_cpu', [])
+            if ovsdb_server_cpu:
+                df = pd.DataFrame(ovsdb_server_cpu)
+                dataframes['ovsdb_server_cpu'] = self.limit_dataframe_columns(df, 4, 'ovsdb_server_cpu')
+            
+            # OVS Memory usage tables
+            ovs_db_memory = ovs_metrics.get('ovs_db_memory', [])
+            if ovs_db_memory:
+                df = pd.DataFrame(ovs_db_memory)
+                dataframes['ovs_db_memory'] = self.limit_dataframe_columns(df, 4, 'ovs_db_memory')
+            
+            ovs_vswitchd_memory = ovs_metrics.get('ovs_vswitchd_memory', [])
+            if ovs_vswitchd_memory:
+                df = pd.DataFrame(ovs_vswitchd_memory)
+                dataframes['ovs_vswitchd_memory'] = self.limit_dataframe_columns(df, 4, 'ovs_vswitchd_memory')
+            
+            # OVS Flow metrics tables
+            dp_flows = ovs_metrics.get('dp_flows', [])
+            if dp_flows:
+                df = pd.DataFrame(dp_flows)
+                dataframes['ovs_dp_flows'] = self.limit_dataframe_columns(df, 4, 'ovs_dp_flows')
+            
+            br_int_flows = ovs_metrics.get('br_int_flows', [])
+            if br_int_flows:
+                df = pd.DataFrame(br_int_flows)
+                dataframes['ovs_br_int_flows'] = self.limit_dataframe_columns(df, 4, 'ovs_br_int_flows')
+            
+            br_ex_flows = ovs_metrics.get('br_ex_flows', [])
+            if br_ex_flows:
+                df = pd.DataFrame(br_ex_flows)
+                dataframes['ovs_br_ex_flows'] = self.limit_dataframe_columns(df, 4, 'ovs_br_ex_flows')
+            
+            # OVS Connection metrics
+            connection_metrics = ovs_metrics.get('connection_metrics', [])
+            if connection_metrics:
+                df = pd.DataFrame(connection_metrics)
+                dataframes['ovs_connection_metrics'] = self.limit_dataframe_columns(df, 4, 'ovs_connection_metrics')            
+
             # CPU usage summary
             cpu_summary = ovs_metrics.get('cpu_usage_summary', [])
             if cpu_summary:
@@ -805,7 +984,66 @@ class deepDriveELT(EltUtility):
                 
                 # Add status-based styling and highlighting
                 styled_df = df.copy()
+
+                # UPDATED: Add highlighting for new OVS tables
+                if table_name == 'ovs_vswitchd_cpu':
+                    for idx, row in styled_df.iterrows():
+                        avg_cpu_str = str(row.get('Avg CPU %', '0'))
+                        try:
+                            avg_cpu = float(avg_cpu_str)
+                            if avg_cpu > 2:
+                                styled_df.at[idx, 'Avg CPU %'] = f'<span class="text-danger font-weight-bold">{avg_cpu_str}</span>'
+                            elif avg_cpu > 1:
+                                styled_df.at[idx, 'Avg CPU %'] = f'<span class="text-warning font-weight-bold">{avg_cpu_str}</span>'
+                        except (ValueError, TypeError):
+                            pass
                 
+                elif table_name == 'ovsdb_server_cpu':
+                    for idx, row in styled_df.iterrows():
+                        avg_cpu_str = str(row.get('Avg CPU %', '0'))
+                        try:
+                            avg_cpu = float(avg_cpu_str)
+                            if avg_cpu > 0.15:
+                                styled_df.at[idx, 'Avg CPU %'] = f'<span class="text-danger font-weight-bold">{avg_cpu_str}</span>'
+                            elif avg_cpu > 0.1:
+                                styled_df.at[idx, 'Avg CPU %'] = f'<span class="text-warning font-weight-bold">{avg_cpu_str}</span>'
+                        except (ValueError, TypeError):
+                            pass
+                
+                elif table_name in ['ovs_db_memory', 'ovs_vswitchd_memory']:
+                    for idx, row in styled_df.iterrows():
+                        avg_mem_str = str(row.get('Avg Memory MB', '0'))
+                        try:
+                            avg_mem = float(avg_mem_str)
+                            threshold = 60 if 'vswitchd' in table_name else 15
+                            if avg_mem > threshold:
+                                styled_df.at[idx, 'Avg Memory MB'] = f'<span class="text-danger font-weight-bold">{avg_mem_str}</span>'
+                            elif avg_mem > threshold * 0.8:
+                                styled_df.at[idx, 'Avg Memory MB'] = f'<span class="text-warning font-weight-bold">{avg_mem_str}</span>'
+                        except (ValueError, TypeError):
+                            pass
+                
+                elif table_name in ['ovs_dp_flows', 'ovs_br_int_flows', 'ovs_br_ex_flows']:
+                    for idx, row in styled_df.iterrows():
+                        avg_flows_str = str(row.get('Avg Flows', '0'))
+                        try:
+                            avg_flows = float(avg_flows_str)
+                            if table_name == 'ovs_br_int_flows' and avg_flows > 4000:
+                                styled_df.at[idx, 'Avg Flows'] = f'<span class="text-warning font-weight-bold">{avg_flows_str}</span>'
+                            elif table_name == 'ovs_dp_flows' and avg_flows > 500:
+                                styled_df.at[idx, 'Avg Flows'] = f'<span class="text-warning font-weight-bold">{avg_flows_str}</span>'
+                        except (ValueError, TypeError):
+                            pass
+                
+                elif table_name == 'ovs_connection_metrics':
+                    for idx, row in styled_df.iterrows():
+                        status = str(row.get('Status', ''))
+                        if status == 'danger':
+                            metric_name = row.get('Metric', '')
+                            styled_df.at[idx, 'Metric'] = f'<span class="text-danger font-weight-bold">{metric_name}</span>'
+                        elif status == 'warning':
+                            metric_name = row.get('Metric', '')
+                            styled_df.at[idx, 'Metric'] = f'<span class="text-warning font-weight-bold">{metric_name}</span>'                
                 # Apply highlighting for critical metrics and top rankings
                 if table_name == 'top_latencies':
                     for idx, row in styled_df.iterrows():
