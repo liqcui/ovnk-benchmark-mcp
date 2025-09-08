@@ -1005,15 +1005,23 @@ class deepDriveELT(EltUtility):
                 'cluster_overview': 1,
                 'node_summary': 2,
                 'nodes_usage_detailed': 3,
-                'nodes_network_usage': 4,  # NEW: Right after nodes usage detailed
+                'nodes_network_usage': 4,
                 'ovn_db_size': 5,
                 'pods_usage_detailed': 6,
                 'containers_usage_detailed': 7,
-                'ovs_cpu_usage': 8,
-                'ovs_flows': 9,
-                'latency_categories': 10,
-                'top_latencies': 11,
-                'alerts': 12,
+                # OVS tables grouped under containers detailed
+                'ovs_vswitchd_cpu': 8,
+                'ovsdb_server_cpu': 9,
+                'ovs_db_memory': 10,
+                'ovs_vswitchd_memory': 11,
+                'ovs_dp_flows': 12,
+                'ovs_br_int_flows': 13,
+                'ovs_br_ex_flows': 14,
+                'ovs_connection_metrics': 15,
+                # Move Alerts under OVS Connection Metrics
+                'alerts': 16,
+                'latency_categories': 17,
+                'top_latencies': 18,
                 'performance_summary': 999
             }
             
