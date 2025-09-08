@@ -24,10 +24,21 @@ from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
 
-class ovnDeepDriveAnalyzer:
-    """Comprehensive OVN-Kubernetes performance analyzer"""
+# Import utility module
+from ovnk_benchmark_performance_utility import (
+    BasePerformanceAnalyzer, PerformanceLevel, AlertLevel, ResourceType,
+    PerformanceThreshold, PerformanceAlert, AnalysisMetadata, ClusterHealth,
+    MemoryConverter, StatisticsCalculator, ThresholdClassifier, 
+    RecommendationEngine, HealthScoreCalculator,
+    create_performance_alert, format_performance_summary_for_json,
+    ReportGenerator
+)
+
+class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
+    """Comprehensive OVN-Kubernetes performance analyzer with enhanced analysis capabilities"""
     
     def __init__(self, prometheus_client: PrometheusBaseQuery, auth: Optional[OpenShiftAuth] = None):
+        super().__init__("OVN_DeepDrive_Analyzer")
         self.prometheus_client = prometheus_client
         self.auth = auth
         
@@ -41,10 +52,10 @@ class ovnDeepDriveAnalyzer:
         self.ovs_collector = OVSUsageCollector(prometheus_client, auth)
         self.node_usage_collector = nodeUsageCollector(prometheus_client, auth)
 
-    def _convert_bytes_to_mb(self, bytes_value: float) -> float:
-        """Convert bytes to MB"""
-        return round(bytes_value / (1024 * 1024), 2)
-    
+    def analyze_metrics_data(self, metrics_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Implement abstract method for comprehensive metrics analysis"""
+        return self.analyze_performance_insights(metrics_data)
+
     def _extract_top_5_from_usage_data(self, usage_data: Dict[str, Any], metric_type: str = "cpu") -> List[Dict[str, Any]]:
         """Extract top 5 entries from usage collector results"""
         if metric_type == "cpu":
@@ -54,106 +65,256 @@ class ovnDeepDriveAnalyzer:
         
         return top_list[:5]
     
-    def _calculate_performance_score(self, metrics_summary: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate overall performance score based on collected metrics"""
-        def _to_float(val: Any, default: float = 0.0) -> float:
+    def _calculate_comprehensive_performance_score(self, metrics_summary: Dict[str, Any]) -> Dict[str, Any]:
+        """Enhanced performance score calculation using utility module components"""
+        
+        # Initialize performance alerts list
+        performance_alerts = []
+        
+        def _safe_float(val: Any, default: float = 0.0) -> float:
             try:
-                if val is None:
-                    return default
-                return float(val)
+                return float(val) if val is not None else default
             except (ValueError, TypeError):
                 return default
 
-        score_factors = {
-            'latency_score': 0,
-            'resource_score': 0,
-            'stability_score': 0,
-            'ovs_score': 0,
+        score_components = {
+            'latency_score': 0.0,
+            'resource_utilization_score': 0.0,
+            'stability_score': 0.0,
+            'ovs_performance_score': 0.0,
+            'node_health_score': 0.0
         }
 
-        # Latency scoring (lower is better)
+        # Latency Analysis using utility thresholds
         latency_data = metrics_summary.get('latency_metrics', {})
         if latency_data and not latency_data.get('error'):
-            avg_latencies: List[float] = []
-            categories = latency_data.get('categories', {}) if isinstance(latency_data, dict) else {}
-            for _category, metrics in categories.items():
-                if not isinstance(metrics, dict):
-                    continue
-                for _metric_name, metric in metrics.items():
-                    stats = metric.get('statistics', {})
-                    avg_val = _to_float(stats.get('avg_value', 0.0), 0.0)
+            latency_values = []
+            categories = latency_data.get('categories', {})
+            
+            for category_name, category_metrics in categories.items():
+                for metric_name, metric_data in category_metrics.items():
+                    avg_val = _safe_float(metric_data.get('avg_value', 0.0))
+                    max_val = _safe_float(metric_data.get('max_value', 0.0))
+                    
                     if avg_val > 0:
-                        avg_latencies.append(avg_val)
+                        latency_values.append(avg_val)
+                    
+                    # Create alerts for high latency
+                    if max_val > 2.0:  # > 2 seconds
+                        severity = 'critical' if max_val > 5.0 else 'high'
+                        alert = create_performance_alert(
+                            severity=severity,
+                            resource_type='sync_duration',
+                            component_name=metric_data.get('component', 'unknown'),
+                            message=f"High {metric_name} latency detected: {max_val:.2f}s",
+                            current_value=max_val,
+                            threshold_value=2.0,
+                            unit='seconds'
+                        )
+                        performance_alerts.append(alert)
 
-            if avg_latencies:
-                avg_latency = statistics.mean(avg_latencies)
-                if avg_latency < 0.1:  # < 100ms
-                    score_factors['latency_score'] = 90
-                elif avg_latency < 0.5:  # < 500ms
-                    score_factors['latency_score'] = 70
-                elif avg_latency < 1.0:  # < 1s
-                    score_factors['latency_score'] = 50
-                else:
-                    score_factors['latency_score'] = 30
+            if latency_values:
+                avg_latency = statistics.mean(latency_values)
+                # Use threshold-based scoring
+                latency_threshold = PerformanceThreshold(
+                    excellent_max=0.1, good_max=0.5, moderate_max=1.0, poor_max=2.0,
+                    unit='seconds', component_type='latency'
+                )
+                level, severity = ThresholdClassifier.classify_performance(avg_latency, latency_threshold)
+                score_components['latency_score'] = max(0, 100 - severity)
 
-        # Resource utilization scoring (OVNKube pods)
-        cpu_usage = metrics_summary.get('ovnkube_pods_cpu', {})
-        if cpu_usage and not cpu_usage.get('error'):
-            node_list = cpu_usage.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
-            control_list = cpu_usage.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
-            combined = (node_list or []) + (control_list or [])
-            if combined:
-                max_cpu = 0.0
-                for entry in combined[:5]:
-                    avg_val = _to_float(entry.get('metrics', {}).get('cpu_usage', {}).get('avg', 0.0), 0.0)
-                    if avg_val > max_cpu:
-                        max_cpu = avg_val
-                if max_cpu < 50:  # < 50%
-                    score_factors['resource_score'] = 90
-                elif max_cpu < 80:  # < 80%
-                    score_factors['resource_score'] = 70
-                else:
-                    score_factors['resource_score'] = 40
+        # Resource Utilization Analysis
+        cpu_usage_data = metrics_summary.get('ovnkube_pods_cpu', {})
+        if cpu_usage_data and not cpu_usage_data.get('error'):
+            cpu_values = []
+            memory_values = []
+            
+            # Analyze node pods
+            node_pods = cpu_usage_data.get('ovnkube_node_pods', {})
+            for usage_type in ['top_5_cpu', 'top_5_memory']:
+                for pod_entry in node_pods.get(usage_type, []):
+                    metrics = pod_entry.get('metrics', {})
+                    for metric_name, metric_data in metrics.items():
+                        if 'cpu' in metric_name.lower() and usage_type == 'top_5_cpu':
+                            cpu_val = _safe_float(metric_data.get('avg', 0.0))
+                            if cpu_val > 0:
+                                cpu_values.append(cpu_val)
+                                
+                                # Create CPU alerts
+                                if cpu_val > 80:
+                                    severity = 'critical' if cpu_val > 95 else 'high'
+                                    alert = create_performance_alert(
+                                        severity=severity,
+                                        resource_type='cpu',
+                                        component_name=pod_entry.get('pod_name', 'unknown'),
+                                        message=f"High CPU usage: {cpu_val:.1f}%",
+                                        current_value=cpu_val,
+                                        threshold_value=80.0,
+                                        unit='%',
+                                        node_name=pod_entry.get('node_name', '')
+                                    )
+                                    performance_alerts.append(alert)
+                        
+                        elif 'memory' in metric_name.lower() and usage_type == 'top_5_memory':
+                            mem_val = _safe_float(metric_data.get('avg', 0.0))
+                            if mem_val > 0:
+                                # Convert to MB if needed
+                                mem_mb = MemoryConverter.to_mb(mem_val, 'MB')
+                                memory_values.append(mem_mb)
+                                
+                                # Create memory alerts
+                                if mem_mb > 2048:  # > 2GB
+                                    severity = 'critical' if mem_mb > 4096 else 'high'
+                                    alert = create_performance_alert(
+                                        severity=severity,
+                                        resource_type='memory',
+                                        component_name=pod_entry.get('pod_name', 'unknown'),
+                                        message=f"High memory usage: {mem_mb:.0f} MB",
+                                        current_value=mem_mb,
+                                        threshold_value=2048.0,
+                                        unit='MB',
+                                        node_name=pod_entry.get('node_name', '')
+                                    )
+                                    performance_alerts.append(alert)
 
-        # Stability scoring (based on alerts)
+            # Calculate resource scores using thresholds
+            if cpu_values:
+                max_cpu = max(cpu_values)
+                cpu_threshold = ThresholdClassifier.get_default_cpu_threshold()
+                level, severity = ThresholdClassifier.classify_performance(max_cpu, cpu_threshold)
+                score_components['resource_utilization_score'] = max(0, 100 - severity)
+
+        # Stability Analysis (Alerts)
         basic_info = metrics_summary.get('basic_info', {})
-        if basic_info:
-            alerts_summary = basic_info.get('alerts_summary', {})
-            alert_count = len(alerts_summary.get('top_alerts', []) or [])
+        if basic_info and not basic_info.get('error'):
+            alerts_data = basic_info.get('alerts_summary', {})
+            alert_count = len(alerts_data.get('top_alerts', []) or [])
+            
             if alert_count == 0:
-                score_factors['stability_score'] = 100
+                score_components['stability_score'] = 100
             elif alert_count < 3:
-                score_factors['stability_score'] = 80
+                score_components['stability_score'] = 85
             elif alert_count < 6:
-                score_factors['stability_score'] = 60
+                score_components['stability_score'] = 70
+            elif alert_count < 10:
+                score_components['stability_score'] = 50
             else:
-                score_factors['stability_score'] = 40
+                score_components['stability_score'] = 30
 
-        # OVS performance scoring
+        # OVS Performance Analysis
         ovs_data = metrics_summary.get('ovs_metrics', {})
         if ovs_data and not ovs_data.get('error'):
-            cpu_data = ovs_data.get('cpu_usage', {})
-            if cpu_data and not cpu_data.get('error'):
-                ovs_top = cpu_data.get('ovs_vswitchd_top5', [])
-                if ovs_top:
-                    max_ovs_cpu = max([_to_float(entry.get('max', 0.0), 0.0) for entry in ovs_top[:3]] or [0.0])
-                    if max_ovs_cpu < 30:  # < 30%
-                        score_factors['ovs_score'] = 90
-                    elif max_ovs_cpu < 60:  # < 60%
-                        score_factors['ovs_score'] = 70
+            ovs_cpu_scores = []
+            cpu_usage = ovs_data.get('cpu_usage', {})
+            
+            if cpu_usage and not cpu_usage.get('error'):
+                for component in ['ovs_vswitchd_top5', 'ovsdb_server_top5']:
+                    top_entries = cpu_usage.get(component, [])
+                    for entry in top_entries:
+                        max_val = _safe_float(entry.get('max', 0.0))
+                        if max_val > 0:
+                            ovs_cpu_scores.append(max_val)
+
+            if ovs_cpu_scores:
+                max_ovs_cpu = max(ovs_cpu_scores)
+                if max_ovs_cpu < 30:
+                    score_components['ovs_performance_score'] = 95
+                elif max_ovs_cpu < 50:
+                    score_components['ovs_performance_score'] = 80
+                elif max_ovs_cpu < 70:
+                    score_components['ovs_performance_score'] = 60
+                else:
+                    score_components['ovs_performance_score'] = 40
+
+        # Node Health Analysis
+        nodes_data = metrics_summary.get('nodes_usage', {})
+        if nodes_data and not nodes_data.get('error'):
+            node_health_scores = []
+            
+            # Analyze different node types
+            for node_type in ['controlplane_nodes', 'infra_nodes', 'top5_worker_nodes']:
+                node_group = nodes_data.get(node_type, {})
+                if node_group:
+                    summary = node_group.get('summary', {})
+                    max_cpu = _safe_float(summary.get('cpu_usage', {}).get('max', 0.0))
+                    max_mem_mb = _safe_float(summary.get('memory_usage', {}).get('max', 0.0))
+                    
+                    # Score based on resource utilization
+                    if max_cpu < 50 and max_mem_mb < 4096:
+                        node_health_scores.append(95)
+                    elif max_cpu < 70 and max_mem_mb < 8192:
+                        node_health_scores.append(80)
+                    elif max_cpu < 85:
+                        node_health_scores.append(60)
                     else:
-                        score_factors['ovs_score'] = 50
+                        node_health_scores.append(40)
+
+            if node_health_scores:
+                score_components['node_health_score'] = statistics.mean(node_health_scores)
+
+        # Calculate weighted overall score
+        weights = {
+            'latency_score': 0.25,
+            'resource_utilization_score': 0.25,
+            'stability_score': 0.20,
+            'ovs_performance_score': 0.15,
+            'node_health_score': 0.15
+        }
         
-        # Calculate overall score (weighted average)
-        weights = {'latency_score': 0.3, 'resource_score': 0.3, 'stability_score': 0.2, 'ovs_score': 0.2}
-        overall_score = sum(score_factors[key] * weights[key] for key in weights)
+        overall_score = sum(score_components[key] * weights[key] for key in weights)
+        
+        # Calculate cluster health using utility function
+        cluster_health = self.calculate_cluster_health_score(
+            performance_alerts, 
+            self._count_total_components(metrics_summary)
+        )
         
         return {
-            'overall_score': round(overall_score, 1),
-            'component_scores': score_factors,
-            'performance_grade': 'A' if overall_score >= 80 else 'B' if overall_score >= 60 else 'C' if overall_score >= 40 else 'D'
+            'overall_score': round(overall_score, 2),
+            'component_scores': score_components,
+            'performance_grade': self._get_performance_grade(overall_score),
+            'cluster_health': cluster_health,
+            'performance_alerts': [alert.__dict__ for alert in performance_alerts],
+            'recommendations': RecommendationEngine.generate_cluster_recommendations(
+                cluster_health.critical_issues_count,
+                cluster_health.warning_issues_count,
+                self._count_total_components(metrics_summary),
+                "OVN-Kubernetes"
+            )
         }
-    
+
+    def _get_performance_grade(self, score: float) -> str:
+        """Convert numeric score to letter grade"""
+        if score >= 90: return 'A+'
+        elif score >= 85: return 'A'
+        elif score >= 80: return 'B+'
+        elif score >= 75: return 'B'
+        elif score >= 70: return 'C+'
+        elif score >= 65: return 'C'
+        elif score >= 60: return 'D+'
+        elif score >= 55: return 'D'
+        else: return 'F'
+
+    def _count_total_components(self, metrics_summary: Dict[str, Any]) -> int:
+        """Count total components for health score calculation"""
+        total = 0
+        
+        # Count pods
+        ovnkube_data = metrics_summary.get('ovnkube_pods_cpu', {})
+        if ovnkube_data and not ovnkube_data.get('error'):
+            for pod_group in ['ovnkube_node_pods', 'ovnkube_control_plane_pods']:
+                pods = ovnkube_data.get(pod_group, {})
+                total += len(pods.get('top_5_cpu', [])) + len(pods.get('top_5_memory', []))
+        
+        # Count nodes
+        nodes_data = metrics_summary.get('nodes_usage', {})
+        if nodes_data and not nodes_data.get('error'):
+            for node_type in ['controlplane_nodes', 'infra_nodes', 'top5_worker_nodes']:
+                node_group = nodes_data.get(node_type, {})
+                total += node_group.get('count', 0)
+        
+        return max(total, 1)  # Avoid division by zero
+
     async def collect_prometheus_basic_info(self) -> Dict[str, Any]:
         """Collect basic cluster information (requirement 2.1)"""
         try:
@@ -176,26 +337,29 @@ class ovnDeepDriveAnalyzer:
                         'phases': pod_status.get('phases', {})
                     }
             
-            # Extract database sizes
+            # Extract database sizes using utility converter
             if 'metrics' in basic_summary and 'ovn_database' in basic_summary['metrics']:
                 db_info = basic_summary['metrics']['ovn_database']
                 if not db_info.get('error'):
                     for db_name, db_data in db_info.items():
                         if isinstance(db_data, dict) and 'max_value' in db_data:
+                            size_bytes = db_data['max_value'] or 0
+                            formatted_size, unit = MemoryConverter.format_memory(size_bytes, 'auto')
+                            
                             result['database_sizes'][db_name] = {
-                                'size_bytes': db_data['max_value'],
-                                'size_mb': self._convert_bytes_to_mb(db_data['max_value']) if db_data['max_value'] else 0,
-                                'unit': 'MB'
+                                'size_bytes': size_bytes,
+                                'size_formatted': round(formatted_size, 2),
+                                'unit': unit
                             }
             
-            # Extract alerts summary - FIXED to match the actual structure
+            # Extract alerts summary
             if 'metrics' in basic_summary and 'alerts' in basic_summary['metrics']:
                 alerts_data = basic_summary['metrics']['alerts']
                 if not alerts_data.get('error'):
                     result['alerts_summary'] = {
                         'total_alert_types': alerts_data.get('total_alert_types', 0),
-                        'top_alerts': alerts_data.get('alerts', [])[:5],  # Changed from 'top_alerts' to 'alerts'
-                        'alertname_statistics': alerts_data.get('alertname_statistics', {})  # Add separated avg/max stats
+                        'top_alerts': alerts_data.get('alerts', [])[:5],
+                        'alertname_statistics': alerts_data.get('alertname_statistics', {})
                     }
             
             # Extract pod distribution
@@ -204,7 +368,7 @@ class ovnDeepDriveAnalyzer:
                 if not pod_dist.get('error'):
                     result['pod_distribution'] = {
                         'total_nodes': pod_dist.get('total_nodes', 0),
-                        'top_nodes': pod_dist.get('top_nodes', [])[:5]  # Top 5
+                        'top_nodes': pod_dist.get('top_nodes', [])[:5]
                     }
             
             return result
@@ -252,12 +416,10 @@ class ovnDeepDriveAnalyzer:
             
         except Exception as e:
             return {'error': f'Failed to collect OVNKube pods usage: {str(e)}'}
- 
+
     async def collect_ovn_containers_usage(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """Collect top 5 OVN containers CPU/RAM usage (requirement 2.3)"""
         try:
-            # Use robust regex patterns to match container name variants across versions
-            # Examples observed: sb-ovsdb|sbdb|ovsdb-server-sb, nb-ovsdb|nbdb|ovsdb-server-nb
             container_patterns = {
                 'sbdb': 'sbdb',
                 'nbdb': 'nbdb', 
@@ -274,7 +436,6 @@ class ovnDeepDriveAnalyzer:
             
             for container_name, pattern in container_patterns.items():
                 try:
-                    # Query by container name pattern within OVN namespace; group by container automatically
                     if duration:
                         usage_data = await self.pods_usage_collector.collect_duration_usage(
                             duration=duration,
@@ -290,7 +451,6 @@ class ovnDeepDriveAnalyzer:
                     top_cpu = self._extract_top_5_from_usage_data(usage_data, 'cpu')
                     top_mem = self._extract_top_5_from_usage_data(usage_data, 'memory')
 
-                    # Fallback: if empty, try instant window as a quick sample
                     if not top_cpu and not top_mem and duration:
                         instant_usage = await self.pods_usage_collector.collect_instant_usage(
                             container_pattern=pattern,
@@ -361,22 +521,40 @@ class ovnDeepDriveAnalyzer:
             return {'error': f'Failed to collect OVS metrics: {str(e)}'}
     
     async def collect_latency_metrics_summary(self, duration: Optional[str] = None) -> Dict[str, Any]:
-        """Collect top 5 latency metrics (requirement 2.5)"""
+        """
+        Collect comprehensive latency metrics including top 20 controller sync duration metrics
+        Merged functionality from collect_controller_sync_duration_top20
+        """
         try:
-            # Always use a duration window (default 5m) to avoid instant-query zeros
+            # Use duration window to avoid instant-query zeros
             latency_window = duration or "5m"
+            
+            # Collect comprehensive latency data
             latency_data = await self.latency_collector.collect_comprehensive_enhanced_metrics(
                 duration=latency_window,
                 top_n_results=5
             )
             
+            # Collect controller sync duration top 20 (merged functionality)
+            sync_duration_data = await self.latency_collector.collect_controller_sync_duration(
+                time=None, 
+                duration=latency_window, 
+                end_time=None
+            )
+            
             result = {
                 'collection_timestamp': datetime.now(timezone.utc).isoformat(),
                 'query_type': 'duration' if duration else 'instant',
-                'categories': {}
+                'timezone': 'UTC',
+                'categories': {},
+                'controller_sync_duration_top20': {
+                    'metric_name': 'ovnkube_controller_sync_duration_seconds',
+                    'data': [],
+                    'summary': {}
+                }
             }
             
-            # Process each category and extract top 5
+            # Process standard latency categories
             categories = [
                 'ready_duration_metrics', 'sync_duration_metrics', 
                 'percentile_latency_metrics', 'pod_latency_metrics',
@@ -392,15 +570,85 @@ class ovnDeepDriveAnalyzer:
                     for metric_name, metric_result in category_data.items():
                         if isinstance(metric_result, dict) and 'statistics' in metric_result:
                             stats = metric_result['statistics']
+                            # Use StatisticsCalculator for additional stats if needed
+                            if stats.get('values'):
+                                enhanced_stats = StatisticsCalculator.calculate_basic_stats(stats['values'])
+                                stats.update(enhanced_stats)
+                            
                             result['categories'][category.replace('_metrics', '')][metric_name] = {
                                 'metric_name': metric_result.get('metric_name', metric_name),
                                 'component': metric_result.get('component', 'unknown'),
                                 'unit': metric_result.get('unit', 'seconds'),
-                                'count': stats.get('count', 0),
-                                'max_value': stats.get('max_value', 0),
-                                'avg_value': stats.get('avg_value', 0),
+                                'statistics': stats,
                                 'top_5': stats.get('top_5', [])
                             }
+            
+            # Process controller sync duration top 20 (merged from collect_controller_sync_duration_top20)
+            if sync_duration_data and not sync_duration_data.get('error'):
+                statistics = sync_duration_data.get('statistics', {})
+                
+                if statistics and statistics.get('count', 0) > 0:
+                    # Get top entries - prioritize top_20, fallback to top_5
+                    top_entries = statistics.get('top_20', statistics.get('top_5', []))
+                    
+                    # Process and format the top 20 entries
+                    processed_entries = []
+                    for idx, entry in enumerate(top_entries[:20]):  # Ensure max 20 entries
+                        processed_entry = {
+                            'rank': idx + 1,
+                            'pod_name': entry.get('pod_name', 'unknown'),
+                            'node_name': entry.get('node_name', 'unknown'),
+                            'resource_name': entry.get('resource_name', 'all watchers'),
+                            'value_seconds': entry.get('value', 0),
+                            'readable_value': entry.get('readable_value', {}),
+                            'avg_value': entry.get('value', 0),
+                            'max_value': entry.get('value', 0)
+                        }
+                        processed_entries.append(processed_entry)
+                    
+                    result['controller_sync_duration_top20']['data'] = processed_entries
+                    
+                    # Enhanced summary using StatisticsCalculator
+                    values = [entry.get('value', 0) for entry in top_entries if entry.get('value', 0) > 0]
+                    if values:
+                        enhanced_summary = StatisticsCalculator.calculate_basic_stats(values)
+                        percentiles = StatisticsCalculator.calculate_percentiles(values, [50, 75, 90, 95, 99])
+                        enhanced_summary.update(percentiles)
+                    else:
+                        enhanced_summary = {}
+                    
+                    result['controller_sync_duration_top20']['summary'] = {
+                        'total_count': statistics.get('count', 0),
+                        'returned_count': len(processed_entries),
+                        'max_value_seconds': statistics.get('max_value', 0),
+                        'avg_value_seconds': statistics.get('avg_value', 0),
+                        'enhanced_statistics': enhanced_summary,
+                        'readable_max': statistics.get('readable_max', {}),
+                        'readable_avg': statistics.get('readable_avg', {}),
+                        'component': sync_duration_data.get('component', 'controller'),
+                        'unit': sync_duration_data.get('unit', 'seconds')
+                    }
+                else:
+                    result['controller_sync_duration_top20'] = {
+                        'metric_name': 'ovnkube_controller_sync_duration_seconds',
+                        'data': [],
+                        'summary': {'count': 0, 'message': 'No data available'},
+                        'error': 'No sync duration data found'
+                    }
+            else:
+                result['controller_sync_duration_top20'] = {
+                    'metric_name': 'ovnkube_controller_sync_duration_seconds',
+                    'error': sync_duration_data.get('error', 'Failed to collect sync duration data')
+                }
+            
+            # Add query parameters if duration was specified
+            if duration:
+                start_time, end_time_actual = self.prometheus_client.get_time_range_from_duration(duration, None)
+                result['query_parameters'] = {
+                    'duration': duration, 
+                    'start_time': start_time, 
+                    'end_time': end_time_actual
+                }
             
             return result
             
@@ -410,7 +658,6 @@ class ovnDeepDriveAnalyzer:
     async def collect_nodes_usage_summary(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """Collect node usage data for master, infra, and top 5 worker nodes (requirement 2.1)"""
         try:
-            # Collect node usage data with specified duration
             node_usage_data = await self.node_usage_collector.collect_usage_data(
                 duration=duration or "1h", 
                 end_time=None, 
@@ -528,7 +775,7 @@ class ovnDeepDriveAnalyzer:
             return {'error': f'Failed to collect node usage data: {str(e)}'}
 
     def analyze_performance_insights(self, metrics_summary: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze collected metrics and provide performance insights (requirement 2.6)"""
+        """Enhanced performance analysis using utility module components"""
         insights = {
             'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
             'performance_summary': {},
@@ -536,43 +783,64 @@ class ovnDeepDriveAnalyzer:
             'recommendations': [],
             'resource_hotspots': {},
             'latency_analysis': {},
-            'node_analysis': {}  # New addition
+            'node_analysis': {},
+            'controller_sync_analysis': {}  # New section for controller sync analysis
         }
         
-        # Performance score calculation (existing code unchanged)
-        performance_score = self._calculate_performance_score(metrics_summary)
+        # Use the enhanced performance score calculation
+        performance_score = self._calculate_comprehensive_performance_score(metrics_summary)
         insights['performance_summary'] = performance_score
         
-        # Node analysis (new addition)
+        # Enhanced Node analysis with utility functions
         nodes_data = metrics_summary.get('nodes_usage', {})
         if nodes_data and not nodes_data.get('error'):
             node_insights = {
                 'high_cpu_nodes': [],
                 'high_memory_nodes': [],
-                'node_performance_summary': {}
+                'node_performance_summary': {},
+                'resource_efficiency': {}
             }
             
-            # Analyze controlplane nodes
+            # Analyze controlplane nodes with efficiency calculation
             controlplane_summary = nodes_data.get('controlplane_nodes', {}).get('summary', {})
             if controlplane_summary:
                 cpu_max = controlplane_summary.get('cpu_usage', {}).get('max', 0)
                 mem_max = controlplane_summary.get('memory_usage', {}).get('max', 0)
+                
+                # Use utility function for efficiency calculation
+                efficiency = calculate_node_resource_efficiency(
+                    cpu_usage=cpu_max,
+                    memory_usage_mb=MemoryConverter.to_mb(mem_max, 'MB'),
+                    estimated_cpu_capacity=100.0,
+                    estimated_memory_capacity_mb=16384  # 16GB default
+                )
+                
                 node_insights['node_performance_summary']['controlplane'] = {
                     'max_cpu_usage': cpu_max,
                     'max_memory_usage_mb': mem_max,
-                    'status': 'high' if cpu_max > 70 else 'normal'
+                    'status': 'high' if cpu_max > 70 else 'normal',
+                    'efficiency': efficiency
                 }
+                node_insights['resource_efficiency']['controlplane'] = efficiency
             
             # Analyze infra nodes
             infra_summary = nodes_data.get('infra_nodes', {}).get('summary', {})
             if infra_summary:
                 cpu_max = infra_summary.get('cpu_usage', {}).get('max', 0)
                 mem_max = infra_summary.get('memory_usage', {}).get('max', 0)
+                
+                efficiency = calculate_node_resource_efficiency(
+                    cpu_usage=cpu_max,
+                    memory_usage_mb=MemoryConverter.to_mb(mem_max, 'MB')
+                )
+                
                 node_insights['node_performance_summary']['infra'] = {
                     'max_cpu_usage': cpu_max,
                     'max_memory_usage_mb': mem_max,
-                    'status': 'high' if cpu_max > 70 else 'normal'
+                    'status': 'high' if cpu_max > 70 else 'normal',
+                    'efficiency': efficiency
                 }
+                node_insights['resource_efficiency']['infra'] = efficiency
             
             # Analyze top 5 worker nodes
             top5_workers = nodes_data.get('top5_worker_nodes', {}).get('individual_nodes', [])
@@ -596,84 +864,215 @@ class ovnDeepDriveAnalyzer:
             
             insights['node_analysis'] = node_insights
         
-        # Resource hotspots analysis (existing code unchanged)
+        # Enhanced Controller Sync Analysis
+        latency_data = metrics_summary.get('latency_metrics', {})
+        if latency_data and not latency_data.get('error'):
+            controller_sync_data = latency_data.get('controller_sync_duration_top20', {})
+            if controller_sync_data and not controller_sync_data.get('error'):
+                sync_analysis = {
+                    'total_entries': controller_sync_data.get('summary', {}).get('total_count', 0),
+                    'high_latency_controllers': [],
+                    'performance_classification': {},
+                    'statistics': controller_sync_data.get('summary', {}).get('enhanced_statistics', {})
+                }
+                
+                # Analyze top controllers for high latency
+                top_controllers = controller_sync_data.get('data', [])
+                sync_threshold = PerformanceThreshold(
+                    excellent_max=0.1, good_max=0.5, moderate_max=1.0, poor_max=2.0,
+                    unit='seconds', component_type='controller_sync'
+                )
+                
+                for controller in top_controllers[:10]:  # Analyze top 10
+                    sync_time = controller.get('value_seconds', 0)
+                    level, severity = ThresholdClassifier.classify_performance(sync_time, sync_threshold)
+                    
+                    if level in [PerformanceLevel.POOR, PerformanceLevel.CRITICAL]:
+                        sync_analysis['high_latency_controllers'].append({
+                            'pod_name': controller.get('pod_name'),
+                            'node_name': controller.get('node_name'),
+                            'sync_time_seconds': sync_time,
+                            'performance_level': level.value,
+                            'severity_score': severity,
+                            'rank': controller.get('rank')
+                        })
+                
+                # Performance classification summary
+                sync_analysis['performance_classification'] = {
+                    'excellent_count': sum(1 for c in top_controllers if c.get('value_seconds', 0) <= 0.1),
+                    'good_count': sum(1 for c in top_controllers if 0.1 < c.get('value_seconds', 0) <= 0.5),
+                    'moderate_count': sum(1 for c in top_controllers if 0.5 < c.get('value_seconds', 0) <= 1.0),
+                    'poor_count': sum(1 for c in top_controllers if 1.0 < c.get('value_seconds', 0) <= 2.0),
+                    'critical_count': sum(1 for c in top_controllers if c.get('value_seconds', 0) > 2.0)
+                }
+                
+                insights['controller_sync_analysis'] = sync_analysis
+        
+        # Enhanced Resource hotspots analysis
         ovnkube_pods = metrics_summary.get('ovnkube_pods_cpu', {})
         if ovnkube_pods and not ovnkube_pods.get('error'):
-            # Find high CPU usage pods
-            node_cpu = ovnkube_pods.get('ovnkube_node_pods', {}).get('top_5_cpu', [])
-            control_cpu = ovnkube_pods.get('ovnkube_control_plane_pods', {}).get('top_5_cpu', [])
-            
             high_cpu_pods = []
-            for pod_list in [node_cpu, control_cpu]:
-                for pod in pod_list:
+            high_memory_pods = []
+            
+            # Analyze both node and control plane pods
+            for pod_type, pod_data in [('node', ovnkube_pods.get('ovnkube_node_pods', {})),
+                                     ('control_plane', ovnkube_pods.get('ovnkube_control_plane_pods', {}))]:
+                
+                # CPU analysis
+                for pod in pod_data.get('top_5_cpu', []):
                     cpu_metrics = pod.get('metrics', {})
                     for metric_name, metric_data in cpu_metrics.items():
                         if 'cpu' in metric_name.lower():
                             avg_cpu = metric_data.get('avg', 0)
-                            if avg_cpu > 50:  # > 50% CPU
+                            cpu_threshold = ThresholdClassifier.get_default_cpu_threshold()
+                            level, severity = ThresholdClassifier.classify_performance(avg_cpu, cpu_threshold)
+                            
+                            if level in [PerformanceLevel.POOR, PerformanceLevel.CRITICAL]:
                                 high_cpu_pods.append({
                                     'pod_name': pod.get('pod_name'),
                                     'node_name': pod.get('node_name'),
-                                    'cpu_usage': avg_cpu
+                                    'cpu_usage': avg_cpu,
+                                    'pod_type': pod_type,
+                                    'performance_level': level.value,
+                                    'severity_score': severity
+                                })
+                
+                # Memory analysis
+                for pod in pod_data.get('top_5_memory', []):
+                    mem_metrics = pod.get('metrics', {})
+                    for metric_name, metric_data in mem_metrics.items():
+                        if 'memory' in metric_name.lower():
+                            avg_mem = metric_data.get('avg', 0)
+                            mem_mb = MemoryConverter.to_mb(avg_mem, 'MB')
+                            mem_threshold = ThresholdClassifier.get_default_memory_threshold()
+                            level, severity = ThresholdClassifier.classify_performance(mem_mb, mem_threshold)
+                            
+                            if level in [PerformanceLevel.POOR, PerformanceLevel.CRITICAL]:
+                                high_memory_pods.append({
+                                    'pod_name': pod.get('pod_name'),
+                                    'node_name': pod.get('node_name'),
+                                    'memory_usage_mb': mem_mb,
+                                    'pod_type': pod_type,
+                                    'performance_level': level.value,
+                                    'severity_score': severity
                                 })
             
-            insights['resource_hotspots']['high_cpu_pods'] = high_cpu_pods[:5]
+            insights['resource_hotspots'] = {
+                'high_cpu_pods': sorted(high_cpu_pods, key=lambda x: x['severity_score'], reverse=True)[:5],
+                'high_memory_pods': sorted(high_memory_pods, key=lambda x: x['severity_score'], reverse=True)[:5]
+            }
         
-        # Latency analysis (existing code unchanged)
-        latency_data = metrics_summary.get('latency_metrics', {})
+        # Enhanced Latency analysis
         if latency_data and not latency_data.get('error'):
             high_latency_metrics = []
             for category, metrics in latency_data.get('categories', {}).items():
                 for metric_name, metric_info in metrics.items():
-                    max_val = metric_info.get('max_value', 0)
-                    if max_val > 1.0:  # > 1 second
+                    stats = metric_info.get('statistics', {})
+                    max_val = stats.get('max_value', 0)
+                    avg_val = stats.get('avg_value', 0)
+                    
+                    # Use threshold classification
+                    latency_threshold = PerformanceThreshold(
+                        excellent_max=0.1, good_max=0.5, moderate_max=1.0, poor_max=2.0,
+                        unit='seconds', component_type='latency'
+                    )
+                    level, severity = ThresholdClassifier.classify_performance(max_val, latency_threshold)
+                    
+                    if level in [PerformanceLevel.MODERATE, PerformanceLevel.POOR, PerformanceLevel.CRITICAL]:
                         high_latency_metrics.append({
                             'category': category,
                             'metric': metric_name,
                             'max_latency': max_val,
-                            'component': metric_info.get('component')
+                            'avg_latency': avg_val,
+                            'component': metric_info.get('component'),
+                            'performance_level': level.value,
+                            'severity_score': severity
                         })
             
             insights['latency_analysis']['high_latency_metrics'] = sorted(
                 high_latency_metrics, 
-                key=lambda x: x['max_latency'], 
+                key=lambda x: x['severity_score'], 
                 reverse=True
-            )[:5]
+            )[:10]  # Top 10 problematic metrics
         
-        # Generate key findings (existing code unchanged)
-        if performance_score['overall_score'] >= 80:
-            insights['key_findings'].append("Overall cluster performance is excellent")
-        elif performance_score['overall_score'] >= 60:
-            insights['key_findings'].append("Cluster performance is good with room for optimization")
+        # Generate enhanced key findings
+        findings = []
+        perf_summary = performance_score
+        
+        if perf_summary['overall_score'] >= 90:
+            findings.append("Excellent overall cluster performance with minimal issues")
+        elif perf_summary['overall_score'] >= 75:
+            findings.append("Good cluster performance with some optimization opportunities")
+        elif perf_summary['overall_score'] >= 60:
+            findings.append("Moderate cluster performance requiring attention")
         else:
-            insights['key_findings'].append("Cluster performance needs attention")
+            findings.append("Poor cluster performance requiring immediate attention")
         
-        # Add node-specific findings
+        # Component-specific findings
+        for component, score in perf_summary['component_scores'].items():
+            component_name = component.replace('_score', '').replace('_', ' ').title()
+            if score < 60:
+                findings.append(f"{component_name} performance is concerning (Score: {score:.1f})")
+        
+        # Node-specific findings
         if insights.get('node_analysis', {}).get('high_cpu_nodes'):
-            insights['key_findings'].append(f"Found {len(insights['node_analysis']['high_cpu_nodes'])} worker nodes with high CPU usage")
+            findings.append(f"Found {len(insights['node_analysis']['high_cpu_nodes'])} worker nodes with high CPU usage")
         
-        # Generate recommendations based on scores (existing code unchanged)
-        if performance_score['component_scores']['latency_score'] < 60:
-            insights['recommendations'].append("Consider investigating network latency and optimizing OVN configuration")
+        # Controller sync findings
+        if insights.get('controller_sync_analysis', {}).get('high_latency_controllers'):
+            count = len(insights['controller_sync_analysis']['high_latency_controllers'])
+            findings.append(f"Detected {count} controllers with concerning sync latency")
         
-        if performance_score['component_scores']['resource_score'] < 60:
-            insights['recommendations'].append("CPU/Memory usage is high - consider resource limits or scaling")
+        insights['key_findings'] = findings
         
-        if performance_score['component_scores']['stability_score'] < 60:
-            insights['recommendations'].append("Multiple alerts detected - investigate cluster stability")
+        # Generate enhanced recommendations using utility functions
+        recommendations = []
         
-        # Add node-specific recommendations
-        if insights.get('node_analysis', {}).get('node_performance_summary', {}).get('controlplane', {}).get('status') == 'high':
-            insights['recommendations'].append("Control plane nodes showing high resource usage - consider scaling or optimization")
+        # Use RecommendationEngine from utility module
+        cluster_health = perf_summary.get('cluster_health', {})
+        if cluster_health:
+            cluster_recs = RecommendationEngine.generate_cluster_recommendations(
+                cluster_health.critical_issues_count,
+                cluster_health.warning_issues_count,
+                self._count_total_components(metrics_summary),
+                "OVN-Kubernetes"
+            )
+            recommendations.extend(cluster_recs)
+        
+        # Component-specific recommendations
+        if perf_summary['component_scores'].get('latency_score', 0) < 70:
+            recommendations.append("Investigate network latency and optimize OVN controller configuration")
+            recommendations.append("Consider tuning ovnkube-controller sync intervals")
+        
+        if perf_summary['component_scores'].get('resource_utilization_score', 0) < 70:
+            recommendations.append("Review and optimize resource limits for OVNKube pods")
+            recommendations.append("Consider horizontal scaling for high-utilization components")
+        
+        if perf_summary['component_scores'].get('node_health_score', 0) < 70:
+            recommendations.append("Investigate node resource constraints and consider cluster capacity expansion")
+        
+        # Controller sync specific recommendations
+        if insights.get('controller_sync_analysis', {}).get('high_latency_controllers'):
+            recommendations.append("Optimize controller sync performance - consider resource limits and node placement")
+            recommendations.append("Review controller configuration and potential resource contention")
+        
+        insights['recommendations'] = recommendations
         
         return insights
 
     async def run_comprehensive_analysis(self, duration: Optional[str] = None) -> Dict[str, Any]:
-        """Run complete deep drive analysis"""
+        """Run complete deep drive analysis with enhanced utility integration"""
         print(f"Running comprehensive OVN analysis {'with duration: ' + duration if duration else 'instant'}...")
         
+        # Generate metadata using utility function
+        metadata = self.generate_metadata(
+            collection_type='comprehensive_deep_drive',
+            total_items=0,  # Will be updated after collection
+            duration=duration
+        )
+        
         analysis_result = {
-            'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
+            'analysis_metadata': metadata.__dict__,
             'analysis_type': 'comprehensive_deep_drive',
             'query_duration': duration or 'instant',
             'timezone': 'UTC'
@@ -686,8 +1085,8 @@ class ovnDeepDriveAnalyzer:
                 self.collect_ovnkube_pods_usage(duration),
                 self.collect_ovn_containers_usage(duration), 
                 self.collect_ovs_metrics_summary(duration),
-                self.collect_latency_metrics_summary(duration),
-                self.collect_nodes_usage_summary(duration)  # New addition
+                self.collect_latency_metrics_summary(duration),  # Now includes controller sync duration top 20
+                self.collect_nodes_usage_summary(duration)
             ]
             
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -698,12 +1097,19 @@ class ovnDeepDriveAnalyzer:
                 'ovnkube_pods_cpu': results[1] if not isinstance(results[1], Exception) else {'error': str(results[1])},
                 'ovn_containers': results[2] if not isinstance(results[2], Exception) else {'error': str(results[2])},
                 'ovs_metrics': results[3] if not isinstance(results[3], Exception) else {'error': str(results[3])},
-                'latency_metrics': results[4] if not isinstance(results[4], Exception) else {'error': str(results[4])},
-                 'nodes_usage': results[5] if not isinstance(results[5], Exception) else {'error': str(results[5])}  # New addition
+                'latency_metrics': results[4] if not isinstance(results[4], Exception) else {'error': str(results[4])},  # Contains controller sync duration
+                'nodes_usage': results[5] if not isinstance(results[5], Exception) else {'error': str(results[5])}
             })
             
-            # Perform analysis
+            # Update metadata with actual component count
+            metadata.total_items_analyzed = self._count_total_components(analysis_result)
+            analysis_result['analysis_metadata'] = metadata.__dict__
+            
+            # Perform enhanced analysis
             analysis_result['performance_analysis'] = self.analyze_performance_insights(analysis_result)
+            
+            # Generate formatted summary for JSON output
+            analysis_result['formatted_summary'] = format_performance_summary_for_json(analysis_result)
             
             print("Comprehensive OVN analysis completed successfully")
             return analysis_result
@@ -713,104 +1119,20 @@ class ovnDeepDriveAnalyzer:
             print(f"Error in comprehensive analysis: {e}")
             return analysis_result
 
-    async def collect_controller_sync_duration_top20(self, duration: Optional[str] = None, end_time: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Collect top 20 ovnkube_controller_sync_duration_seconds metrics with pod/node resolution
-        Uses existing OVNLatencyCollector for data collection
-        """
-        try:
-            # Use the existing latency collector to get controller sync duration data
-            sync_duration_data = await self.latency_collector.collect_controller_sync_duration(
-                time=None, 
-                duration=duration or "5m", 
-                end_time=end_time
-            )
-            
-            result = {
-                'collection_timestamp': datetime.now(timezone.utc).isoformat(),
-                'query_type': 'duration' if duration else 'instant',
-                'metric_name': 'ovnkube_controller_sync_duration_seconds',
-                'timezone': 'UTC',
-                'top_20_metrics': [],
-                'summary': {}
-            }
-            
-            # Check if we got valid data
-            if 'error' in sync_duration_data:
-                return {'error': sync_duration_data['error']}
-            
-            # Extract statistics from the collector result
-            statistics = sync_duration_data.get('statistics', {})
-            if not statistics or statistics.get('count', 0) == 0:
-                return {
-                    'collection_timestamp': datetime.now(timezone.utc).isoformat(),
-                    'metric_name': 'ovnkube_controller_sync_duration_seconds',
-                    'timezone': 'UTC',
-                    'top_20_metrics': [],
-                    'summary': {'count': 0, 'message': 'No data available'}
-                }
-            
-            # Get top entries - the collector already returns top_20 for sync duration metrics
-            top_entries = statistics.get('top_20', statistics.get('top_5', []))
-            
-            # Process and format the top 20 entries
-            processed_entries = []
-            for idx, entry in enumerate(top_entries[:20]):  # Ensure max 20 entries
-                processed_entry = {
-                    'rank': idx + 1,
-                    'pod_name': entry.get('pod_name', 'unknown'),
-                    'node_name': entry.get('node_name', 'unknown'),
-                    'resource_name': entry.get('resource_name', 'all watchers'),
-                    'value_seconds': entry.get('value', 0),
-                    'readable_value': entry.get('readable_value', {}),
-                    'avg_value': entry.get('value', 0),  # For sync duration, value is typically avg
-                    'max_value': entry.get('value', 0)   # Same as avg for most sync metrics
-                }
-                processed_entries.append(processed_entry)
-            
-            result['top_20_metrics'] = processed_entries
-            
-            # Add summary information
-            result['summary'] = {
-                'total_count': statistics.get('count', 0),
-                'returned_count': len(processed_entries),
-                'max_value_seconds': statistics.get('max_value', 0),
-                'avg_value_seconds': statistics.get('avg_value', 0),
-                'readable_max': statistics.get('readable_max', {}),
-                'readable_avg': statistics.get('readable_avg', {}),
-                'component': sync_duration_data.get('component', 'controller'),
-                'unit': sync_duration_data.get('unit', 'seconds')
-            }
-            
-            if duration:
-                start_time, end_time_actual = self.prometheus_client.get_time_range_from_duration(duration, end_time)
-                result['query_parameters'] = {
-                    'duration': duration, 
-                    'start_time': start_time, 
-                    'end_time': end_time_actual
-                }
-            
-            return result
-            
-        except Exception as e:
-            return {
-                'error': f'Failed to collect controller sync duration top 20: {str(e)}',
-                'collection_timestamp': datetime.now(timezone.utc).isoformat(),
-                'timezone': 'UTC'
-            }
+# Remove the standalone collect_controller_sync_duration_top20 function as it's now integrated
 
-# Convenience functions
+# Updated convenience functions
 async def run_ovn_deep_drive_analysis(prometheus_client: PrometheusBaseQuery, 
                                     auth: Optional[OpenShiftAuth] = None,
                                     duration: Optional[str] = None) -> Dict[str, Any]:
-    """Run comprehensive OVN deep drive analysis"""
+    """Run comprehensive OVN deep drive analysis with utility integration"""
     analyzer = ovnDeepDriveAnalyzer(prometheus_client, auth)
     return await analyzer.run_comprehensive_analysis(duration)
 
 async def get_ovn_performance_json(prometheus_client: PrometheusBaseQuery,
                                  auth: Optional[OpenShiftAuth] = None, 
                                  duration: Optional[str] = None) -> str:
-    """Get OVN performance analysis as JSON string"""
+    """Get OVN performance analysis as JSON string with enhanced formatting"""
     results = await run_ovn_deep_drive_analysis(prometheus_client, auth, duration)
     return json.dumps(results, indent=2, default=str)
 
@@ -820,24 +1142,30 @@ async def get_controller_sync_duration_top20(prometheus_client: PrometheusBaseQu
                                            end_time: Optional[str] = None) -> Dict[str, Any]:
     """
     Get top 20 ovnkube_controller_sync_duration_seconds metrics
-    Returns detailed metrics with pod_name, node_name, resource_name, and values
+    Now integrated into the latency_metrics collection
     """
     analyzer = ovnDeepDriveAnalyzer(prometheus_client, auth)
-    return await analyzer.collect_controller_sync_duration_top20(duration, end_time)
+    latency_results = await analyzer.collect_latency_metrics_summary(duration)
+    
+    # Extract just the controller sync duration data
+    return latency_results.get('controller_sync_duration_top20', {
+        'error': 'Controller sync duration data not available'
+    })
 
 async def get_controller_sync_duration_top20_json(prometheus_client: PrometheusBaseQuery,
                                                  auth: Optional[OpenShiftAuth] = None,
                                                  duration: Optional[str] = None,
                                                  end_time: Optional[str] = None) -> str:
-    """
-    Get top 20 ovnkube_controller_sync_duration_seconds metrics as JSON string
-    """
+    """Get top 20 ovnkube_controller_sync_duration_seconds metrics as JSON string"""
     results = await get_controller_sync_duration_top20(prometheus_client, auth, duration, end_time)
     return json.dumps(results, indent=2, default=str)
 
+# Import utility function for backward compatibility
+from ovnk_benchmark_performance_utility import calculate_node_resource_efficiency
+
 # Example usage
 async def main():
-    """Example usage of OVN Deep Drive Analyzer"""
+    """Example usage of enhanced OVN Deep Drive Analyzer"""
     try:
         # Initialize authentication
         from ocauth.ovnk_benchmark_auth import auth
@@ -853,14 +1181,23 @@ async def main():
         analyzer = ovnDeepDriveAnalyzer(prometheus_client, auth)
         
         # Test instant analysis
-        print("Running instant analysis...")
+        print("Running enhanced instant analysis...")
         instant_results = await analyzer.run_comprehensive_analysis()
-        print(json.dumps(instant_results, indent=2, default=str))
         
-        # Test duration analysis
-        print("\nRunning 5-minute duration analysis...")
-        duration_results = await analyzer.run_comprehensive_analysis("5m")
-        print(json.dumps(duration_results, indent=2, default=str))
+        # Generate report using utility functions
+        if 'performance_analysis' in instant_results:
+            perf_analysis = instant_results['performance_analysis']
+            cluster_health = perf_analysis.get('performance_summary', {}).get('cluster_health', {})
+            
+            if cluster_health:
+                report_generator = ReportGenerator()
+                metadata = AnalysisMetadata(**instant_results['analysis_metadata'])
+                health_obj = ClusterHealth(**cluster_health)
+                
+                summary_lines = report_generator.generate_summary_section(metadata, health_obj)
+                print("\n".join(summary_lines))
+        
+        print(json.dumps(instant_results, indent=2, default=str))
         
     except Exception as e:
         print(f"Error in main: {e}")
