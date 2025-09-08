@@ -110,12 +110,15 @@ class deepDriveELT(EltUtility):
                 'Status': 'success' if (isinstance(size_mb, (int, float)) and size_mb < 10) else 'warning'
             })
 
-        # Alerts summary - FIXED to handle the correct data structure
+        # Alerts summary - FIXED to handle both alerts and top_alerts structures
         alerts_info = []
         alerts_summary = basic_info.get('alerts_summary', {})
         
-        # Get alerts from the correct key and handle alertname_statistics
-        alerts_data = alerts_summary.get('alerts', [])  # Changed from 'top_alerts' to 'alerts'
+        # Try both 'alerts' and 'top_alerts' keys to handle different data structures
+        alerts_data = alerts_summary.get('alerts', [])
+        if not alerts_data:
+            alerts_data = alerts_summary.get('top_alerts', [])
+        
         alertname_stats = alerts_summary.get('alertname_statistics', {})
         
         # Create a combined view showing both individual alerts and statistics
@@ -140,7 +143,7 @@ class deepDriveELT(EltUtility):
                 count_display = str(count)
             
             alerts_info.append({
-                'Rank': f"🔥 {idx}" if idx == 1 else idx,
+                'Rank': f"🔥 {idx}" if idx == 1 and severity in ['critical', 'warning'] else idx,
                 'Alert': alert_name,
                 'Severity': severity.upper(),
                 'Count': count_display,
@@ -149,7 +152,7 @@ class deepDriveELT(EltUtility):
             
             processed_alertnames.add(alert_name)
         
-        # Add any alertname statistics that weren't in the top alerts
+        # Add any alertname statistics that weren't in the main alerts list
         remaining_stats = {name: stats for name, stats in alertname_stats.items() 
                         if name not in processed_alertnames}
         
