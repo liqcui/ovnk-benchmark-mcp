@@ -1018,10 +1018,10 @@ class deepDriveELT(EltUtility):
                 'ovs_br_int_flows': 13,
                 'ovs_br_ex_flows': 14,
                 'ovs_connection_metrics': 15,
-                # Move Alerts under OVS Connection Metrics
-                'alerts': 16,
-                'latency_categories': 17,
-                'top_latencies': 18,
+                # Latency and alerts ordering
+                'latency_categories': 16,
+                'top_latencies': 17,
+                'alerts': 18,
                 'performance_summary': 999
             }
             
