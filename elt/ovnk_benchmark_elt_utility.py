@@ -144,7 +144,7 @@ class EltUtility:
             return f'<div class="alert alert-danger">Error generating table: {str(e)}</div>'
  
     def limit_dataframe_columns(self, df: pd.DataFrame, max_cols: int = None, table_name: str = None) -> pd.DataFrame:
-        """Limit DataFrame columns to maximum number - Updated with Deep Drive support"""
+        """Limit DataFrame columns to maximum number - Updated with Deep Drive and Latency support"""
         if max_cols is None:
             max_cols = self.max_columns
         
@@ -157,10 +157,18 @@ class EltUtility:
             max_cols = 6  # Node groups can show more columns
         elif table_name == 'network_analysis':  # Allow more columns for network analysis
             max_cols = 6  # Network analysis can show more columns
+        
+        # NEW: Latency tables - show all columns for detailed latency analysis
+        elif table_name in ['controller_ready_duration', 'node_ready_duration', 'sync_duration', 
+                        'pod_latency', 'cni_latency', 'service_latency', 'network_programming']:
+            return df  # Don't limit latency tables to show all metric details
+        elif table_name in ['latency_summary', 'performance_summary', 'findings_and_recommendations']:
+            max_cols = 2  # Summary tables use 2 columns for property-value format
+        
         # OVS-specific table handling
         elif table_name in ['cpu_usage_summary', 'memory_usage_summary', 'dp_flows_top', 'bridge_flows_summary']:
             max_cols = 4  # OVS usage tables get 4 columns for readability
-        # NEW: Deep Drive OVS-specific table handling
+        # Deep Drive OVS-specific table handling
         elif table_name in ['ovs_vswitchd_cpu', 'ovsdb_server_cpu', 'ovs_db_memory', 'ovs_vswitchd_memory']:
             max_cols = 4  # OVS CPU and memory tables get 4 columns for readability
         elif table_name in ['ovs_dp_flows', 'ovs_br_int_flows', 'ovs_br_ex_flows']:
@@ -169,6 +177,7 @@ class EltUtility:
             max_cols = 4  # OVS connection metrics get 4 columns to show status            
         elif table_name in ['connection_metrics']:
             max_cols = 2  # Connection metrics are simple key-value
+        
         # Pods usage specific handling
         elif table_name in ['top_cpu_pods', 'top_memory_pods']:
             max_cols = 4  # Top pods usage tables - 4 columns for readability
@@ -184,18 +193,14 @@ class EltUtility:
             max_cols = 4  # Limit alerts to 4 columns
         elif table_name in ['cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:  # 2-column for status tables
             max_cols = 2
+        
         # Deep Drive specific handling
-        elif table_name in ['analysis_metadata', 'performance_summary', 'cluster_overview', 'insights']:
+        elif table_name in ['analysis_metadata', 'cluster_overview', 'insights']:
             max_cols = 2  # Deep drive metadata and summary tables use 2 columns
-        elif table_name in ['top_cpu_pods', 'top_memory_pods', 'ovs_cpu_usage', 'ovs_dp_flows', 'controlplane_nodes', 'top_worker_nodes']:
+        elif table_name in ['top_worker_nodes', 'controlplane_nodes', 'container_usage']:
             max_cols = 4  # Deep drive resource usage tables get 4 columns for readability
         elif table_name == 'deep_drive_summary':
             max_cols = 2  # Deep drive summary - simple property-value format            
-        elif table_name == 'top_latencies':
-            # Don't limit columns for top latencies to show full metric names
-            return df
-        elif table_name in ['container_usage', 'node_summary', 'ovs_flows']:
-            max_cols = 4  # Deep drive component tables get 4 columns
         elif table_name in ['database_sizes', 'latency_categories']:
             max_cols = 3  # Allow 3 columns for these specific tables
 
@@ -203,7 +208,7 @@ class EltUtility:
             return df
         
         # Keep most important columns based on table type
-        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status', 'usage_summary', 'analysis_metadata', 'performance_summary', 'cluster_overview', 'insights']:
+        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status', 'usage_summary', 'analysis_metadata', 'performance_summary', 'cluster_overview', 'insights', 'latency_summary', 'findings_and_recommendations']:
             # For summary/status tables, keep metric and value columns
             priority_cols = ['metric', 'value', 'property', 'type', 'description']
         elif table_name == 'node_groups':
@@ -255,7 +260,7 @@ class EltUtility:
         while len(keep_cols) < max_cols and remaining_cols:
             keep_cols.append(remaining_cols.pop(0))
         
-        return df[keep_cols[:max_cols]]            
+        return df[keep_cols[:max_cols]]
 
     def create_property_value_table(self, data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Create a property-value table format"""

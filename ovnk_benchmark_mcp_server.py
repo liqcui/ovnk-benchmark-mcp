@@ -9,6 +9,7 @@ import asyncio
 import os
 import json
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
@@ -380,6 +381,22 @@ prometheus_client: Optional[PrometheusBaseQuery] = None
 storage: Optional[PrometheusStorage] = None
 cluster_analyzer: Optional[ClusterStatAnalyzer] = None
 
+
+def _sanitize_json_compat(value):
+    """Recursively replace NaN/Inf floats with None for JSON compatibility."""
+    try:
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, dict):
+            return {k: _sanitize_json_compat(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_sanitize_json_compat(v) for v in value]
+        # Tuples -> lists for JSON
+        if isinstance(value, tuple):
+            return [_sanitize_json_compat(v) for v in value]
+        return value
+    except Exception:
+        return None
 
 async def initialize_components():
     """Initialize global components with proper error handling"""
@@ -1539,7 +1556,7 @@ async def perform_general_cluster_status_check(request: GeneralClusterStatusRequ
         report = analyzer.generate_report(analysis_result)
         
         # Return the analysis result as JSON/dict
-        return analysis_result
+        return _sanitize_json_compat(analysis_result)
         
     except asyncio.TimeoutError:
         return {
@@ -1788,7 +1805,7 @@ async def analysis_ovnk_performance_deepdrive(request: OVNKDeepDriveAnalysisRequ
                    f"Errors: {components_with_errors}, "
                    f"Performance score: {performance_score or 'N/A'}")
         
-        return analysis_result
+        return _sanitize_json_compat(analysis_result)
         
     except ImportError as e:
         return {

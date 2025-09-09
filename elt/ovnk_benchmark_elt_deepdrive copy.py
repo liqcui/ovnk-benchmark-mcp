@@ -430,228 +430,63 @@ class deepDriveELT(EltUtility):
             }
 
     def _extract_latency_analysis(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract latency analysis data with separate tables for each metric type"""
-        latency_metrics = data.get('latency_metrics', {})
+        """Extract latency analysis data"""
+        latency_data = data.get('latency_metrics', {}).get('categories', {})
+        top_latencies = []
         
-        # Extract controller ready duration
-        controller_ready = []
-        ready_duration = latency_metrics.get('ready_duration', {})
-        controller_ready_data = ready_duration.get('controller_ready_duration', {})
-        if controller_ready_data:
-            top_pods = controller_ready_data.get('top_5_pods', [])
-            for idx, pod_data in enumerate(top_pods, 1):
-                rank_display = f"🏆 {idx}" if idx == 1 else idx
-                controller_ready.append({
-                    'Rank': rank_display,
-                    'Metric': 'controller_ready_duration',
-                    'Pod Name': pod_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(pod_data.get('node_name', ''), 25),
-                    'Value': f"{pod_data.get('value', 0):.3f}s"
-                })
+        # Collect all latency metrics with values
+        all_metrics = []
+        for category, metrics in latency_data.items():
+            for metric_name, metric_info in metrics.items():
+                max_val = metric_info.get('max_value', 0)
+                if max_val > 0:
+                    all_metrics.append({
+                        'category': category,
+                        'metric_name': metric_name,
+                        'max_value': max_val,
+                        'component': metric_info.get('component', ''),
+                        'unit': metric_info.get('unit', 'seconds')
+                    })
         
-        # Extract node ready duration
-        node_ready = []
-        node_ready_data = ready_duration.get('node_ready_duration', {})
-        if node_ready_data:
-            top_pods = node_ready_data.get('top_5_pods', [])
-            for idx, pod_data in enumerate(top_pods, 1):
-                # Highlight critical latency (> 3 seconds)
-                value = pod_data.get('value', 0)
-                rank_display = f"🔥 {idx}" if value > 3.0 and idx == 1 else f"🏆 {idx}" if idx == 1 else idx
-                node_ready.append({
-                    'Rank': rank_display,
-                    'Metric': 'node_ready_duration',
-                    'Pod Name': pod_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(pod_data.get('node_name', ''), 25),
-                    'Value': f"{value:.3f}s"
-                })
+        # Sort by max_value and take top 10
+        all_metrics.sort(key=lambda x: x['max_value'], reverse=True)
         
-        # Extract sync duration
-        sync_duration = []
-        sync_duration_data = latency_metrics.get('sync_duration', {})
-        controller_sync_data = sync_duration_data.get('controller_sync_duration', {})
-        if controller_sync_data:
-            top_controllers = controller_sync_data.get('top_20_controllers', [])
-            for idx, controller_data in enumerate(top_controllers[:20], 1):
-                rank_display = f"🏆 {idx}" if idx == 1 else idx
-                sync_duration.append({
-                    'Rank': rank_display,
-                    'Metric': 'controller_sync_duration',
-                    'Pod Name': controller_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(controller_data.get('node_name', ''), 25),
-                    'Resource': controller_data.get('resource_name', ''),
-                    'Value': f"{controller_data.get('value', 0):.3f}s"
-                })
-        
-        # Extract pod annotation latency (pod_latency)
-        pod_latency = []
-        pod_annotation = latency_metrics.get('pod_annotation', {})
-        pod_annotation_data = pod_annotation.get('pod_annotation_latency_p99', {})
-        if pod_annotation_data:
-            top_pods = pod_annotation_data.get('top_5_pods', [])
-            for idx, pod_data in enumerate(top_pods, 1):
-                # Highlight high latency (> 1 second)
-                value = pod_data.get('value', 0)
-                rank_display = f"⚠️ {idx}" if value > 1.0 and idx == 1 else f"🏆 {idx}" if idx == 1 else idx
-                pod_latency.append({
-                    'Rank': rank_display,
-                    'Metric': 'pod_annotation_latency_p99',
-                    'Pod Name': pod_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(pod_data.get('node_name', ''), 25),
-                    'Value': f"{value:.3f}s"
-                })
-        
-        # Extract CNI latency
-        cni_latency = []
-        cni_data = latency_metrics.get('cni_latency', {})
-        
-        # CNI Add latency
-        cni_add_data = cni_data.get('cni_add_latency_p99', {})
-        if cni_add_data:
-            top_pods = cni_add_data.get('top_5_pods', [])
-            for idx, pod_data in enumerate(top_pods, 1):
-                rank_display = f"🏆 {idx}" if idx == 1 else idx
-                cni_latency.append({
-                    'Rank': rank_display,
-                    'Metric': 'cni_add_latency_p99',
-                    'Pod Name': pod_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(pod_data.get('node_name', ''), 25),
-                    'Value': f"{pod_data.get('value', 0):.3f}s"
-                })
-        
-        # CNI Del latency
-        cni_del_data = cni_data.get('cni_del_latency_p99', {})
-        if cni_del_data:
-            top_pods = cni_del_data.get('top_5_pods', [])
-            for idx, pod_data in enumerate(top_pods, 1):
-                rank_display = idx + len(cni_latency)
-                cni_latency.append({
-                    'Rank': rank_display,
-                    'Metric': 'cni_del_latency_p99',
-                    'Pod Name': pod_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(pod_data.get('node_name', ''), 25),
-                    'Value': f"{pod_data.get('value', 0):.3f}s"
-                })
-        
-        # Extract service latency
-        service_latency = []
-        service_data = latency_metrics.get('service_latency', {})
-        
-        # Sync service latency
-        sync_service_data = service_data.get('sync_service_latency', {})
-        if sync_service_data:
-            top_pods = sync_service_data.get('top_5_pods', [])
-            for idx, pod_data in enumerate(top_pods, 1):
-                rank_display = f"🏆 {idx}" if idx == 1 else idx
-                service_latency.append({
-                    'Rank': rank_display,
-                    'Metric': 'sync_service_latency',
-                    'Pod Name': pod_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(pod_data.get('node_name', ''), 25),
-                    'Value': f"{pod_data.get('value', 0):.6f}s"
-                })
-        
-        # Sync service latency p99
-        sync_service_p99_data = service_data.get('sync_service_latency_p99', {})
-        if sync_service_p99_data:
-            top_pods = sync_service_p99_data.get('top_5_pods', [])
-            for idx, pod_data in enumerate(top_pods, 1):
-                rank_display = idx + len(service_latency)
-                service_latency.append({
-                    'Rank': rank_display,
-                    'Metric': 'sync_service_latency_p99',
-                    'Pod Name': pod_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(pod_data.get('node_name', ''), 25),
-                    'Value': f"{pod_data.get('value', 0):.3f}s"
-                })
-        
-        # Extract network programming latency
-        network_programming = []
-        network_config = latency_metrics.get('network_config', {})
-        network_config_data = network_config.get('apply_network_config_pod_p99', {})
-        if network_config_data:
-            top_pods = network_config_data.get('top_5_pods', [])
-            for idx, pod_data in enumerate(top_pods, 1):
-                rank_display = f"🏆 {idx}" if idx == 1 else idx
-                network_programming.append({
-                    'Rank': rank_display,
-                    'Metric': 'apply_network_config_pod_p99',
-                    'Pod Name': pod_data.get('pod_name', ''),
-                    'Node Name': self.truncate_node_name(pod_data.get('node_name', ''), 25),
-                    'Value': f"{pod_data.get('value', 0):.3f}s"
-                })
+        for idx, metric in enumerate(all_metrics[:10], 1):
+            formatted_value = self.format_latency_value(metric['max_value'], metric['unit'])
+            severity = self.categorize_latency_severity(metric['max_value'], metric['unit'])
+            
+            # Highlight critical latencies
+            rank_display = f"⚠️ {idx}" if severity in ['critical', 'high'] and idx <= 3 else idx
+            
+            top_latencies.append({
+                'Rank': rank_display,
+                'Metric': self.truncate_metric_name(metric['metric_name'], 30),
+                'Component': metric['component'].title(),
+                'Latency': formatted_value,
+                'Severity': severity.title()
+            })
 
-        # Extract latency summary from performance analysis
-        perf_analysis = data.get('performance_analysis', {})
-        latency_analysis = perf_analysis.get('latency_analysis', {})
-        
-        latency_summary = []
-        latency_summary.append({
-            'Property': 'Overall Latency Health',
-            'Value': latency_analysis.get('overall_latency_health', 'unknown').upper()
-        })
-        
-        critical_issues = latency_analysis.get('critical_latency_issues', [])
-        latency_summary.append({
-            'Property': 'Critical Issues Count',
-            'Value': str(len(critical_issues))
-        })
-        
-        high_latency_components = latency_analysis.get('high_latency_components', [])
-        latency_summary.append({
-            'Property': 'High Latency Components',
-            'Value': str(len(high_latency_components))
-        })
-        
-        # Performance analysis summary
-        perf_summary_data = perf_analysis.get('performance_summary', {})
-        performance_summary = []
-        
-        performance_summary.append({
-            'Property': 'Overall Score',
-            'Value': f"{perf_summary_data.get('overall_score', 0):.1f}/100"
-        })
-        
-        performance_summary.append({
-            'Property': 'Performance Grade',
-            'Value': perf_summary_data.get('performance_grade', 'N/A')
-        })
-        
-        component_scores = perf_summary_data.get('component_scores', {})
-        for component, score in component_scores.items():
-            performance_summary.append({
-                'Property': component.replace('_', ' ').title(),
-                'Value': f"{score:.1f}/100"
-            })
-        
-        # Key findings and recommendations
-        findings_and_recommendations = []
-        key_findings = perf_analysis.get('key_findings', [])
-        recommendations = perf_analysis.get('recommendations', [])
-        
-        for finding in key_findings[:3]:
-            findings_and_recommendations.append({
-                'Type': 'Finding',
-                'Description': finding
-            })
-        
-        for rec in recommendations[:3]:
-            findings_and_recommendations.append({
-                'Type': 'Recommendation', 
-                'Description': rec
-            })
+        # Category summaries
+        category_summary = []
+        for category, metrics in latency_data.items():
+            if metrics:
+                valid_values = [m.get('max_value', 0) for m in metrics.values() if m.get('max_value', 0) > 0]
+                if not valid_values:
+                    continue
+                max_latency = max(valid_values)
+                if max_latency > 0:
+                    formatted = self.format_latency_value(max_latency, 'seconds')
+                    severity = self.categorize_latency_severity(max_latency, 'seconds')
+                    
+                    category_summary.append({
+                        'Category': category.replace('_', ' ').title(),
+                        'Max Latency': formatted,
+                        'Severity': severity.title()
+                    })
 
         return {
-            'controller_ready_duration': controller_ready,
-            'node_ready_duration': node_ready,
-            'sync_duration': sync_duration,
-            'pod_latency': pod_latency,
-            'cni_latency': cni_latency,
-            'service_latency': service_latency,
-            'network_programming': network_programming,
-            'latency_summary': latency_summary,
-            'performance_summary': performance_summary,
-            'findings_and_recommendations': findings_and_recommendations
+            'top_latencies': top_latencies,
+            'category_summary': category_summary
         }
 
     def _extract_performance_insights(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -945,44 +780,21 @@ class deepDriveELT(EltUtility):
                 components = metadata.get('components_analyzed', 0)
                 summary_parts.append(f"Comprehensive {analysis_type.replace('_', ' ')} analysis over {duration} covering {components} components")
             
-            # Performance analysis summary
+            # Top latency issues
             latency_analysis = structured_data.get('latency_analysis', {})
-            performance_summary = latency_analysis.get('performance_summary', [])
+            top_latencies = latency_analysis.get('top_latencies', [])
+            if top_latencies:
+                top_latency = top_latencies[0]
+                summary_parts.append(f"Highest latency: {top_latency.get('Latency', 'unknown')} ({top_latency.get('Metric', 'unknown')})")
             
-            # Extract performance grade and overall score
-            grade = 'N/A'
-            overall_score = 'N/A'
-            for item in performance_summary:
-                if item.get('Property') == 'Performance Grade':
-                    grade = item.get('Value', 'N/A')
-                elif item.get('Property') == 'Overall Score':
-                    overall_score = item.get('Value', 'N/A')
-            
-            if grade != 'N/A' and overall_score != 'N/A':
-                summary_parts.append(f"Overall performance score: {overall_score} (Grade: {grade})")
-            
-            # Latency health status
-            latency_summary = latency_analysis.get('latency_summary', [])
-            for item in latency_summary:
-                if item.get('Property') == 'Overall Latency Health':
-                    health_status = item.get('Value', 'unknown')
-                    if 'CRITICAL' in health_status:
-                        summary_parts.append(f"CRITICAL latency issues detected requiring immediate attention")
-                    break
-            
-            # Top critical latency issues
-            node_ready = latency_analysis.get('node_ready_duration', [])
-            if node_ready:
-                top_issue = node_ready[0]
-                value = top_issue.get('Value', '0s')
-                summary_parts.append(f"Highest node ready latency: {value} on {top_issue.get('Node Name', 'unknown')}")
-            
-            # Resource usage highlights
+            # Resource usage
             resource_usage = structured_data.get('resource_usage', {})
             top_cpu_pods = resource_usage.get('top_cpu_pods', [])
             if top_cpu_pods:
                 top_pod = top_cpu_pods[0]
                 summary_parts.append(f"Top CPU consuming pod: {top_pod.get('Pod', 'unknown')} ({top_pod.get('CPU %', '0')}%)")
+            
+            return " • ".join(summary_parts) if summary_parts else "Deep drive analysis completed with limited data available"
 
             # Node analysis
             node_analysis = structured_data.get('node_analysis', {})
@@ -995,9 +807,18 @@ class deepDriveELT(EltUtility):
             # Performance insights
             perf_insights = structured_data.get('performance_insights', {})
             perf_summary = perf_insights.get('performance_summary', [])
-
-            return " • ".join(summary_parts) if summary_parts else "Deep drive analysis completed with comprehensive latency and performance metrics"
             
+            overall_score = None
+            grade = None
+            for item in perf_summary:
+                if item.get('Metric') == 'Overall Score':
+                    overall_score = item.get('Value', '0/100')
+                elif item.get('Metric') == 'Performance Grade':
+                    grade = item.get('Value', 'D')
+            
+            if overall_score and grade:
+                summary_parts.append(f"Overall performance score: {overall_score} (Grade: {grade})")
+                        
         except Exception as e:
             logger.error(f"Failed to generate deep drive summary: {e}")
             return f"Deep drive analysis summary generation failed: {str(e)}"
@@ -1030,7 +851,7 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(pod_status)
                 dataframes['cluster_overview'] = self.limit_dataframe_columns(df, 2, 'cluster_overview')
             
-            # Database sizes
+            # OVN DB Size
             db_sizes = basic_info.get('database_sizes', [])
             if db_sizes:
                 df = pd.DataFrame(db_sizes)
@@ -1042,103 +863,76 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(alerts)
                 dataframes['alerts'] = self.limit_dataframe_columns(df, 4, 'alerts')
             
-            # Resource usage tables (existing code remains same)
+            # Performance insights
+            perf_insights = structured_data.get('performance_insights', {})
+            
+            # Performance summary
+            perf_summary = perf_insights.get('performance_summary', [])
+            if perf_summary:
+                df = pd.DataFrame(perf_summary)
+                dataframes['performance_summary'] = self.limit_dataframe_columns(df, 2, 'performance_summary')
+            
+            # Insights and recommendations
+            insights = perf_insights.get('insights', [])
+            if insights:
+                df = pd.DataFrame(insights)
+                dataframes['insights'] = self.limit_dataframe_columns(df, 2, 'insights')
+            
+            # Resource usage
             resource_usage = structured_data.get('resource_usage', {})
             
+            # Detailed pods usage table
             pods_usage_detailed = resource_usage.get('pods_usage_detailed', [])
             if pods_usage_detailed:
                 df = pd.DataFrame(pods_usage_detailed)
                 dataframes['pods_usage_detailed'] = df
 
+            # Detailed containers usage table
             containers_usage_detailed = resource_usage.get('containers_usage_detailed', [])
             if containers_usage_detailed:
                 df = pd.DataFrame(containers_usage_detailed)
                 dataframes['containers_usage_detailed'] = df
 
+            # Nodes usage detailed - FULL TABLE WITHOUT COLUMN LIMITS
             nodes_usage_detailed = resource_usage.get('nodes_usage_detailed', [])
             if nodes_usage_detailed:
                 df = pd.DataFrame(nodes_usage_detailed)
-                dataframes['nodes_usage_detailed'] = df
-
+                dataframes['nodes_usage_detailed'] = df  # No column limiting
+            
+            # NEW: Nodes network usage detailed - FULL TABLE WITHOUT COLUMN LIMITS
             nodes_network_usage = resource_usage.get('nodes_network_usage', [])
             if nodes_network_usage:
                 df = pd.DataFrame(nodes_network_usage)
-                dataframes['nodes_network_usage'] = df
+                dataframes['nodes_network_usage'] = df  # No column limiting
             
-            # NEW: Latency analysis tables
+            # Latency analysis
             latency_analysis = structured_data.get('latency_analysis', {})
             
-            # Controller ready duration
-            controller_ready = latency_analysis.get('controller_ready_duration', [])
-            if controller_ready:
-                df = pd.DataFrame(controller_ready)
-                dataframes['controller_ready_duration'] = df
+            # Top latencies
+            top_latencies = latency_analysis.get('top_latencies', [])
+            if top_latencies:
+                df = pd.DataFrame(top_latencies)
+                dataframes['top_latencies'] = df
             
-            # Node ready duration
-            node_ready = latency_analysis.get('node_ready_duration', [])
-            if node_ready:
-                df = pd.DataFrame(node_ready)
-                dataframes['node_ready_duration'] = df
-            
-            # Sync duration (top 20)
-            sync_duration = latency_analysis.get('sync_duration', [])
-            if sync_duration:
-                df = pd.DataFrame(sync_duration)
-                dataframes['sync_duration'] = df
-            
-            # Pod latency
-            pod_latency = latency_analysis.get('pod_latency', [])
-            if pod_latency:
-                df = pd.DataFrame(pod_latency)
-                dataframes['pod_latency'] = df
-            
-            # CNI latency
-            cni_latency = latency_analysis.get('cni_latency', [])
-            if cni_latency:
-                df = pd.DataFrame(cni_latency)
-                dataframes['cni_latency'] = df
-            
-            # Service latency
-            service_latency = latency_analysis.get('service_latency', [])
-            if service_latency:
-                df = pd.DataFrame(service_latency)
-                dataframes['service_latency'] = df
-            
-            # Network programming latency
-            network_programming = latency_analysis.get('network_programming', [])
-            if network_programming:
-                df = pd.DataFrame(network_programming)
-                dataframes['network_programming'] = df
-            
-            # Latency summary
-            latency_summary = latency_analysis.get('latency_summary', [])
-            if latency_summary:
-                df = pd.DataFrame(latency_summary)
-                dataframes['latency_summary'] = self.limit_dataframe_columns(df, 2, 'latency_summary')
-            
-            # Performance summary
-            performance_summary = latency_analysis.get('performance_summary', [])
-            if performance_summary:
-                df = pd.DataFrame(performance_summary)
-                dataframes['performance_summary'] = self.limit_dataframe_columns(df, 2, 'performance_summary')
-            
-            # Findings and recommendations
-            findings_recs = latency_analysis.get('findings_and_recommendations', [])
-            if findings_recs:
-                df = pd.DataFrame(findings_recs)
-                dataframes['findings_and_recommendations'] = self.limit_dataframe_columns(df, 2, 'findings_and_recommendations')
+            # Category summary
+            category_summary = latency_analysis.get('category_summary', [])
+            if category_summary:
+                df = pd.DataFrame(category_summary)
+                dataframes['latency_categories'] = self.limit_dataframe_columns(df, 3, 'latency_categories')
             
             # Node analysis
             node_analysis = structured_data.get('node_analysis', {})
             
+            # Node summary
             node_summary = node_analysis.get('node_summary', [])
             if node_summary:
                 df = pd.DataFrame(node_summary)
                 dataframes['node_summary'] = self.limit_dataframe_columns(df, 5, 'node_summary')
             
-            # OVS metrics (existing code remains same)
+            # OVS metrics
             ovs_metrics = structured_data.get('ovs_metrics', {})
             
+            # OVS CPU usage tables
             ovs_vswitchd_cpu = ovs_metrics.get('ovs_vswitchd_cpu', [])
             if ovs_vswitchd_cpu:
                 df = pd.DataFrame(ovs_vswitchd_cpu)
@@ -1149,6 +943,7 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(ovsdb_server_cpu)
                 dataframes['ovsdb_server_cpu'] = self.limit_dataframe_columns(df, 4, 'ovsdb_server_cpu')
             
+            # OVS Memory usage tables
             ovs_db_memory = ovs_metrics.get('ovs_db_memory', [])
             if ovs_db_memory:
                 df = pd.DataFrame(ovs_db_memory)
@@ -1159,6 +954,7 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(ovs_vswitchd_memory)
                 dataframes['ovs_vswitchd_memory'] = self.limit_dataframe_columns(df, 4, 'ovs_vswitchd_memory')
             
+            # OVS Flow metrics tables
             dp_flows = ovs_metrics.get('dp_flows', [])
             if dp_flows:
                 df = pd.DataFrame(dp_flows)
@@ -1174,51 +970,59 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(br_ex_flows)
                 dataframes['ovs_br_ex_flows'] = self.limit_dataframe_columns(df, 4, 'ovs_br_ex_flows')
             
+            # OVS Connection metrics
             connection_metrics = ovs_metrics.get('connection_metrics', [])
             if connection_metrics:
                 df = pd.DataFrame(connection_metrics)
-                dataframes['ovs_connection_metrics'] = self.limit_dataframe_columns(df, 4, 'ovs_connection_metrics')
+                dataframes['ovs_connection_metrics'] = self.limit_dataframe_columns(df, 4, 'ovs_connection_metrics')            
+
+            # CPU usage summary
+            cpu_summary = ovs_metrics.get('cpu_usage_summary', [])
+            if cpu_summary:
+                df = pd.DataFrame(cpu_summary)
+                dataframes['ovs_cpu_usage'] = self.limit_dataframe_columns(df, 4, 'ovs_cpu_usage')
+            
+            # Flows summary
+            flows_summary = ovs_metrics.get('flows_summary', [])
+            if flows_summary:
+                df = pd.DataFrame(flows_summary)
+                dataframes['ovs_flows'] = self.limit_dataframe_columns(df, 4, 'ovs_flows')
             
             return dataframes
             
         except Exception as e:
             logger.error(f"Failed to transform deep drive data to DataFrames: {e}")
             return {}
-
+ 
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
         """Generate HTML tables with enhanced styling for deep drive analysis"""
         try:
             html_tables = {}
             
-            # Define table priorities with latency tables first
+            # Define table priorities and styling
             table_priorities = {
                 'analysis_metadata': 0,
-                'performance_summary': 1,
-                'latency_summary': 2,
-                'controller_ready_duration': 3,
-                'node_ready_duration': 4,
-                'sync_duration': 5,
-                'pod_latency': 6,
-                'cni_latency': 7,
-                'service_latency': 8,
-                'network_programming': 9,
-                'findings_and_recommendations': 10,
-                'cluster_overview': 11,
-                'node_summary': 12,
-                'nodes_usage_detailed': 13,
-                'nodes_network_usage': 14,
-                'ovn_db_size': 15,
-                'pods_usage_detailed': 16,
-                'containers_usage_detailed': 17,
-                'ovs_vswitchd_cpu': 18,
-                'ovsdb_server_cpu': 19,
-                'ovs_db_memory': 20,
-                'ovs_vswitchd_memory': 21,
-                'ovs_dp_flows': 22,
-                'ovs_br_int_flows': 23,
-                'ovs_br_ex_flows': 24,
-                'ovs_connection_metrics': 25,
-                'alerts': 26
+                'cluster_overview': 1,
+                'node_summary': 2,
+                'nodes_usage_detailed': 3,
+                'nodes_network_usage': 4,
+                'ovn_db_size': 5,
+                'pods_usage_detailed': 6,
+                'containers_usage_detailed': 7,
+                # OVS tables grouped under containers detailed
+                'ovs_vswitchd_cpu': 8,
+                'ovsdb_server_cpu': 9,
+                'ovs_db_memory': 10,
+                'ovs_vswitchd_memory': 11,
+                'ovs_dp_flows': 12,
+                'ovs_br_int_flows': 13,
+                'ovs_br_ex_flows': 14,
+                'ovs_connection_metrics': 15,
+                # Latency and alerts ordering
+                'latency_categories': 16,
+                'top_latencies': 17,
+                'alerts': 18,
+                'performance_summary': 999
             }
             
             # Sort tables by priority
@@ -1231,72 +1035,11 @@ class deepDriveELT(EltUtility):
                 if df.empty:
                     continue
                 
+                # Add status-based styling and highlighting
                 styled_df = df.copy()
-                
-                # Latency tables highlighting
-                if table_name == 'controller_ready_duration':
-                    for idx, row in styled_df.iterrows():
-                        value_str = str(row.get('Value', '0s'))
-                        try:
-                            value_float = float(value_str.replace('s', ''))
-                            if value_float > 0.8:
-                                styled_df.at[idx, 'Value'] = f'<span class="text-warning font-weight-bold">{value_str}</span>'
-                        except (ValueError, TypeError):
-                            pass
-                
-                elif table_name == 'node_ready_duration':
-                    for idx, row in styled_df.iterrows():
-                        value_str = str(row.get('Value', '0s'))
-                        try:
-                            value_float = float(value_str.replace('s', ''))
-                            if value_float > 3.0:
-                                styled_df.at[idx, 'Value'] = f'<span class="text-danger font-weight-bold">{value_str}</span>'
-                            elif value_float > 2.0:
-                                styled_df.at[idx, 'Value'] = f'<span class="text-warning font-weight-bold">{value_str}</span>'
-                        except (ValueError, TypeError):
-                            pass
-                
-                elif table_name == 'pod_latency':
-                    for idx, row in styled_df.iterrows():
-                        value_str = str(row.get('Value', '0s'))
-                        try:
-                            value_float = float(value_str.replace('s', ''))
-                            if value_float > 1.0:
-                                styled_df.at[idx, 'Value'] = f'<span class="text-warning font-weight-bold">{value_str}</span>'
-                        except (ValueError, TypeError):
-                            pass
-                
-                elif table_name == 'latency_summary':
-                    for idx, row in styled_df.iterrows():
-                        prop = str(row.get('Property', ''))
-                        value = str(row.get('Value', ''))
-                        if 'Overall Latency Health' in prop and 'CRITICAL' in value:
-                            styled_df.at[idx, 'Value'] = f'<span class="badge badge-danger">{value}</span>'
-                        elif 'Critical Issues Count' in prop and value != '0':
-                            styled_df.at[idx, 'Value'] = f'<span class="text-danger font-weight-bold">{value}</span>'
-                
-                elif table_name == 'performance_summary':
-                    for idx, row in styled_df.iterrows():
-                        prop = str(row.get('Property', ''))
-                        value = str(row.get('Value', ''))
-                        if 'Performance Grade' in prop:
-                            if value in ['D', 'F']:
-                                styled_df.at[idx, 'Value'] = f'<span class="badge badge-danger">{value}</span>'
-                            elif value == 'C':
-                                styled_df.at[idx, 'Value'] = f'<span class="badge badge-warning">{value}</span>'
-                            elif value in ['A', 'B']:
-                                styled_df.at[idx, 'Value'] = f'<span class="badge badge-success">{value}</span>'
-                
-                elif table_name == 'findings_and_recommendations':
-                    for idx, row in styled_df.iterrows():
-                        desc = str(row.get('Description', ''))
-                        if 'URGENT' in desc or 'critical' in desc.lower():
-                            styled_df.at[idx, 'Description'] = f'<span class="text-danger">{desc}</span>'
-                        elif 'warning' in desc.lower():
-                            styled_df.at[idx, 'Description'] = f'<span class="text-warning">{desc}</span>'
-                
-                # Apply existing styling for other tables (OVS, nodes, etc.)
-                elif table_name == 'ovs_vswitchd_cpu':
+
+                # UPDATED: Add highlighting for new OVS tables
+                if table_name == 'ovs_vswitchd_cpu':
                     for idx, row in styled_df.iterrows():
                         avg_cpu_str = str(row.get('Avg CPU %', '0'))
                         try:
@@ -1308,6 +1051,65 @@ class deepDriveELT(EltUtility):
                         except (ValueError, TypeError):
                             pass
                 
+                elif table_name == 'ovsdb_server_cpu':
+                    for idx, row in styled_df.iterrows():
+                        avg_cpu_str = str(row.get('Avg CPU %', '0'))
+                        try:
+                            avg_cpu = float(avg_cpu_str)
+                            if avg_cpu > 0.15:
+                                styled_df.at[idx, 'Avg CPU %'] = f'<span class="text-danger font-weight-bold">{avg_cpu_str}</span>'
+                            elif avg_cpu > 0.1:
+                                styled_df.at[idx, 'Avg CPU %'] = f'<span class="text-warning font-weight-bold">{avg_cpu_str}</span>'
+                        except (ValueError, TypeError):
+                            pass
+                
+                elif table_name in ['ovs_db_memory', 'ovs_vswitchd_memory']:
+                    for idx, row in styled_df.iterrows():
+                        avg_mem_str = str(row.get('Avg Memory MB', '0'))
+                        try:
+                            avg_mem = float(avg_mem_str)
+                            threshold = 60 if 'vswitchd' in table_name else 15
+                            if avg_mem > threshold:
+                                styled_df.at[idx, 'Avg Memory MB'] = f'<span class="text-danger font-weight-bold">{avg_mem_str}</span>'
+                            elif avg_mem > threshold * 0.8:
+                                styled_df.at[idx, 'Avg Memory MB'] = f'<span class="text-warning font-weight-bold">{avg_mem_str}</span>'
+                        except (ValueError, TypeError):
+                            pass
+                
+                elif table_name in ['ovs_dp_flows', 'ovs_br_int_flows', 'ovs_br_ex_flows']:
+                    for idx, row in styled_df.iterrows():
+                        avg_flows_str = str(row.get('Avg Flows', '0'))
+                        try:
+                            avg_flows = float(avg_flows_str)
+                            if table_name == 'ovs_br_int_flows' and avg_flows > 4000:
+                                styled_df.at[idx, 'Avg Flows'] = f'<span class="text-warning font-weight-bold">{avg_flows_str}</span>'
+                            elif table_name == 'ovs_dp_flows' and avg_flows > 500:
+                                styled_df.at[idx, 'Avg Flows'] = f'<span class="text-warning font-weight-bold">{avg_flows_str}</span>'
+                        except (ValueError, TypeError):
+                            pass
+                
+                elif table_name == 'ovs_connection_metrics':
+                    for idx, row in styled_df.iterrows():
+                        status = str(row.get('Status', ''))
+                        if status == 'danger':
+                            metric_name = row.get('Metric', '')
+                            styled_df.at[idx, 'Metric'] = f'<span class="text-danger font-weight-bold">{metric_name}</span>'
+                        elif status == 'warning':
+                            metric_name = row.get('Metric', '')
+                            styled_df.at[idx, 'Metric'] = f'<span class="text-warning font-weight-bold">{metric_name}</span>'                
+                # Apply highlighting for critical metrics and top rankings
+                if table_name == 'top_latencies':
+                    for idx, row in styled_df.iterrows():
+                        severity = str(row.get('Severity', ''))
+                        if 'Critical' in severity:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-danger">{severity}</span>'
+                        elif 'High' in severity:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-warning">{severity}</span>'
+                        elif 'Medium' in severity:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-info">{severity}</span>'
+                        else:
+                            styled_df.at[idx, 'Severity'] = f'<span class="badge badge-success">{severity}</span>'
+                
                 elif table_name == 'alerts':
                     for idx, row in styled_df.iterrows():
                         severity = str(row.get('Severity', ''))
@@ -1318,6 +1120,17 @@ class deepDriveELT(EltUtility):
                         else:
                             styled_df.at[idx, 'Severity'] = f'<span class="badge badge-info">{severity}</span>'
                 
+                elif table_name == 'node_summary':
+                    for idx, row in styled_df.iterrows():
+                        status = str(row.get('Status', ''))
+                        if status == 'danger':
+                            styled_df.at[idx, 'Status'] = f'<span class="badge badge-danger">High Load</span>'
+                        elif status == 'warning':
+                            styled_df.at[idx, 'Status'] = f'<span class="badge badge-warning">Medium Load</span>'
+                        else:
+                            styled_df.at[idx, 'Status'] = f'<span class="badge badge-success">Normal</span>'
+                
+                # NEW: Highlight high CPU/Memory usage in nodes usage detailed
                 elif table_name == 'nodes_usage_detailed':
                     for idx, row in styled_df.iterrows():
                         max_cpu = row.get('Max CPU %', 0)
@@ -1326,14 +1139,16 @@ class deepDriveELT(EltUtility):
                         elif isinstance(max_cpu, (int, float)) and max_cpu > 50:
                             styled_df.at[idx, 'Max CPU %'] = f'<span class="text-warning font-weight-bold">{max_cpu}%</span>'
                 
+                # NEW: Highlight high network usage in nodes network usage
                 elif table_name == 'nodes_network_usage':
                     for idx, row in styled_df.iterrows():
                         max_rx_str = str(row.get('Max Network RX', '0 KB/s'))
+                        # Extract numeric value from "XXX KB/s" format
                         try:
                             max_rx_val = float(max_rx_str.split()[0])
-                            if max_rx_val > 1000:
+                            if max_rx_val > 1000:  # > 1MB/s
                                 styled_df.at[idx, 'Max Network RX'] = f'<span class="text-danger font-weight-bold">{max_rx_str}</span>'
-                            elif max_rx_val > 500:
+                            elif max_rx_val > 500:  # > 500KB/s
                                 styled_df.at[idx, 'Max Network RX'] = f'<span class="text-warning font-weight-bold">{max_rx_str}</span>'
                         except (ValueError, IndexError):
                             pass
@@ -1342,10 +1157,8 @@ class deepDriveELT(EltUtility):
                 html_table = self.create_html_table(styled_df, table_name)
                 
                 # Add custom styling for important tables
-                if table_name in ['performance_summary', 'latency_summary', 'alerts', 'findings_and_recommendations']:
+                if table_name in ['performance_summary', 'top_latencies', 'alerts']:
                     html_table = f'<div class="border border-primary rounded p-2 mb-3">{html_table}</div>'
-                elif table_name in ['node_ready_duration', 'controller_ready_duration', 'pod_latency']:
-                    html_table = f'<div class="border border-warning rounded p-2 mb-3">{html_table}</div>'
                 
                 html_tables[table_name] = html_table
             
