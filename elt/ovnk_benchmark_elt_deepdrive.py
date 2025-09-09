@@ -935,10 +935,12 @@ class deepDriveELT(EltUtility):
     def summarize_deepdrive_data(self, structured_data: Dict[str, Any]) -> str:
         """Generate summary for deep drive analysis data"""
         try:
+            if not isinstance(structured_data, dict) or not structured_data:
+                return "No data available for deep drive summary"
             summary_parts = []
             
             # Basic cluster info
-            metadata = structured_data.get('metadata', {})
+            metadata = structured_data.get('metadata') or {}
             if metadata:
                 analysis_type = metadata.get('analysis_type', 'unknown')
                 duration = metadata.get('query_duration', 'unknown')
@@ -946,7 +948,7 @@ class deepDriveELT(EltUtility):
                 summary_parts.append(f"Comprehensive {analysis_type.replace('_', ' ')} analysis over {duration} covering {components} components")
             
             # Performance analysis summary
-            latency_analysis = structured_data.get('latency_analysis', {})
+            latency_analysis = structured_data.get('latency_analysis') or {}
             performance_summary = latency_analysis.get('performance_summary', [])
             
             # Extract performance grade and overall score
@@ -978,14 +980,14 @@ class deepDriveELT(EltUtility):
                 summary_parts.append(f"Highest node ready latency: {value} on {top_issue.get('Node Name', 'unknown')}")
             
             # Resource usage highlights
-            resource_usage = structured_data.get('resource_usage', {})
+            resource_usage = structured_data.get('resource_usage') or {}
             top_cpu_pods = resource_usage.get('top_cpu_pods', [])
             if top_cpu_pods:
                 top_pod = top_cpu_pods[0]
                 summary_parts.append(f"Top CPU consuming pod: {top_pod.get('Pod', 'unknown')} ({top_pod.get('CPU %', '0')}%)")
 
             # Node analysis
-            node_analysis = structured_data.get('node_analysis', {})
+            node_analysis = structured_data.get('node_analysis') or {}
             top_workers = node_analysis.get('top_worker_nodes', [])
             if top_workers:
                 top_worker = top_workers[0]
@@ -993,7 +995,7 @@ class deepDriveELT(EltUtility):
                 summary_parts.append(f"Highest worker CPU usage: {cpu_usage}% on {top_worker.get('Node', 'unknown')}")
             
             # Performance insights
-            perf_insights = structured_data.get('performance_insights', {})
+            perf_insights = structured_data.get('performance_insights') or {}
             perf_summary = perf_insights.get('performance_summary', [])
 
             return " • ".join(summary_parts) if summary_parts else "Deep drive analysis completed with comprehensive latency and performance metrics"
@@ -1005,10 +1007,12 @@ class deepDriveELT(EltUtility):
     def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
         """Transform structured data to DataFrames"""
         try:
+            if not isinstance(structured_data, dict) or not structured_data:
+                return {}
             dataframes = {}
             
             # Analysis metadata
-            metadata = structured_data.get('metadata', {})
+            metadata = structured_data.get('metadata') or {}
             if metadata:
                 metadata_list = []
                 for key, value in metadata.items():
@@ -1022,7 +1026,7 @@ class deepDriveELT(EltUtility):
                     dataframes['analysis_metadata'] = self.limit_dataframe_columns(df, 2, 'analysis_metadata')
             
             # Basic info tables
-            basic_info = structured_data.get('basic_info', {})
+            basic_info = structured_data.get('basic_info') or {}
             
             # Pod status
             pod_status = basic_info.get('pod_status', [])
@@ -1043,7 +1047,7 @@ class deepDriveELT(EltUtility):
                 dataframes['alerts'] = self.limit_dataframe_columns(df, 4, 'alerts')
             
             # Resource usage tables (existing code remains same)
-            resource_usage = structured_data.get('resource_usage', {})
+            resource_usage = structured_data.get('resource_usage') or {}
             
             pods_usage_detailed = resource_usage.get('pods_usage_detailed', [])
             if pods_usage_detailed:
@@ -1066,7 +1070,7 @@ class deepDriveELT(EltUtility):
                 dataframes['nodes_network_usage'] = df
             
             # NEW: Latency analysis tables
-            latency_analysis = structured_data.get('latency_analysis', {})
+            latency_analysis = structured_data.get('latency_analysis') or {}
             
             # Controller ready duration
             controller_ready = latency_analysis.get('controller_ready_duration', [])
@@ -1129,7 +1133,7 @@ class deepDriveELT(EltUtility):
                 dataframes['findings_and_recommendations'] = self.limit_dataframe_columns(df, 2, 'findings_and_recommendations')
             
             # Node analysis
-            node_analysis = structured_data.get('node_analysis', {})
+            node_analysis = structured_data.get('node_analysis') or {}
             
             node_summary = node_analysis.get('node_summary', [])
             if node_summary:
@@ -1137,7 +1141,7 @@ class deepDriveELT(EltUtility):
                 dataframes['node_summary'] = self.limit_dataframe_columns(df, 5, 'node_summary')
             
             # OVS metrics (existing code remains same)
-            ovs_metrics = structured_data.get('ovs_metrics', {})
+            ovs_metrics = structured_data.get('ovs_metrics') or {}
             
             ovs_vswitchd_cpu = ovs_metrics.get('ovs_vswitchd_cpu', [])
             if ovs_vswitchd_cpu:
