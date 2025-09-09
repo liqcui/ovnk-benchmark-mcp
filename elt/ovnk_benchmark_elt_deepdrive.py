@@ -1325,10 +1325,10 @@ class deepDriveELT(EltUtility):
                 'pod_latency': 22,
                 'cni_latency': 23,
                 'service_latency': 24,
-                'network_programming': 15,
-                'alerts': 26
+                'network_programming': 25,
+                'alerts': 26,
                 'findings_and_recommendations': 27,
-                'performance_summary': 28,              
+                'performance_summary': 28             
             }
             
             # Sort tables by priority
