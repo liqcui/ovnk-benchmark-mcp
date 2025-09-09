@@ -66,222 +66,285 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
         return top_list[:5]
     
     def _calculate_comprehensive_performance_score(self, metrics_summary: Dict[str, Any]) -> Dict[str, Any]:
-        """Enhanced performance score calculation using utility module components"""
-        
-        # Initialize performance alerts list
-        performance_alerts = []
-        
-        def _safe_float(val: Any, default: float = 0.0) -> float:
-            try:
-                return float(val) if val is not None else default
-            except (ValueError, TypeError):
-                return default
-
-        score_components = {
-            'latency_score': 0.0,
-            'resource_utilization_score': 0.0,
-            'stability_score': 0.0,
-            'ovs_performance_score': 0.0,
-            'node_health_score': 0.0
-        }
-
-        # Latency Analysis using utility thresholds
-        latency_data = metrics_summary.get('latency_metrics', {})
-        if latency_data and not latency_data.get('error'):
-            latency_values = []
-            categories = latency_data.get('categories', {})
+            """Enhanced performance score calculation using utility module components"""
             
-            for category_name, category_metrics in categories.items():
-                for metric_name, metric_data in category_metrics.items():
-                    avg_val = _safe_float(metric_data.get('avg_value', 0.0))
-                    max_val = _safe_float(metric_data.get('max_value', 0.0))
-                    
-                    if avg_val > 0:
-                        latency_values.append(avg_val)
-                    
-                    # Create alerts for high latency
-                    if max_val > 2.0:  # > 2 seconds
-                        severity = 'critical' if max_val > 5.0 else 'high'
-                        alert = create_performance_alert(
-                            severity=severity,
-                            resource_type='sync_duration',
-                            component_name=metric_data.get('component', 'unknown'),
-                            message=f"High {metric_name} latency detected: {max_val:.2f}s",
-                            current_value=max_val,
-                            threshold_value=2.0,
-                            unit='seconds'
-                        )
-                        performance_alerts.append(alert)
-
-            if latency_values:
-                avg_latency = statistics.mean(latency_values)
-                # Use threshold-based scoring
-                latency_threshold = PerformanceThreshold(
-                    excellent_max=0.1, good_max=0.5, moderate_max=1.0, poor_max=2.0,
-                    unit='seconds', component_type='latency'
-                )
-                level, severity = ThresholdClassifier.classify_performance(avg_latency, latency_threshold)
-                score_components['latency_score'] = max(0, 100 - severity)
-
-        # Resource Utilization Analysis
-        cpu_usage_data = metrics_summary.get('ovnkube_pods_cpu', {})
-        if cpu_usage_data and not cpu_usage_data.get('error'):
-            cpu_values = []
-            memory_values = []
+            # Initialize performance alerts list
+            performance_alerts = []
             
-            # Analyze node pods
-            node_pods = cpu_usage_data.get('ovnkube_node_pods', {})
-            for usage_type in ['top_5_cpu', 'top_5_memory']:
-                for pod_entry in node_pods.get(usage_type, []):
-                    metrics = pod_entry.get('metrics', {})
-                    for metric_name, metric_data in metrics.items():
-                        if 'cpu' in metric_name.lower() and usage_type == 'top_5_cpu':
-                            cpu_val = _safe_float(metric_data.get('avg', 0.0))
-                            if cpu_val > 0:
-                                cpu_values.append(cpu_val)
-                                
-                                # Create CPU alerts
-                                if cpu_val > 80:
-                                    severity = 'critical' if cpu_val > 95 else 'high'
-                                    alert = create_performance_alert(
-                                        severity=severity,
-                                        resource_type='cpu',
-                                        component_name=pod_entry.get('pod_name', 'unknown'),
-                                        message=f"High CPU usage: {cpu_val:.1f}%",
-                                        current_value=cpu_val,
-                                        threshold_value=80.0,
-                                        unit='%',
-                                        node_name=pod_entry.get('node_name', '')
-                                    )
-                                    performance_alerts.append(alert)
+            def _safe_float(val: Any, default: float = 0.0) -> float:
+                try:
+                    return float(val) if val is not None else default
+                except (ValueError, TypeError):
+                    return default
+
+            score_components = {
+                'latency_score': 0.0,
+                'resource_utilization_score': 0.0,
+                'stability_score': 0.0,
+                'ovs_performance_score': 0.0,
+                'node_health_score': 0.0
+            }
+
+            # FIXED: Enhanced Latency Analysis using utility thresholds
+            latency_data = metrics_summary.get('latency_metrics', {})
+            if latency_data and not latency_data.get('error'):
+                latency_values = []
+                critical_latencies = []
+                poor_latencies = []
+                
+                # Define latency categories to analyze
+                latency_categories = [
+                    'ready_duration', 'sync_duration', 'cni_latency', 
+                    'pod_annotation', 'pod_creation', 'service_latency', 'network_config'
+                ]
+                
+                # Process each category
+                for category_name in latency_categories:
+                    category_data = latency_data.get(category_name, {})
+                    
+                    for metric_name, metric_data in category_data.items():
+                        if not isinstance(metric_data, dict):
+                            continue
+                            
+                        avg_val = _safe_float(metric_data.get('avg_value', 0.0))
+                        max_val = _safe_float(metric_data.get('max_value', 0.0))
+                        count = metric_data.get('count', 0)
+                        component = metric_data.get('component', 'unknown')
                         
-                        elif 'memory' in metric_name.lower() and usage_type == 'top_5_memory':
-                            mem_val = _safe_float(metric_data.get('avg', 0.0))
-                            if mem_val > 0:
-                                # Convert to MB if needed
-                                mem_mb = MemoryConverter.to_mb(mem_val, 'MB')
-                                memory_values.append(mem_mb)
+                        if avg_val > 0 and count > 0:
+                            latency_values.append(avg_val)
+                            
+                            # Use utility module for threshold classification
+                            latency_threshold = PerformanceThreshold(
+                                excellent_max=0.1, good_max=0.5, moderate_max=1.0, poor_max=2.0,
+                                unit='seconds', component_type='latency'
+                            )
+                            
+                            level, severity = ThresholdClassifier.classify_performance(max_val, latency_threshold)
+                            
+                            # Track concerning latencies
+                            if level == PerformanceLevel.CRITICAL:
+                                critical_latencies.append(max_val)
+                                alert = create_performance_alert(
+                                    severity='critical',
+                                    resource_type='sync_duration',
+                                    component_name=component,
+                                    message=f"Critical {metric_name} latency: {max_val:.3f}s",
+                                    current_value=max_val,
+                                    threshold_value=2.0,
+                                    unit='seconds'
+                                )
+                                performance_alerts.append(alert)
                                 
-                                # Create memory alerts
-                                if mem_mb > 2048:  # > 2GB
-                                    severity = 'critical' if mem_mb > 4096 else 'high'
+                            elif level in [PerformanceLevel.POOR, PerformanceLevel.MODERATE]:
+                                poor_latencies.append(max_val)
+                                if max_val > 1.0:  # Only alert for significant poor performance
                                     alert = create_performance_alert(
-                                        severity=severity,
-                                        resource_type='memory',
-                                        component_name=pod_entry.get('pod_name', 'unknown'),
-                                        message=f"High memory usage: {mem_mb:.0f} MB",
-                                        current_value=mem_mb,
-                                        threshold_value=2048.0,
-                                        unit='MB',
-                                        node_name=pod_entry.get('node_name', '')
+                                        severity='high' if level == PerformanceLevel.POOR else 'medium',
+                                        resource_type='sync_duration',
+                                        component_name=component,
+                                        message=f"High {metric_name} latency: {max_val:.3f}s",
+                                        current_value=max_val,
+                                        threshold_value=1.0,
+                                        unit='seconds'
                                     )
                                     performance_alerts.append(alert)
 
-            # Calculate resource scores using thresholds
-            if cpu_values:
-                max_cpu = max(cpu_values)
-                cpu_threshold = ThresholdClassifier.get_default_cpu_threshold()
-                level, severity = ThresholdClassifier.classify_performance(max_cpu, cpu_threshold)
-                score_components['resource_utilization_score'] = max(0, 100 - severity)
-
-        # Stability Analysis (Alerts)
-        basic_info = metrics_summary.get('basic_info', {})
-        if basic_info and not basic_info.get('error'):
-            alerts_data = basic_info.get('alerts_summary', {})
-            alert_count = len(alerts_data.get('top_alerts', []) or [])
-            
-            if alert_count == 0:
-                score_components['stability_score'] = 100
-            elif alert_count < 3:
-                score_components['stability_score'] = 85
-            elif alert_count < 6:
-                score_components['stability_score'] = 70
-            elif alert_count < 10:
-                score_components['stability_score'] = 50
-            else:
-                score_components['stability_score'] = 30
-
-        # OVS Performance Analysis
-        ovs_data = metrics_summary.get('ovs_metrics', {})
-        if ovs_data and not ovs_data.get('error'):
-            ovs_cpu_scores = []
-            cpu_usage = ovs_data.get('cpu_usage', {})
-            
-            if cpu_usage and not cpu_usage.get('error'):
-                for component in ['ovs_vswitchd_top5', 'ovsdb_server_top5']:
-                    top_entries = cpu_usage.get(component, [])
-                    for entry in top_entries:
-                        max_val = _safe_float(entry.get('max', 0.0))
-                        if max_val > 0:
-                            ovs_cpu_scores.append(max_val)
-
-            if ovs_cpu_scores:
-                max_ovs_cpu = max(ovs_cpu_scores)
-                if max_ovs_cpu < 30:
-                    score_components['ovs_performance_score'] = 95
-                elif max_ovs_cpu < 50:
-                    score_components['ovs_performance_score'] = 80
-                elif max_ovs_cpu < 70:
-                    score_components['ovs_performance_score'] = 60
-                else:
-                    score_components['ovs_performance_score'] = 40
-
-        # Node Health Analysis
-        nodes_data = metrics_summary.get('nodes_usage', {})
-        if nodes_data and not nodes_data.get('error'):
-            node_health_scores = []
-            
-            # Analyze different node types
-            for node_type in ['controlplane_nodes', 'infra_nodes', 'top5_worker_nodes']:
-                node_group = nodes_data.get(node_type, {})
-                if node_group:
-                    summary = node_group.get('summary', {})
-                    max_cpu = _safe_float(summary.get('cpu_usage', {}).get('max', 0.0))
-                    max_mem_mb = _safe_float(summary.get('memory_usage', {}).get('max', 0.0))
+                # Calculate latency score based on collected data
+                if latency_values:
+                    avg_latency = statistics.mean(latency_values)
+                    max_latency = max(latency_values)
                     
-                    # Score based on resource utilization
-                    if max_cpu < 50 and max_mem_mb < 4096:
-                        node_health_scores.append(95)
-                    elif max_cpu < 70 and max_mem_mb < 8192:
-                        node_health_scores.append(80)
-                    elif max_cpu < 85:
-                        node_health_scores.append(60)
+                    # Enhanced scoring logic
+                    base_score = 100.0
+                    
+                    # Penalize based on critical latencies
+                    if critical_latencies:
+                        critical_penalty = min(len(critical_latencies) * 30, 80)  # Up to 80 points penalty
+                        base_score -= critical_penalty
+                    
+                    # Penalize based on poor latencies  
+                    if poor_latencies:
+                        poor_penalty = min(len(poor_latencies) * 15, 40)  # Up to 40 points penalty
+                        base_score -= poor_penalty
+                    
+                    # Additional penalty for very high average latency
+                    if avg_latency > 1.0:
+                        avg_penalty = min((avg_latency - 1.0) * 20, 30)  # Up to 30 points penalty
+                        base_score -= avg_penalty
+                    
+                    # Additional penalty for extremely high max latency
+                    if max_latency > 3.0:
+                        max_penalty = min((max_latency - 3.0) * 10, 20)  # Up to 20 points penalty
+                        base_score -= max_penalty
+                    
+                    score_components['latency_score'] = max(0.0, base_score)
+                else:
+                    # No latency data available - assign neutral score
+                    score_components['latency_score'] = 75.0
+
+            # Resource Utilization Analysis (unchanged from original)
+            cpu_usage_data = metrics_summary.get('ovnkube_pods_cpu', {})
+            if cpu_usage_data and not cpu_usage_data.get('error'):
+                cpu_values = []
+                memory_values = []
+                
+                # Analyze node pods
+                node_pods = cpu_usage_data.get('ovnkube_node_pods', {})
+                for usage_type in ['top_5_cpu', 'top_5_memory']:
+                    for pod_entry in node_pods.get(usage_type, []):
+                        metrics = pod_entry.get('metrics', {})
+                        for metric_name, metric_data in metrics.items():
+                            if 'cpu' in metric_name.lower() and usage_type == 'top_5_cpu':
+                                cpu_val = _safe_float(metric_data.get('avg', 0.0))
+                                if cpu_val > 0:
+                                    cpu_values.append(cpu_val)
+                                    
+                                    # Create CPU alerts
+                                    if cpu_val > 80:
+                                        severity = 'critical' if cpu_val > 95 else 'high'
+                                        alert = create_performance_alert(
+                                            severity=severity,
+                                            resource_type='cpu',
+                                            component_name=pod_entry.get('pod_name', 'unknown'),
+                                            message=f"High CPU usage: {cpu_val:.1f}%",
+                                            current_value=cpu_val,
+                                            threshold_value=80.0,
+                                            unit='%',
+                                            node_name=pod_entry.get('node_name', '')
+                                        )
+                                        performance_alerts.append(alert)
+                            
+                            elif 'memory' in metric_name.lower() and usage_type == 'top_5_memory':
+                                mem_val = _safe_float(metric_data.get('avg', 0.0))
+                                if mem_val > 0:
+                                    # Convert to MB if needed
+                                    mem_mb = MemoryConverter.to_mb(mem_val, 'MB')
+                                    memory_values.append(mem_mb)
+                                    
+                                    # Create memory alerts
+                                    if mem_mb > 2048:  # > 2GB
+                                        severity = 'critical' if mem_mb > 4096 else 'high'
+                                        alert = create_performance_alert(
+                                            severity=severity,
+                                            resource_type='memory',
+                                            component_name=pod_entry.get('pod_name', 'unknown'),
+                                            message=f"High memory usage: {mem_mb:.0f} MB",
+                                            current_value=mem_mb,
+                                            threshold_value=2048.0,
+                                            unit='MB',
+                                            node_name=pod_entry.get('node_name', '')
+                                        )
+                                        performance_alerts.append(alert)
+
+                # Calculate resource scores using thresholds
+                if cpu_values:
+                    max_cpu = max(cpu_values)
+                    cpu_threshold = ThresholdClassifier.get_default_cpu_threshold()
+                    level, severity = ThresholdClassifier.classify_performance(max_cpu, cpu_threshold)
+                    score_components['resource_utilization_score'] = max(0, 100 - severity)
+
+            # Rest of the method remains unchanged...
+            # (Stability Analysis, OVS Performance Analysis, Node Health Analysis, etc.)
+            
+            # Stability Analysis (Alerts)
+            basic_info = metrics_summary.get('basic_info', {})
+            if basic_info and not basic_info.get('error'):
+                alerts_data = basic_info.get('alerts_summary', {})
+                alert_count = len(alerts_data.get('top_alerts', []) or [])
+                
+                if alert_count == 0:
+                    score_components['stability_score'] = 100
+                elif alert_count < 3:
+                    score_components['stability_score'] = 85
+                elif alert_count < 6:
+                    score_components['stability_score'] = 70
+                elif alert_count < 10:
+                    score_components['stability_score'] = 50
+                else:
+                    score_components['stability_score'] = 30
+
+            # OVS Performance Analysis
+            ovs_data = metrics_summary.get('ovs_metrics', {})
+            if ovs_data and not ovs_data.get('error'):
+                ovs_cpu_scores = []
+                cpu_usage = ovs_data.get('cpu_usage', {})
+                
+                if cpu_usage and not cpu_usage.get('error'):
+                    for component in ['ovs_vswitchd_top5', 'ovsdb_server_top5']:
+                        top_entries = cpu_usage.get(component, [])
+                        for entry in top_entries:
+                            max_val = _safe_float(entry.get('max', 0.0))
+                            if max_val > 0:
+                                ovs_cpu_scores.append(max_val)
+
+                if ovs_cpu_scores:
+                    max_ovs_cpu = max(ovs_cpu_scores)
+                    if max_ovs_cpu < 30:
+                        score_components['ovs_performance_score'] = 95
+                    elif max_ovs_cpu < 50:
+                        score_components['ovs_performance_score'] = 80
+                    elif max_ovs_cpu < 70:
+                        score_components['ovs_performance_score'] = 60
                     else:
-                        node_health_scores.append(40)
+                        score_components['ovs_performance_score'] = 40
 
-            if node_health_scores:
-                score_components['node_health_score'] = statistics.mean(node_health_scores)
+            # Node Health Analysis
+            nodes_data = metrics_summary.get('nodes_usage', {})
+            if nodes_data and not nodes_data.get('error'):
+                node_health_scores = []
+                
+                # Analyze different node types
+                for node_type in ['controlplane_nodes', 'infra_nodes', 'top5_worker_nodes']:
+                    node_group = nodes_data.get(node_type, {})
+                    if node_group:
+                        summary = node_group.get('summary', {})
+                        max_cpu = _safe_float(summary.get('cpu_usage', {}).get('max', 0.0))
+                        max_mem_mb = _safe_float(summary.get('memory_usage', {}).get('max', 0.0))
+                        
+                        # Score based on resource utilization
+                        if max_cpu < 50 and max_mem_mb < 4096:
+                            node_health_scores.append(95)
+                        elif max_cpu < 70 and max_mem_mb < 8192:
+                            node_health_scores.append(80)
+                        elif max_cpu < 85:
+                            node_health_scores.append(60)
+                        else:
+                            node_health_scores.append(40)
 
-        # Calculate weighted overall score
-        weights = {
-            'latency_score': 0.25,
-            'resource_utilization_score': 0.25,
-            'stability_score': 0.20,
-            'ovs_performance_score': 0.15,
-            'node_health_score': 0.15
-        }
-        
-        overall_score = sum(score_components[key] * weights[key] for key in weights)
-        
-        # Calculate cluster health using utility function
-        cluster_health = self.calculate_cluster_health_score(
-            performance_alerts, 
-            self._count_total_components(metrics_summary)
-        )
-        
-        return {
-            'overall_score': round(overall_score, 2),
-            'component_scores': score_components,
-            'performance_grade': self._get_performance_grade(overall_score),
-            'cluster_health': cluster_health,
-            'performance_alerts': [alert.__dict__ for alert in performance_alerts],
-            'recommendations': RecommendationEngine.generate_cluster_recommendations(
-                cluster_health.critical_issues_count,
-                cluster_health.warning_issues_count,
-                self._count_total_components(metrics_summary),
-                "OVN-Kubernetes"
+                if node_health_scores:
+                    score_components['node_health_score'] = statistics.mean(node_health_scores)
+
+            # Calculate weighted overall score
+            weights = {
+                'latency_score': 0.25,
+                'resource_utilization_score': 0.25,
+                'stability_score': 0.20,
+                'ovs_performance_score': 0.15,
+                'node_health_score': 0.15
+            }
+            
+            overall_score = sum(score_components[key] * weights[key] for key in weights)
+            
+            # Calculate cluster health using utility function
+            cluster_health = self.calculate_cluster_health_score(
+                performance_alerts, 
+                self._count_total_components(metrics_summary)
             )
-        }
+            
+            return {
+                'overall_score': round(overall_score, 2),
+                'component_scores': score_components,
+                'performance_grade': self._get_performance_grade(overall_score),
+                'cluster_health': cluster_health,
+                'performance_alerts': [alert.__dict__ for alert in performance_alerts],
+                'recommendations': RecommendationEngine.generate_cluster_recommendations(
+                    cluster_health.critical_issues_count,
+                    cluster_health.warning_issues_count,
+                    self._count_total_components(metrics_summary),
+                    "OVN-Kubernetes"
+                )
+            }
 
     def _get_performance_grade(self, score: float) -> str:
         """Convert numeric score to letter grade"""
