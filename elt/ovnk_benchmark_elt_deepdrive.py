@@ -1315,7 +1315,7 @@ class deepDriveELT(EltUtility):
                 'ovs_dp_flows': 12,
                 'ovs_br_int_flows': 13,
                 'ovs_br_ex_flows': 14,
-                'ovs_connection_metrics': 55,                
+                'ovs_connection_metrics': 15,                
                 'latency_summary': 16,
                 'latency_overall_stats': 17,  # NEW: Overall latency statistics                        
                 'latency_overview': 18,  # NEW: Priority placement for new summary table  
