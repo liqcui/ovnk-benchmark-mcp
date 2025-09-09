@@ -1,900 +1,686 @@
 """
-OVN-Kubernetes Latency Metrics Collection and Analysis
-Prometheus-based latency analysis for OVN-Kubernetes components
-Reuses existing ELT infrastructure for consistent table formatting and display
+ELT module for OVN-Kubernetes Latency Metrics
+Handles extraction, transformation and HTML generation for latency data
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Union, Tuple
 import pandas as pd
-import json
-from datetime import datetime, timedelta
-import asyncio
-import re
-
+from typing import Dict, Any, List, Optional, Union
 from .ovnk_benchmark_elt_utility import EltUtility
 
 logger = logging.getLogger(__name__)
 
-class ovnLatencyELT(EltUtility):
-    """
-    OVN-Kubernetes latency metrics analyzer using Prometheus queries
-    """
+class latencyELT(EltUtility):
+    """ELT module for OVN-Kubernetes latency metrics"""
     
-    def __init__(self, prometheus_client=None):
-        """
-        Initialize the OVN latency analyzer/ELT helper.
-        The prometheus_client is optional for pure ELT transformations.
-        """
+    def __init__(self):
         super().__init__()
-        self.prometheus_client = prometheus_client
-        self.default_duration = '10m'
-        
-        # Define OVN latency metrics to collect
-        self.latency_metrics = {
-            # Controller Ready Duration Metrics
-            'controller_ready_duration_metrics': [
-                'ovnkube_controller_pod_creation_latency_seconds',
-                'ovnkube_controller_network_programming_duration_seconds', 
-                'ovnkube_controller_sync_duration_seconds'
-            ],
-            
-            # Node Ready Duration Metrics
-            'node_ready_duration_metrics': [
-                'ovnkube_node_pod_creation_latency_seconds',
-                'ovnkube_node_network_programming_duration_seconds',
-                'ovnkube_node_sync_duration_seconds'
-            ],
-            
-            # Sync Duration Metrics
-            'sync_duration_metrics': [
-                'ovnkube_controller_sync_duration_seconds',
-                'ovnkube_node_sync_duration_seconds',
-                'ovnkube_controller_service_sync_duration_seconds'
-            ],
-            
-            # Percentile Latency Metrics  
-            'percentile_latency_metrics': [
-                'ovnkube_controller_pod_creation_latency_seconds_p99',
-                'ovnkube_controller_pod_creation_latency_seconds_p95', 
-                'ovnkube_node_pod_creation_latency_seconds_p99',
-                'ovnkube_node_pod_creation_latency_seconds_p95'
-            ],
-            
-            # Pod-specific Latency Metrics
-            'pod_latency_metrics': [
-                'ovnkube_controller_pod_creation_latency_seconds',
-                'ovnkube_node_pod_creation_latency_seconds',
-                'ovnkube_controller_pod_deletion_latency_seconds',
-                'ovnkube_node_pod_deletion_latency_seconds'
-            ],
-            
-            # CNI Latency Metrics
-            'cni_latency_metrics': [
-                'ovnkube_node_cni_request_duration_seconds',
-                'ovnkube_node_cni_request_duration_seconds_p99',
-                'ovnkube_node_cni_request_duration_seconds_p95'
-            ],
-            
-            # Service Latency Metrics
-            'service_latency_metrics': [
-                'ovnkube_controller_service_sync_duration_seconds',
-                'ovnkube_controller_service_creation_latency_seconds',
-                'ovnkube_controller_service_deletion_latency_seconds'
-            ],
-            
-            # Network Programming Metrics
-            'network_programming_metrics': [
-                'ovnkube_controller_network_programming_duration_seconds',
-                'ovnkube_node_network_programming_duration_seconds',
-                'ovnkube_controller_network_programming_duration_seconds_p99',
-                'ovnkube_node_network_programming_duration_seconds_p99'
-            ]
-        }
-
-    async def collect_ovn_latency_metrics(self, duration: str = None, 
-                                        query_type: str = 'comprehensive') -> Dict[str, Any]:
-        """
-        Collect comprehensive OVN latency metrics from Prometheus
-        
-        Args:
-            duration: Time duration for metrics collection (default: 10m)
-            query_type: Type of query ('comprehensive', 'basic', 'detailed')
-            
-        Returns:
-            Dictionary containing structured latency metrics
-        """
-        try:
-            duration = duration or self.default_duration
-            collection_timestamp = datetime.now().isoformat()
-            
-            logger.info(f"Starting OVN latency metrics collection for duration: {duration}")
-            
-            # Initialize results structure
-            results = {
-                'collection_timestamp': collection_timestamp,
-                'collection_type': 'enhanced_comprehensive',
-                'query_type': query_type,
-                'timezone': 'UTC',
-                'query_parameters': {
-                    'duration': duration
-                }
-            }
-            
-            # Collect metrics by category
-            collected_metrics = {}
-            failed_metrics = {}
-            total_metrics = 0
-            successful_metrics = 0
-            
-            for category, metric_names in self.latency_metrics.items():
-                logger.info(f"Collecting {category} metrics...")
-                category_results = {}
-                
-                for metric_name in metric_names:
-                    total_metrics += 1
-                    try:
-                        metric_data = await self._query_latency_metric(metric_name, duration)
-                        if metric_data and not metric_data.get('error'):
-                            category_results[metric_name] = metric_data
-                            successful_metrics += 1
-                        else:
-                            failed_metrics[metric_name] = metric_data.get('error', 'No data returned') if metric_data else 'No data returned'
-                    
-                    except Exception as e:
-                        logger.error(f"Failed to collect metric {metric_name}: {e}")
-                        failed_metrics[metric_name] = str(e)
-                
-                if category_results:
-                    collected_metrics[category] = category_results
-            
-            # Add collected metrics to results
-            results.update(collected_metrics)
-            
-            # Generate overall summary
-            results['overall_summary'] = await self._generate_overall_summary(
-                collected_metrics, total_metrics, successful_metrics, len(failed_metrics)
-            )
-            
-            # Add failed metrics info if any
-            if failed_metrics:
-                results['failed_metrics_info'] = failed_metrics
-            
-            logger.info(f"OVN latency collection completed: {successful_metrics}/{total_metrics} metrics successful")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Failed to collect OVN latency metrics: {e}")
-            return {
-                'collection_timestamp': datetime.now().isoformat(),
-                'error': str(e),
-                'query_type': query_type,
-                'collection_type': 'failed'
-            }
-
-    async def _query_latency_metric(self, metric_name: str, duration: str) -> Dict[str, Any]:
-        """
-        Query a specific latency metric from Prometheus
-        
-        Args:
-            metric_name: Name of the metric to query
-            duration: Time duration for the query
-            
-        Returns:
-            Dictionary containing metric data and statistics
-        """
-        try:
-            # Build Prometheus query
-            query = f'max_over_time({metric_name}[{duration}])'
-            
-            # Execute query
-            result = await self.prometheus_client.custom_query(query)
-            
-            if not result or 'data' not in result or not result['data'].get('result'):
-                return {'error': f'No data found for metric {metric_name}'}
-            
-            # Parse results
-            values = []
-            for item in result['data']['result']:
-                try:
-                    value = float(item['value'][1])
-                    values.append(value)
-                except (ValueError, IndexError):
-                    continue
-            
-            if not values:
-                return {'error': f'No valid values found for metric {metric_name}'}
-            
-            # Calculate statistics
-            statistics = self._calculate_metric_statistics(values)
-            
-            # Determine component from metric name
-            component = self._extract_component_from_metric_name(metric_name)
-            
-            return {
-                'metric_name': metric_name,
-                'component': component,
-                'unit': 'seconds',
-                'description': self._get_metric_description(metric_name),
-                'statistics': statistics,
-                'query': query,
-                'collection_timestamp': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to query metric {metric_name}: {e}")
-            return {'error': str(e)}
-
-    def _calculate_metric_statistics(self, values: List[float]) -> Dict[str, Any]:
-        """Calculate statistical measures for metric values"""
-        try:
-            if not values:
-                return {}
-            
-            sorted_values = sorted(values)
-            count = len(values)
-            
-            statistics = {
-                'count': count,
-                'min_value': min(values),
-                'max_value': max(values),
-                'avg_value': sum(values) / count,
-                'median_value': sorted_values[count // 2] if count > 0 else 0
-            }
-            
-            # Calculate percentiles if we have enough data points
-            if count >= 4:
-                p95_idx = int(0.95 * (count - 1))
-                p99_idx = int(0.99 * (count - 1))
-                statistics['p95_value'] = sorted_values[p95_idx]
-                statistics['p99_value'] = sorted_values[p99_idx]
-            
-            return statistics
-            
-        except Exception as e:
-            logger.error(f"Failed to calculate statistics: {e}")
-            return {}
-
-    def _extract_component_from_metric_name(self, metric_name: str) -> str:
-        """Extract component type from metric name"""
-        if 'ovnkube_controller' in metric_name:
-            return 'controller'
-        elif 'ovnkube_node' in metric_name:
-            return 'node'
-        elif 'cni' in metric_name.lower():
-            return 'cni'
-        else:
-            return 'unknown'
-
-    def _get_metric_description(self, metric_name: str) -> str:
-        """Get human-readable description for a metric"""
-        descriptions = {
-            'pod_creation_latency_seconds': 'Pod creation latency',
-            'pod_deletion_latency_seconds': 'Pod deletion latency', 
-            'network_programming_duration_seconds': 'Network programming duration',
-            'sync_duration_seconds': 'Sync operation duration',
-            'service_sync_duration_seconds': 'Service sync duration',
-            'service_creation_latency_seconds': 'Service creation latency',
-            'service_deletion_latency_seconds': 'Service deletion latency',
-            'cni_request_duration_seconds': 'CNI request duration'
-        }
-        
-        for key, desc in descriptions.items():
-            if key in metric_name:
-                component = self._extract_component_from_metric_name(metric_name)
-                percentile = ''
-                if '_p99' in metric_name:
-                    percentile = ' (99th percentile)'
-                elif '_p95' in metric_name:
-                    percentile = ' (95th percentile)'
-                
-                return f"{component.title()} {desc}{percentile}"
-        
-        return metric_name.replace('_', ' ').title()
-
-    async def _generate_overall_summary(self, collected_metrics: Dict[str, Any], 
-                                      total_metrics: int, successful_metrics: int, 
-                                      failed_metrics: int) -> Dict[str, Any]:
-        """Generate overall summary of collected latency metrics"""
-        try:
-            summary = {
-                'total_metrics_collected': total_metrics,
-                'successful_metrics': successful_metrics,
-                'failed_metrics': failed_metrics,
-                'component_breakdown': {},
-                'top_latencies': []
-            }
-            
-            # Count metrics by component
-            all_metrics = []
-            component_counts = {}
-            
-            for category, metrics in collected_metrics.items():
-                for metric_name, metric_data in metrics.items():
-                    if 'error' not in metric_data:
-                        component = metric_data.get('component', 'unknown')
-                        component_counts[component] = component_counts.get(component, 0) + 1
-                        
-                        # Add to all metrics for top latencies calculation
-                        statistics = metric_data.get('statistics', {})
-                        max_value = statistics.get('max_value', 0)
-                        
-                        if max_value > 0:
-                            all_metrics.append({
-                                'metric_name': metric_name,
-                                'component': component,
-                                'max_value': max_value,
-                                'avg_value': statistics.get('avg_value', 0),
-                                'unit': metric_data.get('unit', 'seconds'),
-                                'readable_max': self._format_latency_for_summary(max_value)
-                            })
-            
-            summary['component_breakdown'] = component_counts
-            
-            # Sort and get top 5 latencies
-            sorted_metrics = sorted(all_metrics, key=lambda x: x['max_value'], reverse=True)
-            summary['top_latencies'] = sorted_metrics[:5]
-            
-            # Calculate overall statistics
-            if all_metrics:
-                max_latencies = [m['max_value'] for m in all_metrics]
-                avg_latencies = [m['avg_value'] for m in all_metrics]
-                
-                summary['overall_max_latency'] = {
-                    'value': max(max_latencies),
-                    'readable': self._format_latency_for_summary(max(max_latencies))
-                }
-                
-                summary['overall_avg_latency'] = {
-                    'value': sum(avg_latencies) / len(avg_latencies),
-                    'readable': self._format_latency_for_summary(sum(avg_latencies) / len(avg_latencies))
-                }
-            
-            return summary
-            
-        except Exception as e:
-            logger.error(f"Failed to generate overall summary: {e}")
-            return {
-                'total_metrics_collected': total_metrics,
-                'successful_metrics': successful_metrics,
-                'failed_metrics': failed_metrics,
-                'error': str(e)
-            }
-
-    def _format_latency_for_summary(self, value_seconds: float) -> Dict[str, Union[str, float]]:
-        """Reuse common summary formatter from EltUtility."""
-        return self.format_latency_for_summary(value_seconds)
-
-    # ================= ELT-style extraction and presentation methods =================
+        self.max_columns = 6  # Allow more columns for latency data
+    
     def extract_ovn_latency_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract OVN latency data from JSON results (ELT pipeline entry)."""
+        """Extract OVN latency data from collected metrics"""
         try:
-            extracted: Dict[str, Any] = {
-                'metadata': {},
-                'ready_duration': [],
-                'sync_duration': [],
-                'percentile_latency': [],
-                'pod_latency': [],
-                'cni_latency': [],
-                'service_latency': [],
-                'network_programming': [],
-                'top_latencies': [],
-                'summary': {}
+            structured = {
+                'collection_info': self._extract_collection_info(data),
+                'ready_duration_metrics': self._extract_ready_duration_metrics(data),
+                'sync_duration_metrics': self._extract_sync_duration_metrics(data), 
+                'cni_latency_metrics': self._extract_cni_latency_metrics(data),
+                'pod_annotation_metrics': self._extract_pod_annotation_metrics(data),
+                'pod_creation_metrics': self._extract_pod_creation_metrics(data),
+                'service_latency_metrics': self._extract_service_latency_metrics(data),
+                'network_config_metrics': self._extract_network_config_metrics(data),
+                'latency_summary': self._extract_latency_summary(data)
             }
-
-            extracted['metadata'] = {
-                'collection_timestamp': data.get('collection_timestamp', 'unknown'),
-                'collection_type': data.get('collection_type', 'unknown'),
-                'query_type': data.get('query_type', 'instant'),
-                'timezone': data.get('timezone', 'UTC')
-            }
-
-            self._extract_metric_category(data.get('ready_duration_metrics', {}), extracted['ready_duration'])
-            self._extract_metric_category(data.get('sync_duration_metrics', {}), extracted['sync_duration'])
-            self._extract_metric_category(data.get('percentile_latency_metrics', {}), extracted['percentile_latency'])
-            self._extract_metric_category(data.get('pod_latency_metrics', {}), extracted['pod_latency'])
-            self._extract_metric_category(data.get('cni_latency_metrics', {}), extracted['cni_latency'])
-            self._extract_metric_category(data.get('service_latency_metrics', {}), extracted['service_latency'])
-            self._extract_metric_category(data.get('network_programming_metrics', {}), extracted['network_programming'])
-
-            overall_summary = data.get('overall_summary', {})
-            top_latencies = overall_summary.get('top_latencies', [])
-            for idx, metric in enumerate(top_latencies[:10], 1):
-                readable_max = metric.get('readable_max', {})
-                extracted['top_latencies'].append({
-                    'rank': idx,
-                    'metric_name': self.truncate_metric_name(metric.get('metric_name', 'unknown'), 35),
-                    'component': metric.get('component', 'unknown'),
-                    'category': metric.get('category', 'unknown').replace('_', ' ').title() if isinstance(metric.get('category'), str) else 'Unknown',
-                    'max_latency': f"{readable_max.get('value', 0)} {readable_max.get('unit', 'ms')}",
-                    'data_points': metric.get('data_points', 0)
-                })
-
-            extracted['summary'] = self._extract_summary_data(overall_summary)
-            return extracted
+            
+            return structured
+            
         except Exception as e:
-            logger.error(f"Failed to extract OVN latency data: {e}")
+            logger.error(f"Failed to extract latency data: {e}")
             return {'error': str(e)}
-
-    def _extract_metric_category(self, category_data: Dict[str, Any], output_list: List[Dict[str, Any]]) -> None:
-        """Extract metrics from a specific category into a flat list for tables."""
-        for metric_key, metric_data in category_data.items():
-            if not isinstance(metric_data, dict) or 'error' in metric_data:
-                continue
-            statistics = metric_data.get('statistics', {}) if isinstance(metric_data.get('statistics'), dict) else {}
-            if statistics.get('count', 0) == 0:
-                continue
-            metric_info = {
-                'metric_name': self.truncate_metric_name(metric_data.get('metric_name', metric_key), 30),
-                'component': metric_data.get('component', 'unknown'),
-                'unit': metric_data.get('unit', 'seconds'),
-                'data_points': statistics.get('count', 0)
-            }
-            readable_max = statistics.get('readable_max', {}) if isinstance(statistics.get('readable_max'), dict) else {}
-            readable_avg = statistics.get('readable_avg', {}) if isinstance(statistics.get('readable_avg'), dict) else {}
-            metric_info.update({
-                'max_latency': f"{readable_max.get('value', 0)} {readable_max.get('unit', 'ms')}",
-                'avg_latency': f"{readable_avg.get('value', 0)} {readable_avg.get('unit', 'ms')}"
-            })
-            top_5_data = statistics.get('top_5', []) if isinstance(statistics.get('top_5'), list) else []
-            if top_5_data:
-                for idx, entry in enumerate(top_5_data[:5], 1):
-                    if not isinstance(entry, dict):
-                        continue
-                    detailed_entry = metric_info.copy()
-                    readable_value = entry.get('readable_value', {}) if isinstance(entry.get('readable_value'), dict) else {}
-                    # Resolve pod and node names from multiple possible keys to avoid 'unknown'
-                    pod_name_resolved, node_name_resolved = self._resolve_pod_and_node_names(entry)
-                    detailed_entry.update({
-                        'rank': idx,
-                        'pod_name': self.truncate_text(pod_name_resolved, 25),
-                        'node_name': self.truncate_text(node_name_resolved, 20),
-                        'value': f"{readable_value.get('value', 0)} {readable_value.get('unit', 'ms')}"
-                    })
-                    if 'resource_name' in entry:
-                        # Keep the column name as 'resource_name' to surface in HTML tables
-                        detailed_entry['resource_name'] = self.truncate_text(entry.get('resource_name', 'unknown'), 20)
-                    if 'service_name' in entry:
-                        detailed_entry['service'] = self.truncate_text(entry.get('service_name', 'N/A'), 20)
-                        detailed_entry['pod_name'] = 'N/A'
-                        detailed_entry['node_name'] = 'N/A'
-                    output_list.append(detailed_entry)
-            else:
-                output_list.append(metric_info)
-
-    def _resolve_pod_and_node_names(self, entry: Dict[str, Any]) -> Tuple[str, str]:
-        """Delegate to common resolver in EltUtility for consistency."""
-        return self.resolve_pod_and_node_names(entry)
-
-    def _extract_summary_data(self, overall_summary: Dict[str, Any]) -> List[Dict[str, str]]:
-        summary_data: List[Dict[str, str]] = []
-        if not isinstance(overall_summary, dict):
-            return summary_data
-        summary_data.append({'property': 'Total Metrics Collected', 'value': str(overall_summary.get('total_metrics_collected', 0))})
-        summary_data.append({'property': 'Successful Metrics', 'value': str(overall_summary.get('successful_metrics', 0))})
-        summary_data.append({'property': 'Failed Metrics', 'value': str(overall_summary.get('failed_metrics', 0))})
-        component_breakdown = overall_summary.get('component_breakdown', {}) if isinstance(overall_summary.get('component_breakdown'), dict) else {}
-        for component, count in component_breakdown.items():
-            try:
-                if int(count) > 0:
-                    summary_data.append({'property': f"{str(component).title()} Metrics", 'value': str(count)})
-            except Exception:
-                continue
-        overall_max = overall_summary.get('overall_max_latency', {}) if isinstance(overall_summary.get('overall_max_latency'), dict) else {}
-        if 'readable' in overall_max and isinstance(overall_max['readable'], dict):
-            readable = overall_max['readable']
-            summary_data.append({'property': 'Highest Latency', 'value': f"{readable.get('value', 0)} {readable.get('unit', 'ms')} ({overall_max.get('metric', 'unknown')})"})
-        overall_avg = overall_summary.get('overall_avg_latency', {}) if isinstance(overall_summary.get('overall_avg_latency'), dict) else {}
-        if 'readable' in overall_avg and isinstance(overall_avg['readable'], dict):
-            readable = overall_avg['readable']
-            summary_data.append({'property': 'Average Max Latency', 'value': f"{readable.get('value', 0)} {readable.get('unit', 'ms')}"})
+    
+    def _extract_collection_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract collection metadata"""
+        return {
+            'timestamp': data.get('collection_timestamp', 'Unknown'),
+            'query_type': data.get('query_type', 'Unknown'),
+            'duration': data.get('query_parameters', {}).get('duration', 'N/A'),
+            'total_metrics': data.get('summary', {}).get('total_metrics', 0),
+            'successful_metrics': data.get('summary', {}).get('successful_metrics', 0),
+            'failed_metrics': data.get('summary', {}).get('failed_metrics', 0)
+        }
+    
+    def _extract_ready_duration_metrics(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract ready duration metrics"""
+        metrics = []
+        ready_data = data.get('ready_duration_metrics', {})
+        
+        for metric_key, metric_info in ready_data.items():
+            if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
+                stats = metric_info['statistics']
+                metric_entry = {
+                    'metric_name': self.truncate_metric_name(metric_info.get('metric_name', metric_key)),
+                    'component': metric_info.get('component', 'Unknown'),
+                    'max_value': self.format_latency_value(stats.get('max_value', 0)),
+                    'avg_value': self.format_latency_value(stats.get('avg_value', 0)),
+                    'data_points': stats.get('count', 0),
+                    'severity': self.categorize_latency_severity(stats.get('max_value', 0))
+                }
+                
+                # Add top pod info
+                top_entries = stats.get('top_5', [])
+                if top_entries:
+                    top_pod = top_entries[0]
+                    metric_entry['top_pod'] = top_pod.get('pod_name', 'N/A')
+                    metric_entry['top_node'] = self.truncate_node_name(top_pod.get('node_name', 'N/A'))
+                
+                metrics.append(metric_entry)
+        
+        return metrics
+    
+    def _extract_sync_duration_metrics(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract sync duration metrics"""
+        metrics = []
+        sync_data = data.get('sync_duration_metrics', {})
+        
+        for metric_key, metric_info in sync_data.items():
+            if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
+                stats = metric_info['statistics']
+                metric_entry = {
+                    'metric_name': self.truncate_metric_name(metric_info.get('metric_name', metric_key)),
+                    'component': metric_info.get('component', 'Unknown'),
+                    'max_value': self.format_latency_value(stats.get('max_value', 0)),
+                    'avg_value': self.format_latency_value(stats.get('avg_value', 0)),
+                    'data_points': stats.get('count', 0),
+                    'severity': self.categorize_latency_severity(stats.get('max_value', 0))
+                }
+                
+                # For sync duration, show top 20 entries
+                top_entries = stats.get('top_20', stats.get('top_5', []))
+                if top_entries:
+                    top_pod = top_entries[0]
+                    metric_entry['top_pod'] = top_pod.get('pod_name', 'N/A')
+                    metric_entry['top_node'] = self.truncate_node_name(top_pod.get('node_name', 'N/A'))
+                    metric_entry['top_resource'] = top_pod.get('resource_name', 'N/A')
+                
+                metrics.append(metric_entry)
+        
+        return metrics
+    
+    def _extract_cni_latency_metrics(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract CNI latency metrics"""
+        metrics = []
+        cni_data = data.get('cni_latency_metrics', {})
+        
+        for metric_key, metric_info in cni_data.items():
+            if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
+                stats = metric_info['statistics']
+                metric_entry = {
+                    'metric_name': self.truncate_metric_name(metric_info.get('metric_name', metric_key)),
+                    'component': metric_info.get('component', 'Unknown'),
+                    'max_value': self.format_latency_value(stats.get('max_value', 0)),
+                    'avg_value': self.format_latency_value(stats.get('avg_value', 0)),
+                    'data_points': stats.get('count', 0),
+                    'severity': self.categorize_latency_severity(stats.get('max_value', 0))
+                }
+                
+                top_entries = stats.get('top_5', [])
+                if top_entries:
+                    top_pod = top_entries[0]
+                    metric_entry['top_pod'] = top_pod.get('pod_name', 'N/A')
+                    metric_entry['top_node'] = self.truncate_node_name(top_pod.get('node_name', 'N/A'))
+                
+                metrics.append(metric_entry)
+        
+        return metrics
+    
+    def _extract_pod_annotation_metrics(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract pod annotation metrics"""
+        metrics = []
+        pod_data = data.get('pod_annotation_metrics', {})
+        
+        for metric_key, metric_info in pod_data.items():
+            if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
+                stats = metric_info['statistics']
+                metric_entry = {
+                    'metric_name': self.truncate_metric_name(metric_info.get('metric_name', metric_key)),
+                    'component': metric_info.get('component', 'Unknown'),
+                    'max_value': self.format_latency_value(stats.get('max_value', 0)),
+                    'avg_value': self.format_latency_value(stats.get('avg_value', 0)),
+                    'data_points': stats.get('count', 0),
+                    'severity': self.categorize_latency_severity(stats.get('max_value', 0))
+                }
+                
+                top_entries = stats.get('top_5', [])
+                if top_entries:
+                    top_pod = top_entries[0]
+                    metric_entry['top_pod'] = top_pod.get('pod_name', 'N/A')
+                    metric_entry['top_node'] = self.truncate_node_name(top_pod.get('node_name', 'N/A'))
+                
+                metrics.append(metric_entry)
+        
+        return metrics
+    
+    def _extract_pod_creation_metrics(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract pod creation metrics"""
+        metrics = []
+        creation_data = data.get('pod_creation_metrics', {})
+        
+        for metric_key, metric_info in creation_data.items():
+            if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
+                stats = metric_info['statistics']
+                metric_entry = {
+                    'metric_name': self.truncate_metric_name(metric_info.get('metric_name', metric_key)),
+                    'component': metric_info.get('component', 'Unknown'),
+                    'max_value': self.format_latency_value(stats.get('max_value', 0)) if stats.get('max_value') else 'N/A',
+                    'avg_value': self.format_latency_value(stats.get('avg_value', 0)) if stats.get('avg_value') else 'N/A',
+                    'data_points': stats.get('count', 0),
+                    'severity': self.categorize_latency_severity(stats.get('max_value', 0)) if stats.get('max_value') else 'unknown'
+                }
+                
+                top_entries = stats.get('top_5', [])
+                if top_entries:
+                    # Find first non-null entry
+                    top_pod = None
+                    for entry in top_entries:
+                        if entry.get('value') is not None:
+                            top_pod = entry
+                            break
+                    
+                    if top_pod:
+                        metric_entry['top_pod'] = top_pod.get('pod_name', 'N/A')
+                        metric_entry['top_node'] = self.truncate_node_name(top_pod.get('node_name', 'N/A'))
+                    else:
+                        metric_entry['top_pod'] = 'N/A'
+                        metric_entry['top_node'] = 'N/A'
+                
+                metrics.append(metric_entry)
+        
+        return metrics
+    
+    def _extract_service_latency_metrics(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract service latency metrics"""
+        metrics = []
+        service_data = data.get('service_latency_metrics', {})
+        
+        for metric_key, metric_info in service_data.items():
+            if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
+                stats = metric_info['statistics']
+                metric_entry = {
+                    'metric_name': self.truncate_metric_name(metric_info.get('metric_name', metric_key)),
+                    'component': metric_info.get('component', 'Unknown'),
+                    'max_value': self.format_latency_value(stats.get('max_value', 0)),
+                    'avg_value': self.format_latency_value(stats.get('avg_value', 0)),
+                    'data_points': stats.get('count', 0),
+                    'severity': self.categorize_latency_severity(stats.get('max_value', 0))
+                }
+                
+                top_entries = stats.get('top_5', [])
+                if top_entries:
+                    top_pod = top_entries[0]
+                    metric_entry['top_pod'] = top_pod.get('pod_name', 'N/A')
+                    metric_entry['top_node'] = self.truncate_node_name(top_pod.get('node_name', 'N/A'))
+                
+                metrics.append(metric_entry)
+        
+        return metrics
+    
+    def _extract_network_config_metrics(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract network configuration metrics"""
+        metrics = []
+        network_data = data.get('network_config_metrics', {})
+        
+        for metric_key, metric_info in network_data.items():
+            if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
+                stats = metric_info['statistics']
+                metric_entry = {
+                    'metric_name': self.truncate_metric_name(metric_info.get('metric_name', metric_key)),
+                    'component': metric_info.get('component', 'Unknown'),
+                    'max_value': self.format_latency_value(stats.get('max_value', 0)),
+                    'avg_value': self.format_latency_value(stats.get('avg_value', 0)),
+                    'data_points': stats.get('count', 0),
+                    'severity': self.categorize_latency_severity(stats.get('max_value', 0))
+                }
+                
+                top_entries = stats.get('top_5', [])
+                if top_entries:
+                    top_pod = top_entries[0]
+                    metric_entry['top_pod'] = top_pod.get('pod_name', 'N/A')
+                    metric_entry['top_node'] = self.truncate_node_name(top_pod.get('node_name', 'N/A'))
+                    # Handle service name for network config metrics
+                    if top_pod.get('service_name'):
+                        metric_entry['top_service'] = top_pod.get('service_name', 'N/A')
+                
+                metrics.append(metric_entry)
+        
+        return metrics
+    
+    def _extract_latency_summary(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract overall latency summary"""
+        summary = data.get('summary', {})
+        
+        summary_data = {
+            'total_metrics': summary.get('total_metrics', 0),
+            'successful_metrics': summary.get('successful_metrics', 0),
+            'failed_metrics': summary.get('failed_metrics', 0),
+            'controller_metrics': summary.get('component_breakdown', {}).get('controller', 0),
+            'node_metrics': summary.get('component_breakdown', {}).get('node', 0),
+            'overall_max_latency': 'N/A',
+            'overall_avg_latency': 'N/A',
+            'critical_metric': 'N/A'
+        }
+        
+        # Extract overall latency info
+        if 'overall_max_latency' in summary:
+            max_info = summary['overall_max_latency']
+            readable = max_info.get('readable', {})
+            summary_data['overall_max_latency'] = f"{readable.get('value', 0)} {readable.get('unit', '')}"
+            summary_data['critical_metric'] = max_info.get('metric', 'N/A')
+        
+        if 'overall_avg_latency' in summary:
+            avg_info = summary['overall_avg_latency']
+            readable = avg_info.get('readable', {})
+            summary_data['overall_avg_latency'] = f"{readable.get('value', 0)} {readable.get('unit', '')}"
+        
         return summary_data
-
-    def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-        dataframes: Dict[str, pd.DataFrame] = {}
-        try:
-            if structured_data.get('metadata'):
-                metadata_list: List[Dict[str, Any]] = []
-                for key, value in structured_data['metadata'].items():
-                    metadata_list.append({'property': key.replace('_', ' ').title(), 'value': str(value)})
-                if metadata_list:
-                    dataframes['latency_metadata'] = pd.DataFrame(metadata_list)
-            if structured_data.get('summary'):
-                dataframes['latency_summary'] = pd.DataFrame(structured_data['summary'])
-            if structured_data.get('top_latencies'):
-                dataframes['top_latencies'] = pd.DataFrame(structured_data['top_latencies'])
-            categories = {
-                'ready_duration': 'Ready Duration Metrics',
-                'sync_duration': 'Sync Duration Metrics',
-                'percentile_latency': 'Percentile Latency Metrics',
-                'pod_latency': 'Pod Latency Metrics',
-                'cni_latency': 'CNI Latency Metrics',
-                'service_latency': 'Service Latency Metrics',
-                'network_programming': 'Network Programming Metrics'
+    
+    def _extract_top_latencies_detail(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract detailed top latencies for comprehensive view"""
+        top_latencies = []
+        summary = data.get('summary', {})
+        
+        for metric in summary.get('top_latencies', [])[:10]:  # Top 10
+            latency_entry = {
+                'rank': len(top_latencies) + 1,
+                'metric_name': self.truncate_metric_name(metric.get('metric_name', 'Unknown')),
+                'component': metric.get('component', 'Unknown'),
+                'max_latency': f"{metric.get('readable_max', {}).get('value', 0)} {metric.get('readable_max', {}).get('unit', '')}",
+                'avg_latency': f"{metric.get('readable_avg', {}).get('value', 0)} {metric.get('readable_avg', {}).get('unit', '')}",
+                'data_points': metric.get('data_points', 0),
+                'severity': self.categorize_latency_severity(metric.get('max_value', 0))
             }
-            for category_key in categories.keys():
-                category_data = structured_data.get(category_key, [])
-                if category_data:
-                    df = pd.DataFrame(category_data)
-                    if not df.empty:
-                        dataframes[category_key] = df
+            top_latencies.append(latency_entry)
+        
+        return top_latencies
+    
+    def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+        """Transform structured latency data to DataFrames"""
+        dataframes = {}
+        
+        try:
+            # Collection info
+            if 'collection_info' in structured_data:
+                collection_data = [
+                    {'Property': 'Collection Time', 'Value': structured_data['collection_info']['timestamp'][:19]},
+                    {'Property': 'Query Type', 'Value': structured_data['collection_info']['query_type'].title()},
+                    {'Property': 'Duration', 'Value': structured_data['collection_info']['duration']},
+                    {'Property': 'Total Metrics', 'Value': str(structured_data['collection_info']['total_metrics'])},
+                    {'Property': 'Success Rate', 'Value': f"{structured_data['collection_info']['successful_metrics']}/{structured_data['collection_info']['total_metrics']}"}
+                ]
+                dataframes['latencyelt_collection_info'] = pd.DataFrame(collection_data)
+            
+            # Ready duration metrics
+            if structured_data.get('ready_duration_metrics'):
+                df = pd.DataFrame(structured_data['ready_duration_metrics'])
+                if not df.empty:
+                    dataframes['latencyelt_ready_duration'] = df
+            
+            # Sync duration metrics
+            if structured_data.get('sync_duration_metrics'):
+                df = pd.DataFrame(structured_data['sync_duration_metrics'])
+                if not df.empty:
+                    dataframes['latencyelt_sync_duration'] = df
+            
+            # CNI latency metrics
+            if structured_data.get('cni_latency_metrics'):
+                df = pd.DataFrame(structured_data['cni_latency_metrics'])
+                if not df.empty:
+                    dataframes['latencyelt_cni_latency'] = df
+            
+            # Pod annotation metrics
+            if structured_data.get('pod_annotation_metrics'):
+                df = pd.DataFrame(structured_data['pod_annotation_metrics'])
+                if not df.empty:
+                    dataframes['latencyelt_pod_annotation'] = df
+            
+            # Pod creation metrics
+            if structured_data.get('pod_creation_metrics'):
+                df = pd.DataFrame(structured_data['pod_creation_metrics'])
+                if not df.empty:
+                    dataframes['latencyelt_pod_creation'] = df
+            
+            # Service latency metrics
+            if structured_data.get('service_latency_metrics'):
+                df = pd.DataFrame(structured_data['service_latency_metrics'])
+                if not df.empty:
+                    dataframes['latencyelt_service_latency'] = df
+            
+            # Network config metrics
+            if structured_data.get('network_config_metrics'):
+                df = pd.DataFrame(structured_data['network_config_metrics'])
+                if not df.empty:
+                    dataframes['latencyelt_network_config'] = df
+            
+            # Latency summary
+            if 'latency_summary' in structured_data:
+                summary_data = [
+                    {'Property': 'Total Metrics', 'Value': str(structured_data['latency_summary']['total_metrics'])},
+                    {'Property': 'Controller Metrics', 'Value': str(structured_data['latency_summary']['controller_metrics'])},
+                    {'Property': 'Node Metrics', 'Value': str(structured_data['latency_summary']['node_metrics'])},
+                    {'Property': 'Overall Max Latency', 'Value': structured_data['latency_summary']['overall_max_latency']},
+                    {'Property': 'Overall Avg Latency', 'Value': structured_data['latency_summary']['overall_avg_latency']},
+                    {'Property': 'Critical Metric', 'Value': self.truncate_text(structured_data['latency_summary']['critical_metric'], 40)}
+                ]
+                dataframes['latencyelt_summary'] = pd.DataFrame(summary_data)
+            
+            # Top latencies detail (from summary)
+            top_latencies = self._extract_top_latencies_detail({'summary': structured_data.get('latency_summary', {})})
+            if top_latencies:
+                dataframes['latencyelt_top_latencies'] = pd.DataFrame(top_latencies)
+            
             return dataframes
+            
         except Exception as e:
-            logger.error(f"Failed to transform OVN latency data to DataFrames: {e}")
+            logger.error(f"Failed to create latency DataFrames: {e}")
             return {}
-
+    
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
-        html_tables: Dict[str, str] = {}
+        """Generate HTML tables with latency-specific styling"""
+        html_tables = {}
+        
         try:
             for table_name, df in dataframes.items():
                 if df.empty:
                     continue
-                if table_name in ['latency_metadata', 'latency_summary']:
-                    limited_df = self.limit_dataframe_columns(df, 2, table_name)
-                else:
-                    # Work on a copy and drop the 'component' column if present
-                    limited_df = df.copy()
-                if 'component' in limited_df.columns:
-                    limited_df = limited_df.drop(columns=['component'])
-                html_table = self.create_html_table(limited_df, table_name)
-                html_tables[table_name] = html_table
-            return html_tables
-        except Exception as e:
-            logger.error(f"Failed to generate HTML tables for OVN latency data: {e}")
-            return {}
-
-    def summarize_ovn_latency_data(self, structured_data: Dict[str, Any]) -> str:
-        try:
-            summary_parts: List[str] = ["OVN Latency Analysis:"]
-            metadata = structured_data.get('metadata', {}) if isinstance(structured_data.get('metadata'), dict) else {}
-            collection_type = metadata.get('collection_type', 'unknown')
-            query_type = metadata.get('query_type', 'instant')
-            summary_parts.append(f"• Collection type: {collection_type} ({query_type} query)")
-            total_metrics = 0
-            categories_with_data: List[str] = []
-            categories = ['ready_duration', 'sync_duration', 'percentile_latency', 'pod_latency', 'cni_latency', 'service_latency', 'network_programming']
-            for category in categories:
-                count = len(structured_data.get(category, [])) if isinstance(structured_data.get(category), list) else 0
-                if count > 0:
-                    total_metrics += count
-                    categories_with_data.append(f"{category.replace('_', ' ')}: {count}")
-            if total_metrics > 0:
-                summary_parts.append(f"• Total metrics with data: {total_metrics}")
-                summary_parts.append(f"• Categories: {', '.join(categories_with_data[:3])}")
-            top_latencies = structured_data.get('top_latencies', []) if isinstance(structured_data.get('top_latencies'), list) else []
-            if top_latencies:
-                top_metric = top_latencies[0]
-                summary_parts.append(f"• Highest latency: {top_metric.get('max_latency', 'unknown')} ({top_metric.get('metric_name', 'unknown')})")
-            summary_data = structured_data.get('summary', []) if isinstance(structured_data.get('summary'), list) else []
-            successful_metrics = next((item.get('value') for item in summary_data if isinstance(item, dict) and 'successful' in str(item.get('property', '')).lower()), '0')
-            failed_metrics = next((item.get('value') for item in summary_data if isinstance(item, dict) and 'failed' in str(item.get('property', '')).lower()), '0')
-            summary_parts.append(f"• Success rate: {successful_metrics} successful, {failed_metrics} failed")
-            return " ".join(summary_parts)
-        except Exception as e:
-            logger.error(f"Failed to summarize OVN latency data: {e}")
-            return f"OVN Latency Analysis summary generation failed: {str(e)}"
-
-# Main extraction functions using ELT infrastructure
-def extract_ovn_latency_to_readable_tables(prometheus_results: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Extract OVN latency metrics and convert to readable HTML tables using existing ELT infrastructure
-    
-    Args:
-        prometheus_results: Dictionary containing OVN latency metrics from Prometheus
-        
-    Returns:
-        Dictionary with structured data, HTML tables, and summary
-    """
-    from .ovnk_benchmark_elt_json2table import convert_json_to_tables
-    
-    try:
-        # Use the existing ELT infrastructure to convert data to tables
-        result = convert_json_to_tables(
-            json_data=prometheus_results,
-            table_format="html",
-            compact=True
-        )
-        
-        if 'error' in result:
-            logger.error(f"Failed to extract OVN latency data: {result['error']}")
-            return {
-                'success': False,
-                'error': result['error'],
-                'raw_data': prometheus_results
-            }
-        
-        # Extract the converted data
-        html_tables = result.get('html', {})
-        summary = result.get('summary', 'OVN latency metrics processed')
-        metadata = result.get('metadata', {})
-        
-        # Create organized response
-        response = {
-            'success': True,
-            'data_type': metadata.get('data_type', 'ovn_latency_metrics'),
-            'summary': summary,
-            'html_tables': html_tables,
-            'metadata': {
-                'collection_timestamp': prometheus_results.get('collection_timestamp', datetime.now().isoformat()),
-                'query_type': prometheus_results.get('query_type', 'ovn_latency'),
-                'tables_generated': len(html_tables),
-                'table_names': list(html_tables.keys()) if html_tables else []
-            },
-            'raw_prometheus_data': prometheus_results
-        }
-        
-        # Add specific OVN latency insights if available
-        if 'overall_summary' in prometheus_results:
-            overall = prometheus_results['overall_summary']
-            response['insights'] = {
-                'total_metrics': overall.get('total_metrics_collected', 0),
-                'successful_metrics': overall.get('successful_metrics', 0),
-                'failed_metrics': overall.get('failed_metrics', 0),
-                'top_latency_components': [
-                    {
-                        'component': lat.get('component', 'Unknown'),
-                        'metric': lat.get('metric_name', 'Unknown'),
-                        'max_latency': lat.get('readable_max', {})
-                    }
-                    for lat in overall.get('top_latencies', [])[:3]
-                ]
-            }
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Failed to extract OVN latency metrics: {e}")
-        return {
-            'success': False,
-            'error': str(e),
-            'raw_data': prometheus_results
-        }
-
-def format_ovn_latency_response_for_display(extracted_data: Dict[str, Any]) -> str:
-    """
-    Format the extracted OVN latency data for human-readable display
-    
-    Args:
-        extracted_data: Output from extract_ovn_latency_to_readable_tables
-        
-    Returns:
-        Formatted HTML string for display
-    """
-    try:
-        if not extracted_data.get('success', False):
-            error_msg = extracted_data.get('error', 'Unknown error occurred')
-            return f"""
-            <div class="alert alert-danger">
-                <h4>OVN Latency Analysis Failed</h4>
-                <p>Error: {error_msg}</p>
-            </div>
-            """
-        
-        # Build the display output
-        output_parts = []
-        
-        # Add header with data type and timestamp
-        metadata = extracted_data.get('metadata', {})
-        data_type = metadata.get('data_type', 'OVN Latency').replace('_', ' ').title()
-        timestamp = metadata.get('collection_timestamp', 'Unknown')
-        
-        output_parts.append(f"""
-        <div class="mb-3">
-            <span class="badge badge-primary">{data_type}</span>
-            <small class="text-muted ml-2">Collected: {timestamp[:19] if timestamp != 'Unknown' else timestamp}</small>
-        </div>
-        """)
-        
-        # Add summary
-        summary = extracted_data.get('summary', '')
-        if summary:
-            output_parts.append(f"""
-            <div class="alert alert-info">
-                <strong>Summary:</strong> {summary}
-            </div>
-            """)
-        
-        # Add insights if available
-        insights = extracted_data.get('insights', {})
-        if insights:
-            total_metrics = insights.get('total_metrics', 0)
-            successful = insights.get('successful_metrics', 0)
-            failed = insights.get('failed_metrics', 0)
-            
-            output_parts.append(f"""
-            <div class="alert alert-light">
-                <strong>Metrics Overview:</strong> {total_metrics} total ({successful} successful, {failed} failed)
-            </div>
-            """)
-            
-            # Add top latency components
-            top_components = insights.get('top_latency_components', [])
-            if top_components:
-                components_html = []
-                for i, comp in enumerate(top_components, 1):
-                    readable = comp.get('max_latency', {})
-                    value = readable.get('value', 'N/A')
-                    unit = readable.get('unit', 'ms')
-                    components_html.append(f"{i}. {comp.get('component', 'Unknown')}: {value} {unit}")
                 
-                output_parts.append(f"""
-                <div class="alert alert-warning">
-                    <strong>Top Latencies:</strong><br>
-                    {'<br>'.join(components_html)}
-                </div>
-                """)
-        
-        # Add HTML tables
-        html_tables = extracted_data.get('html_tables', {})
-        if html_tables:
-            # Define preferred table order for OVN latency metrics
-            preferred_order = [
-                'latency_metadata', 'latency_summary', 'top_latencies',
-                'ready_duration', 'sync_duration', 'percentile_latency',
-                'pod_latency', 'cni_latency', 'service_latency', 
-                'network_programming'
-            ]
-            
-            # Add tables in preferred order
-            added_tables = set()
-            for table_name in preferred_order:
-                if table_name in html_tables:
-                    table_title = table_name.replace('_', ' ').title()
-                    if table_name == 'latency_metadata':
-                        table_title = 'Collection Metadata'
-                    elif table_name == 'latency_summary':
-                        table_title = 'Overall Summary'
-                    elif table_name == 'top_latencies':
-                        table_title = 'Top 5 Latencies (Overall)'
-                    elif 'duration' in table_name or 'latency' in table_name:
-                        table_title = f"Top 5 {table_title} Metrics"
+                # Apply column limiting based on table type
+                df_limited = self.limit_dataframe_columns(df, table_name=table_name)
+                
+                # Apply latency-specific formatting
+                if 'severity' in df_limited.columns:
+                    df_formatted = df_limited.copy()
                     
-                    output_parts.append(f"""
-                    <div class="mt-4">
-                        <h5 class="text-primary">{table_title}</h5>
-                        {html_tables[table_name]}
-                    </div>
-                    """)
-                    added_tables.add(table_name)
+                    # Create severity badges for max_value column
+                    if 'max_value' in df_formatted.columns:
+                        df_formatted['max_value'] = df_formatted.apply(
+                            lambda row: self._create_latency_badge_html(row['max_value'], row.get('severity', 'unknown')), 
+                            axis=1
+                        )
+                    
+                    # Create severity badges for component column
+                    if 'component' in df_formatted.columns:
+                        df_formatted['component'] = df_formatted['component'].apply(
+                            lambda x: f'<span class="badge badge-secondary">{x}</span>'
+                        )
+                    
+                    html_tables[table_name] = self._create_enhanced_html_table(df_formatted, table_name)
+                
+                elif table_name == 'latencyelt_top_latencies':
+                    df_formatted = df_limited.copy()
+                    
+                    # Highlight rank 1 (critical)
+                    if 'rank' in df_formatted.columns:
+                        df_formatted['rank'] = df_formatted['rank'].apply(
+                            lambda x: f'<span class="badge badge-danger">#{x}</span>' if x == 1 
+                            else f'<span class="badge badge-warning">#{x}</span>' if x <= 3
+                            else f'<span class="badge badge-info">#{x}</span>'
+                        )
+                    
+                    if 'max_latency' in df_formatted.columns:
+                        df_formatted['max_latency'] = df_formatted.apply(
+                            lambda row: f'<span class="text-danger font-weight-bold">{row["max_latency"]}</span>' if row.get('rank', 999) == 1 
+                            else f'<span class="text-warning">{row["max_latency"]}</span>' if row.get('rank', 999) <= 3
+                            else row['max_latency'], 
+                            axis=1
+                        )
+                    
+                    html_tables[table_name] = self._create_enhanced_html_table(df_formatted, table_name)
+                
+                else:
+                    html_tables[table_name] = self.create_html_table(df_limited, table_name)
             
-            # Add any remaining tables
-            for table_name, table_html in html_tables.items():
-                if table_name not in added_tables:
-                    table_title = table_name.replace('_', ' ').title()
-                    output_parts.append(f"""
-                    <div class="mt-4">
-                        <h5 class="text-primary">{table_title}</h5>
-                        {table_html}
-                    </div>
-                    """)
-        else:
-            output_parts.append("""
-            <div class="alert alert-warning">
-                No tables were generated from the latency data.
-            </div>
-            """)
-        
-        # Add footer with table count
-        table_count = len(html_tables)
-        output_parts.append(f"""
-        <div class="mt-3 text-muted">
-            <small>Generated {table_count} table{'s' if table_count != 1 else ''} from OVN latency metrics</small>
-        </div>
-        """)
-        
-        return ''.join(output_parts)
-        
-    except Exception as e:
-        logger.error(f"Failed to format OVN latency response: {e}")
-        return f"""
-        <div class="alert alert-danger">
-            <h4>Display Formatting Failed</h4>
-            <p>Error: {str(e)}</p>
-        </div>
-        """
-
-def get_ovn_latency_brief_summary(prometheus_results: Dict[str, Any]) -> str:
-    """
-    Get a brief text summary of OVN latency metrics using existing ELT infrastructure
+            return html_tables
+            
+        except Exception as e:
+            logger.error(f"Failed to generate latency HTML tables: {e}")
+            return {}
     
-    Args:
-        prometheus_results: Dictionary containing OVN latency metrics from Prometheus
-        
-    Returns:
-        Brief text summary string
-    """
-    try:
-        # Use the specialized OVN latency ELT module for summary generation
-        ovn_elt = ovnLatencyELT()
-        
-        # Extract structured data first
-        structured_data = ovn_elt.extract_ovn_latency_data(prometheus_results)
-        
-        if 'error' in structured_data:
-            return f"OVN Latency Analysis: Failed to process data ({structured_data['error']})"
-        
-        # Generate summary using the specialized module
-        summary = ovn_elt.summarize_ovn_latency_data(structured_data)
-        
-        return summary
-        
-    except Exception as e:
-        logger.error(f"Failed to generate OVN latency brief summary: {e}")
-        return f"OVN Latency Analysis: Summary generation failed ({str(e)})"
-
-# Main entry points for external use
-async def collect_and_analyze_ovn_latency(prometheus_client, duration: str = '10m', 
-                                        query_type: str = 'comprehensive') -> Dict[str, Any]:
-    """
-    Main entry point for collecting and analyzing OVN latency metrics
-    
-    Args:
-        prometheus_client: Prometheus client instance
-        duration: Duration for metrics collection
-        query_type: Type of analysis to perform
-        
-    Returns:
-        Complete analysis with metrics, tables, and summaries
-    """
-    try:
-        # Initialize analyzer
-        analyzer = ovnLatencyELT(prometheus_client)
-        
-        # Collect raw metrics
-        raw_metrics = await analyzer.collect_ovn_latency_metrics(duration, query_type)
-        
-        if 'error' in raw_metrics:
-            return {
-                'success': False,
-                'error': raw_metrics['error'],
-                'collection_timestamp': raw_metrics.get('collection_timestamp')
-            }
-        
-        # Extract and format using ELT infrastructure
-        extracted_data = extract_ovn_latency_to_readable_tables(raw_metrics)
-        
-        if not extracted_data.get('success', False):
-            return {
-                'success': False,
-                'error': extracted_data.get('error'),
-                'raw_metrics': raw_metrics
-            }
-        
-        # Format for display
-        formatted_display = format_ovn_latency_response_for_display(extracted_data)
-        
-        # Get brief summary
-        brief_summary = get_ovn_latency_brief_summary(raw_metrics)
-        
-        return {
-            'success': True,
-            'raw_metrics': raw_metrics,
-            'extracted_data': extracted_data,
-            'formatted_display': formatted_display,
-            'brief_summary': brief_summary,
-            'analysis_metadata': {
-                'analyzer_version': '2.0',
-                'collection_duration': duration,
-                'query_type': query_type,
-                'analysis_timestamp': datetime.now().isoformat(),
-                'uses_elt_infrastructure': True
-            }
+    def _create_latency_badge_html(self, value: str, severity: str) -> str:
+        """Create HTML badge for latency value with severity color"""
+        badge_colors = {
+            'critical': 'danger',
+            'high': 'warning', 
+            'medium': 'info',
+            'low': 'success',
+            'unknown': 'secondary'
         }
         
-    except Exception as e:
-        logger.error(f"Failed to collect and analyze OVN latency: {e}")
-        return {
-            'success': False,
-            'error': str(e),
-            'analysis_timestamp': datetime.now().isoformat()
-        }
+        color = badge_colors.get(severity, 'secondary')
+        return f'<span class="badge badge-{color}">{value}</span>'
+    
+    def _create_enhanced_html_table(self, df: pd.DataFrame, table_name: str) -> str:
+        """Create enhanced HTML table with custom styling for latency data"""
+        try:
+            # Add custom CSS class based on table type
+            css_class = 'table table-striped table-bordered table-sm'
+            if 'top_latencies' in table_name:
+                css_class += ' table-hover'
+            elif 'summary' in table_name:
+                css_class += ' table-info'
+            
+            html = df.to_html(
+                index=False,
+                classes=css_class,
+                escape=False,
+                table_id=f"table-{table_name.replace('_', '-')}",
+                border=1
+            )
+            
+            # Clean up HTML
+            html = self.clean_html(html)
+            
+            # Add responsive wrapper
+            html = f'<div class="table-responsive">{html}</div>'
+            
+            return html
+            
+        except Exception as e:
+            logger.error(f"Failed to create enhanced HTML table for {table_name}: {e}")
+            return f'<div class="alert alert-danger">Error generating table: {str(e)}</div>'
+    
+    def summarize_ovn_latency_data(self, structured_data: Dict[str, Any]) -> str:
+        """Generate summary text for OVN latency data"""
+        try:
+            summary_parts = []
+            
+            # Collection info
+            if 'collection_info' in structured_data:
+                info = structured_data['collection_info']
+                summary_parts.append(f"Collected {info['successful_metrics']}/{info['total_metrics']} latency metrics")
+                if info['duration'] != 'N/A':
+                    summary_parts.append(f"over {info['duration']}")
+            
+            # Overall latency summary
+            if 'latency_summary' in structured_data:
+                summary = structured_data['latency_summary']
+                if summary['overall_max_latency'] != 'N/A':
+                    summary_parts.append(f"• Maximum latency: {summary['overall_max_latency']}")
+                if summary['critical_metric'] != 'N/A':
+                    metric_name = self.truncate_metric_name(summary['critical_metric'], 25)
+                    summary_parts.append(f"• Critical metric: {metric_name}")
+                
+                summary_parts.append(f"• Controller metrics: {summary['controller_metrics']}")
+                summary_parts.append(f"• Node metrics: {summary['node_metrics']}")
+            
+            # Component breakdown
+            component_counts = {}
+            for category in ['ready_duration_metrics', 'sync_duration_metrics', 'cni_latency_metrics',
+                           'pod_annotation_metrics', 'pod_creation_metrics', 'service_latency_metrics', 
+                           'network_config_metrics']:
+                if category in structured_data and structured_data[category]:
+                    count = len(structured_data[category])
+                    category_name = category.replace('_metrics', '').replace('_', ' ').title()
+                    component_counts[category_name] = count
+            
+            if component_counts:
+                summary_parts.append("• Metrics by category: " + 
+                                   ", ".join([f"{k}: {v}" for k, v in component_counts.items()]))
+            
+            return " ".join(summary_parts)
+            
+        except Exception as e:
+            logger.error(f"Failed to generate latency summary: {e}")
+            return f"Latency summary generation failed: {str(e)}"
 
-# Export main functions
-__all__ = [
-    'ovnLatencyELT',
-    'extract_ovn_latency_to_readable_tables',
-    'format_ovn_latency_response_for_display', 
-    'get_ovn_latency_brief_summary',
-    'collect_and_analyze_ovn_latency'
-]
+# Query functions for latency data collection
+async def latencyelt_get_controller_sync_top20(prometheus_client, time: str = None, duration: str = None, end_time: str = None):
+    """Get top 20 controller sync duration metrics with detailed pod/node/resource info"""
+    from tools.ovnk_benchmark_prometheus_ovnk_latency import OVNLatencyCollector
+    
+    collector = OVNLatencyCollector(prometheus_client)
+    result = await collector.collect_controller_sync_duration(time, duration, end_time)
+    
+    # Extract top 20 detailed entries
+    if 'statistics' in result and 'top_20' in result['statistics']:
+        top_20_entries = []
+        for entry in result['statistics']['top_20']:
+            detailed_entry = {
+                'pod_name': entry.get('pod_name', 'N/A'),
+                'node_name': entry.get('node_name', 'N/A'),
+                'resource_name': entry.get('resource_name', 'N/A'),
+                'value_seconds': entry.get('value', 0),
+                'readable_value': entry.get('readable_value', {}),
+                'formatted_value': f"{entry.get('readable_value', {}).get('value', 0)} {entry.get('readable_value', {}).get('unit', '')}"
+            }
+            top_20_entries.append(detailed_entry)
+        
+        return {
+            'metric_name': 'ovnkube_controller_sync_duration_seconds',
+            'total_entries': len(top_20_entries),
+            'max_value': result['statistics'].get('max_value', 0),
+            'avg_value': result['statistics'].get('avg_value', 0),
+            'top_20_detailed': top_20_entries
+        }
+    
+    return {'error': 'No sync duration data available'}
+
+async def latencyelt_get_comprehensive_metrics(prometheus_client, time: str = None, duration: str = None, end_time: str = None):
+    """Get comprehensive latency metrics for all components"""
+    from tools.ovnk_benchmark_prometheus_ovnk_latency import collect_enhanced_ovn_latency_metrics
+    
+    return await collect_enhanced_ovn_latency_metrics(
+        prometheus_client, time, duration, end_time,
+        include_controller_metrics=True,
+        include_node_metrics=True, 
+        include_extended_metrics=True
+    )
+
+async def latencyelt_get_metric_top5_detail(prometheus_client, metric_name: str, time: str = None, duration: str = None, end_time: str = None):
+    """Get detailed top 5 entries for any specific metric"""
+    from tools.ovnk_benchmark_prometheus_ovnk_latency import OVNLatencyCollector
+    
+    collector = OVNLatencyCollector(prometheus_client)
+    result = await collector._collect_metric(metric_name, time, duration, end_time)
+    
+    if 'statistics' in result and result['statistics'].get('count', 0) > 0:
+        stats = result['statistics']
+        top_entries = stats.get('top_5', [])
+        
+        detailed_entries = []
+        for i, entry in enumerate(top_entries[:5]):
+            detailed_entry = {
+                'rank': i + 1,
+                'pod_name': entry.get('pod_name', 'N/A'),
+                'node_name': entry.get('node_name', 'N/A'),
+                'value_seconds': entry.get('value', 0),
+                'readable_value': entry.get('readable_value', {}),
+                'formatted_value': f"{entry.get('readable_value', {}).get('value', 0)} {entry.get('readable_value', {}).get('unit', '')}"
+            }
+            
+            # Add resource name for sync metrics
+            if 'resource_name' in entry:
+                detailed_entry['resource_name'] = entry.get('resource_name', 'N/A')
+            
+            # Add service name for network config metrics
+            if 'service_name' in entry:
+                detailed_entry['service_name'] = entry.get('service_name', 'N/A')
+            
+            detailed_entries.append(detailed_entry)
+        
+        return {
+            'metric_name': metric_name,
+            'component': result.get('component', 'Unknown'),
+            'unit': result.get('unit', 'seconds'),
+            'total_entries': stats.get('count', 0),
+            'max_value': stats.get('max_value', 0),
+            'avg_value': stats.get('avg_value', 0),
+            'top_5_detailed': detailed_entries
+        }
+    
+    return {'error': f'No data available for metric: {metric_name}'}
+
+async def latencyelt_get_all_metrics_avg_max(prometheus_client, time: str = None, duration: str = None, end_time: str = None):
+    """Get avg/max values for all latency metrics with top 5 details"""
+    comprehensive_data = await latencyelt_get_comprehensive_metrics(prometheus_client, time, duration, end_time)
+    
+    if 'error' in comprehensive_data:
+        return comprehensive_data
+    
+    metrics_summary = {}
+    
+    # Process all metric categories
+    categories = [
+        'ready_duration_metrics', 'sync_duration_metrics', 'cni_latency_metrics',
+        'pod_annotation_metrics', 'pod_creation_metrics', 'service_latency_metrics', 
+        'network_config_metrics'
+    ]
+    
+    for category in categories:
+        if category in comprehensive_data:
+            category_data = comprehensive_data[category]
+            
+            for metric_key, metric_info in category_data.items():
+                if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
+                    stats = metric_info['statistics']
+                    
+                    # Extract top 5 pod details
+                    top_5_details = []
+                    top_entries = stats.get('top_5', stats.get('top_20', [])[:5])
+                    
+                    for i, entry in enumerate(top_entries[:5]):
+                        if entry.get('value') is not None:
+                            detail = {
+                                'rank': i + 1,
+                                'pod_name': entry.get('pod_name', 'N/A'),
+                                'node_name': entry.get('node_name', 'N/A'),
+                                'value': entry.get('value', 0),
+                                'unit': metric_info.get('unit', 'seconds'),
+                                'formatted_value': f"{entry.get('readable_value', {}).get('value', 0)} {entry.get('readable_value', {}).get('unit', '')}"
+                            }
+                            
+                            # Add additional fields if present
+                            if 'resource_name' in entry:
+                                detail['resource_name'] = entry.get('resource_name', 'N/A')
+                            if 'service_name' in entry:
+                                detail['service_name'] = entry.get('service_name', 'N/A')
+                            
+                            top_5_details.append(detail)
+                    
+                    metrics_summary[metric_key] = {
+                        'metric_name': metric_info.get('metric_name', metric_key),
+                        'component': metric_info.get('component', 'Unknown'),
+                        'unit': metric_info.get('unit', 'seconds'),
+                        'max_value': stats.get('max_value', 0),
+                        'avg_value': stats.get('avg_value', 0),
+                        'readable_max': stats.get('readable_max', {}),
+                        'readable_avg': stats.get('readable_avg', {}),
+                        'data_points': stats.get('count', 0),
+                        'top_5_pods': top_5_details
+                    }
+    
+    return {
+        'collection_timestamp': comprehensive_data.get('collection_timestamp', ''),
+        'query_type': comprehensive_data.get('query_type', 'instant'),
+        'total_metrics': len(metrics_summary),
+        'metrics_details': metrics_summary,
+        'overall_summary': comprehensive_data.get('summary', {})
+    }

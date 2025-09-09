@@ -148,6 +148,20 @@ class EltUtility:
         if max_cols is None:
             max_cols = self.max_columns
         
+        # Special handling for latencyELT tables
+        if table_name and table_name.startswith('latencyelt_'):
+            if table_name == 'latencyelt_collection_info':
+                max_cols = 2  # Property-value format
+            elif table_name == 'latencyelt_summary':
+                max_cols = 2  # Property-value format
+            elif table_name == 'latencyelt_top_latencies':
+                return df  # Show all columns for top latencies detail
+            elif table_name in ['latencyelt_ready_duration', 'latencyelt_sync_duration', 
+                            'latencyelt_cni_latency', 'latencyelt_pod_annotation',
+                            'latencyelt_pod_creation', 'latencyelt_service_latency', 
+                            'latencyelt_network_config']:
+                max_cols = 6  # Show more columns for detailed latency metrics
+        
         # Special handling for specific tables that should show all columns or have different limits
         if table_name in ['controlplane_nodes_detail', 'infra_nodes_detail', 'nodes_usage_detailed', 'nodes_network_usage']:
             return df  # Don't limit detail tables - UPDATED to include both new node tables
@@ -494,3 +508,174 @@ class EltUtility:
         else:
             return f'{value}{unit}'
 
+    def create_latencyelt_severity_badge(self, value: str, severity: str) -> str:
+        """Create HTML badge for latencyELT severity with enhanced styling"""
+        badge_colors = {
+            'critical': 'danger',
+            'high': 'warning',
+            'medium': 'info', 
+            'low': 'success',
+            'unknown': 'secondary'
+        }
+        
+        color = badge_colors.get(severity, 'secondary')
+        
+        # Add pulsing animation for critical values
+        if severity == 'critical':
+            return f'<span class="badge badge-{color} badge-pulse">{value}</span>'
+        elif severity == 'high':
+            return f'<span class="badge badge-{color} font-weight-bold">{value}</span>'
+        else:
+            return f'<span class="badge badge-{color}">{value}</span>'
+
+    def highlight_latencyelt_critical_metric(self, metric_name: str, rank: int = None) -> str:
+        """Highlight critical metrics in latencyELT tables"""
+        if rank == 1:
+            return f'<span class="text-danger font-weight-bold">{metric_name}</span> <span class="badge badge-danger">CRITICAL</span>'
+        elif rank and rank <= 3:
+            return f'<span class="text-warning font-weight-bold">{metric_name}</span>'
+        else:
+            return metric_name
+
+    def create_latencyelt_component_badge(self, component: str) -> str:
+        """Create component badge for latencyELT with appropriate styling"""
+        component_colors = {
+            'controller': 'primary',
+            'node': 'info',
+            'cni': 'success',
+            'unknown': 'secondary'
+        }
+        
+        color = component_colors.get(component.lower(), 'secondary')
+        return f'<span class="badge badge-{color}">{component.title()}</span>'
+
+    def format_latencyelt_duration(self, value: float, unit: str = 'seconds') -> str:
+        """Format duration values for latencyELT with enhanced readability"""
+        try:
+            if unit == 'seconds' and isinstance(value, (int, float)):
+                if value == 0:
+                    return '0 ms'
+                elif value < 0.001:  # Less than 1ms
+                    return f"{round(value * 1000000, 1)} μs"
+                elif value < 1:
+                    return f"{round(value * 1000, 2)} ms"
+                elif value < 60:
+                    return f"{round(value, 3)} s"
+                elif value < 3600:
+                    return f"{round(value / 60, 2)} min"
+                else:
+                    return f"{round(value / 3600, 2)} h"
+            else:
+                return f"{round(float(value), 4)} {unit}"
+        except (ValueError, TypeError):
+            return str(value)
+
+    def categorize_latencyelt_performance(self, max_value: float, avg_value: float, unit: str = 'seconds') -> Dict[str, str]:
+        """Categorize latencyELT performance with detailed analysis"""
+        try:
+            if unit == 'seconds':
+                # Performance thresholds
+                if max_value > 300:  # > 5 minutes
+                    max_severity = 'critical'
+                elif max_value > 60:  # > 1 minute
+                    max_severity = 'high'
+                elif max_value > 5:  # > 5 seconds
+                    max_severity = 'medium'
+                elif max_value > 1:  # > 1 second
+                    max_severity = 'low'
+                else:
+                    max_severity = 'excellent'
+                
+                if avg_value > 60:  # > 1 minute
+                    avg_severity = 'critical'
+                elif avg_value > 10:  # > 10 seconds
+                    avg_severity = 'high'
+                elif avg_value > 2:  # > 2 seconds
+                    avg_severity = 'medium'
+                elif avg_value > 0.5:  # > 500ms
+                    avg_severity = 'low'
+                else:
+                    avg_severity = 'excellent'
+                    
+                return {
+                    'max_severity': max_severity,
+                    'avg_severity': avg_severity,
+                    'overall': max_severity if max_severity in ['critical', 'high'] else avg_severity
+                }
+            else:
+                return {'max_severity': 'unknown', 'avg_severity': 'unknown', 'overall': 'unknown'}
+        except (ValueError, TypeError):
+            return {'max_severity': 'unknown', 'avg_severity': 'unknown', 'overall': 'unknown'}
+
+    def create_latencyelt_rank_badge(self, rank: int) -> str:
+        """Create rank badge for latencyELT top metrics with special styling"""
+        if rank == 1:
+            return f'<span class="badge badge-danger badge-lg"><i class="fas fa-exclamation-triangle"></i> #{rank}</span>'
+        elif rank <= 3:
+            return f'<span class="badge badge-warning font-weight-bold">#{rank}</span>'
+        elif rank <= 5:
+            return f'<span class="badge badge-info">#{rank}</span>'
+        else:
+            return f'<span class="badge badge-secondary">#{rank}</span>'
+
+    def truncate_latencyelt_pod_name(self, pod_name: str, max_length: int = 25) -> str:
+        """Truncate pod name for latencyELT tables with intelligent shortening"""
+        if len(pod_name) <= max_length:
+            return pod_name
+        
+        # For OVN pods, keep the important parts
+        if 'ovnkube' in pod_name:
+            if 'controller' in pod_name:
+                return pod_name.replace('ovnkube-controller-', 'ovn-ctrl-')[:max_length]
+            elif 'node' in pod_name:
+                parts = pod_name.split('-')
+                if len(parts) >= 3:
+                    return f"ovn-node-{parts[-1]}"
+            elif 'master' in pod_name:
+                return pod_name.replace('ovnkube-master-', 'ovn-mstr-')[:max_length]
+        
+        return self.truncate_text(pod_name, max_length)
+
+    def sort_latencyelt_metrics_by_criticality(self, metrics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Sort latencyELT metrics by criticality and performance impact"""
+        def get_criticality_score(metric: Dict[str, Any]) -> int:
+            """Calculate criticality score for a metric (higher = more critical)"""
+            score = 0
+            
+            # Severity-based scoring
+            severity = metric.get('severity', 'unknown')
+            severity_scores = {'critical': 1000, 'high': 500, 'medium': 100, 'low': 50, 'unknown': 0}
+            score += severity_scores.get(severity, 0)
+            
+            # Component priority (controller issues are more critical)
+            component = metric.get('component', '').lower()
+            if component == 'controller':
+                score += 200
+            elif component == 'node':
+                score += 100
+            
+            # Metric type priority
+            metric_name = metric.get('metric_name', '').lower()
+            if 'ready' in metric_name:
+                score += 150  # Ready duration issues are critical
+            elif 'network_config' in metric_name or 'programming' in metric_name:
+                score += 140  # Network programming delays are very important
+            elif 'pod_annotation' in metric_name or 'pod_creation' in metric_name:
+                score += 120  # Pod creation issues are important
+            elif 'sync' in metric_name:
+                score += 100  # Sync issues affect overall performance
+            elif 'cni' in metric_name:
+                score += 80   # CNI issues affect pod networking
+            elif 'service' in metric_name:
+                score += 60   # Service latency issues
+            
+            # Data points (more data points = more reliable, slightly higher score)
+            data_points = metric.get('data_points', 0)
+            if data_points > 10:
+                score += 20
+            elif data_points > 5:
+                score += 10
+            
+            return score
+        
+        return sorted(metrics, key=get_criticality_score, reverse=True)

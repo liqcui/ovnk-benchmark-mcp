@@ -38,7 +38,7 @@ class PerformanceDataELT(EltUtility):
         self.cluster_stat_elt = ClusterStatELT() 
         self.ovs_elt = OvsELT()
         self.kube_api_elt = kubeAPIELT()
-        self.ovn_latency_elt = ovnLatencyELT()
+        self.latencyelt = latencyELT() 
         self.deepdrive_elt = deepDriveELT()  
 
     def extract_json_data(self, mcp_results: Union[Dict[str, Any], str]) -> Dict[str, Any]:
@@ -73,6 +73,8 @@ class PerformanceDataELT(EltUtility):
                 extracted['structured_data'] = self.cluster_stat_elt.extract_cluster_stat(mcp_results)
             elif extracted['data_type'] == 'ovs_metrics':  # NEW: Handle OVS metrics
                 extracted['structured_data'] = self.ovs_elt.extract_ovs_data(mcp_results) 
+            elif extracted['data_type'] == 'latencyelt_metrics':  # NEW: Handle latencyELT data
+                extracted['structured_data'] = self.latencyelt.extract_ovn_latency_data(mcp_results)                
             elif extracted['data_type'] == 'ovn_latency_metrics':  # NEW: Handle OVN latency metrics
                 extracted['structured_data'] = self.ovn_latency_elt.extract_ovn_latency_data(mcp_results)
             elif extracted['data_type'] == 'kube_api_metrics':  # NEW: Handle Kube API metrics
@@ -90,6 +92,14 @@ class PerformanceDataELT(EltUtility):
     
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from MCP results"""
+        # NEW: Check for latencyELT comprehensive latency data (enhanced structure)
+        if ('collection_timestamp' in data and 'query_type' in data and 'summary' in data and
+            any(key in data for key in ['ready_duration_metrics', 'sync_duration_metrics', 
+                                    'cni_latency_metrics', 'pod_annotation_metrics', 
+                                    'pod_creation_metrics', 'service_latency_metrics', 
+                                    'network_config_metrics']) and
+            'component_breakdown' in data.get('summary', {})):
+            return 'latencyelt_metrics'
 
         # NEW: Check for OVN Deep Drive analysis data
         if ('analysis_type' in data and data.get('analysis_type') == 'comprehensive_deep_drive' and
@@ -222,6 +232,8 @@ class PerformanceDataELT(EltUtility):
                 return self.cluster_stat_elt.summarize_cluster_stat(structured_data)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics summary
                 return self.ovs_elt.summarize_ovs_data(structured_data) 
+            if data_type == 'latencyelt_metrics':  # NEW: Handle latencyELT summary
+                return self.latencyelt.summarize_ovn_latency_data(structured_data)                
             elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency summary
                 return self.ovn_latency_elt.summarize_ovn_latency_data(structured_data)
             elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics summary
@@ -258,7 +270,9 @@ class PerformanceDataELT(EltUtility):
             elif data_type == 'cluster_status':  # NEW: Handle cluster status transformation
                 return self.cluster_stat_elt.transform_to_dataframes(structured_data)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics transformation
-                return self.ovs_elt.transform_to_dataframes(structured_data) 
+                return self.ovs_elt.transform_to_dataframes(structured_data)
+            elif data_type == 'latencyelt_metrics':  # NEW: Handle latencyELT transformation
+                return self.latencyelt.transform_to_dataframes(structured_data)                
             elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency transformation
                 return self.ovn_latency_elt.transform_to_dataframes(structured_data)
             elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics transformation
@@ -308,7 +322,9 @@ class PerformanceDataELT(EltUtility):
             elif data_type == 'cluster_status':  # NEW: Handle cluster status HTML generation
                 return self.cluster_stat_elt.generate_html_tables(dataframes)
             elif data_type == 'ovs_metrics':  # NEW: Handle OVS metrics HTML generation
-                return self.ovs_elt.generate_html_tables(dataframes)     
+                return self.ovs_elt.generate_html_tables(dataframes)
+            elif data_type == 'latencyelt_metrics':  # NEW: Handle latencyELT HTML generation
+                return self.latencyelt.generate_html_tables(dataframes)                     
             elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency HTML generation
                 return self.ovn_latency_elt.generate_html_tables(dataframes)
             elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics HTML generation
@@ -474,10 +490,85 @@ def convert_json_to_tables(json_data: Union[Dict[str, Any], str],
             'metadata': {'conversion_failed': True}
         }
 
+async def latencyelt_get_comprehensive_latency_data(prometheus_client, time: str = None, duration: str = None, end_time: str = None) -> Dict[str, Any]:
+    """Get comprehensive latency data using latencyELT module"""
+    from .ovnk_benchmark_elt_latency import latencyelt_get_comprehensive_metrics
+    return await latencyelt_get_comprehensive_metrics(prometheus_client, time, duration, end_time)
+
+async def latencyelt_get_controller_sync_top20_detail(prometheus_client, time: str = None, duration: str = None, end_time: str = None) -> Dict[str, Any]:
+    """Get detailed top 20 controller sync duration metrics"""
+    from .ovnk_benchmark_elt_latency import latencyelt_get_controller_sync_top20
+    return await latencyelt_get_controller_sync_top20(prometheus_client, time, duration, end_time)
+
+async def latencyelt_convert_to_html_tables(latency_data: Dict[str, Any]) -> str:
+    """Convert latencyELT data to HTML table format"""
+    try:
+        elt = PerformanceDataELT()
+        
+        # Process the latency data
+        result = elt.extract_json_data(latency_data)
+        
+        if 'error' in result:
+            return f"<div class='alert alert-danger'>Error: {result['error']}</div>"
+        
+        # Create DataFrames
+        dataframes = elt.transform_to_dataframes(result['structured_data'], result['data_type'])
+        
+        # Generate HTML tables
+        html_tables = elt.generate_html_tables(dataframes, result['data_type'])
+        
+        # Generate organized output
+        output_parts = []
+        
+        # Add data type info
+        data_type = result.get('data_type', 'unknown')
+        output_parts.append(f"<div class='mb-3'><span class='badge badge-primary'>Latency Metrics Analysis</span></div>")
+        
+        # Add summary if available
+        summary = elt.generate_brief_summary(result['structured_data'], result['data_type'])
+        if summary:
+            output_parts.append(f"<div class='alert alert-info'>{summary}</div>")
+        
+        # Add tables in organized order
+        table_order = [
+            'latencyelt_collection_info',
+            'latencyelt_summary', 
+            'latencyelt_top_latencies',
+            'latencyelt_ready_duration',
+            'latencyelt_sync_duration',
+            'latencyelt_cni_latency',
+            'latencyelt_pod_annotation',
+            'latencyelt_pod_creation',
+            'latencyelt_service_latency',
+            'latencyelt_network_config'
+        ]
+        
+        for table_name in table_order:
+            if table_name in html_tables:
+                table_title = table_name.replace('latencyelt_', '').replace('_', ' ').title()
+                output_parts.append(f"<h5 class='mt-4'>{table_title}</h5>")
+                output_parts.append(html_tables[table_name])
+        
+        # Add any remaining tables
+        for table_name, html_table in html_tables.items():
+            if table_name not in table_order:
+                table_title = table_name.replace('latencyelt_', '').replace('_', ' ').title()
+                output_parts.append(f"<h5 class='mt-4'>{table_title}</h5>")
+                output_parts.append(html_table)
+        
+        return ' '.join(output_parts)
+        
+    except Exception as e:
+        return f"<div class='alert alert-danger'>Error processing latency data: {str(e)}</div>"
+
+
 # Export main functions for external use
-__all__ = [
+_all__ = [
     'PerformanceDataELT',
     'extract_and_transform_mcp_results',
     'json_to_html_table',
-    'convert_json_to_tables'
+    'convert_json_to_tables',
+    'latencyelt_get_comprehensive_latency_data',
+    'latencyelt_get_controller_sync_top20_detail', 
+    'latencyelt_convert_to_html_tables'
 ]

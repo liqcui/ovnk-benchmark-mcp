@@ -1365,7 +1365,7 @@ async def get_ovnk_latency_metrics(request: OVNKLatencyMetricsRequest) -> Dict[s
             logger.info(f"Highest latency detected: {top_latency['metric_name']} = "
                        f"{top_latency['readable_max']['value']}{top_latency['readable_max']['unit']}")
         
-        return latency_data
+        return _sanitize_json_compat(latency_data)
         
     except asyncio.TimeoutError:
         return {
