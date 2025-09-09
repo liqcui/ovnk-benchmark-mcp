@@ -554,7 +554,7 @@ async def get_openshift_cluster_info(request: ClusterInfoRequest) -> Dict[str, A
             logger.info("Machine Config Pool status excluded from response")
         
         # save_to_file handling removed
-        
+                
         # Add collection metadata
         cluster_data['collection_metadata'] = {
             'tool_name': 'get_openshift_cluster_info',

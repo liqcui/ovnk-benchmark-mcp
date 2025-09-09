@@ -87,7 +87,7 @@ class PerformanceDataELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to extract JSON data: {e}")
             return {'error': str(e), 'raw_data': mcp_results}
-
+    
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from MCP results"""
 
@@ -157,7 +157,7 @@ class PerformanceDataELT(EltUtility):
             return 'cluster_status'
         else:
             return 'generic'
-
+    
     def _extract_generic_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract generic data with smart column limiting"""
         structured = {'key_value_pairs': []}
@@ -206,7 +206,7 @@ class PerformanceDataELT(EltUtility):
             })
         
         return structured
-
+    
     # Additional extraction methods for remaining data types would go here
     # For brevity, I'll include placeholders for the remaining methods   
     def generate_brief_summary(self, structured_data: Dict[str, Any], data_type: str) -> str:
@@ -234,7 +234,7 @@ class PerformanceDataELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to generate summary: {e}")
             return f"Summary generation failed: {str(e)}"
-
+    
     def _summarize_generic(self, data: Dict[str, Any]) -> str:
         """Generate generic summary"""
         summary = ["Data Summary:"]

@@ -1,140 +1,1266 @@
 {
-  "analysis_timestamp": "2025-09-07T08:18:35.683592+00:00",
+  "analysis_metadata": {
+    "analysis_timestamp": "2025-09-08T12:49:08.885535+00:00",
+    "analyzer_type": "OVN_DeepDrive_Analyzer",
+    "collection_type": "comprehensive_deep_drive",
+    "total_items_analyzed": 19,
+    "duration": "1h"
+  },
   "analysis_type": "comprehensive_deep_drive",
   "query_duration": "1h",
   "timezone": "UTC",
-  "nodes_usage": {
-    "collection_timestamp": "2025-09-07T08:18:37.184909+00:00",
-    "query_duration": "1h",
+  "latency_metrics": {
+    "collection_timestamp": "2025-09-08T12:49:45.900443+00:00",
+    "query_type": "duration",
     "timezone": "UTC",
-    "controlplane_nodes": {
-      "summary": {
-        "cpu_usage": {
-          "min": 6.74,
-          "avg": 9.46,
-          "max": 18.96,
-          "unit": "%"
+    "categories": {
+      "ready_duration": {
+        "controller_ready_duration": {
+          "metric_name": "ovnkube_controller_ready_duration_seconds",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 8,
+            "max_value": 2.119925677,
+            "avg_value": 1.129272060625,
+            "readable_max": {
+              "value": 2.12,
+              "unit": "s"
+            },
+            "readable_avg": {
+              "value": 1.129,
+              "unit": "s"
+            },
+            "top_5": [
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 2.119925677,
+                "readable_value": {
+                  "value": 2.12,
+                  "unit": "s"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-fkgh7",
+                "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+                "value": 1.708093654,
+                "readable_value": {
+                  "value": 1.708,
+                  "unit": "s"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-zwnxm",
+                "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+                "value": 1.240068134,
+                "readable_value": {
+                  "value": 1.24,
+                  "unit": "s"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 0.899114079,
+                "readable_value": {
+                  "value": 899.11,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 0.836789295,
+                "readable_value": {
+                  "value": 836.79,
+                  "unit": "ms"
+                }
+              }
+            ]
+          },
+          "top_5": [
+            {
+              "pod_name": "ovnkube-node-l9lh9",
+              "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+              "value": 2.119925677,
+              "readable_value": {
+                "value": 2.12,
+                "unit": "s"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-fkgh7",
+              "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+              "value": 1.708093654,
+              "readable_value": {
+                "value": 1.708,
+                "unit": "s"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-zwnxm",
+              "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+              "value": 1.240068134,
+              "readable_value": {
+                "value": 1.24,
+                "unit": "s"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-bfhjm",
+              "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+              "value": 0.899114079,
+              "readable_value": {
+                "value": 899.11,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-l6nbt",
+              "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+              "value": 0.836789295,
+              "readable_value": {
+                "value": 836.79,
+                "unit": "ms"
+              }
+            }
+          ]
         },
-        "memory_usage": {
-          "min": 10315.43,
-          "avg": 10470.6,
-          "max": 10567.05,
-          "unit": "MB"
-        },
-        "network_rx": {
-          "min": 80471.44,
-          "avg": 105581.51,
-          "max": 151582.51,
-          "unit": "bytes/s"
-        },
-        "network_tx": {
-          "min": 168920.62,
-          "avg": 202123.35,
-          "max": 258634.34,
-          "unit": "bytes/s"
+        "node_ready_duration": {
+          "metric_name": "ovnkube_node_ready_duration_seconds",
+          "component": "node",
+          "unit": "seconds",
+          "statistics": {
+            "count": 8,
+            "max_value": 5.156930291,
+            "avg_value": 2.55177596375,
+            "readable_max": {
+              "value": 5.157,
+              "unit": "s"
+            },
+            "readable_avg": {
+              "value": 2.552,
+              "unit": "s"
+            },
+            "top_5": [
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 5.156930291,
+                "readable_value": {
+                  "value": 5.157,
+                  "unit": "s"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-zwnxm",
+                "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+                "value": 5.058161506,
+                "readable_value": {
+                  "value": 5.058,
+                  "unit": "s"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-fkgh7",
+                "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+                "value": 4.758109768,
+                "readable_value": {
+                  "value": 4.758,
+                  "unit": "s"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 1.262538943,
+                "readable_value": {
+                  "value": 1.263,
+                  "unit": "s"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 1.207340856,
+                "readable_value": {
+                  "value": 1.207,
+                  "unit": "s"
+                }
+              }
+            ]
+          },
+          "top_5": [
+            {
+              "pod_name": "ovnkube-node-l9lh9",
+              "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+              "value": 5.156930291,
+              "readable_value": {
+                "value": 5.157,
+                "unit": "s"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-zwnxm",
+              "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+              "value": 5.058161506,
+              "readable_value": {
+                "value": 5.058,
+                "unit": "s"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-fkgh7",
+              "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+              "value": 4.758109768,
+              "readable_value": {
+                "value": 4.758,
+                "unit": "s"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-bfhjm",
+              "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+              "value": 1.262538943,
+              "readable_value": {
+                "value": 1.263,
+                "unit": "s"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-l6nbt",
+              "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+              "value": 1.207340856,
+              "readable_value": {
+                "value": 1.207,
+                "unit": "s"
+              }
+            }
+          ]
         }
       },
-      "individual_nodes": [
-        {
-          "name": "ip-10-0-47-100.us-east-2.compute.internal",
-          "instance": "ip-10-0-47-100.us-east-2.compute.internal",
-          "cpu_usage": {
-            "min": 6.74,
-            "avg": 9.46,
-            "max": 18.96,
-            "unit": "%"
+      "sync_duration": {
+        "controller_sync_duration": {
+          "metric_name": "ovnkube_controller_sync_duration_seconds",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 20,
+            "max_value": 1.274614583,
+            "avg_value": 0.3742478565,
+            "readable_max": {
+              "value": 1.275,
+              "unit": "s"
+            },
+            "readable_avg": {
+              "value": 374.25,
+              "unit": "ms"
+            },
+            "top_20": [
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 1.274614583,
+                "readable_value": {
+                  "value": 1.275,
+                  "unit": "s"
+                },
+                "resource_name": "all watchers"
+              },
+              {
+                "pod_name": "ovnkube-node-fkgh7",
+                "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+                "value": 0.774325628,
+                "readable_value": {
+                  "value": 774.33,
+                  "unit": "ms"
+                },
+                "resource_name": "all watchers"
+              },
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 0.677060899,
+                "readable_value": {
+                  "value": 677.06,
+                  "unit": "ms"
+                },
+                "resource_name": "network policy"
+              },
+              {
+                "pod_name": "ovnkube-node-zwnxm",
+                "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+                "value": 0.540109309,
+                "readable_value": {
+                  "value": 540.11,
+                  "unit": "ms"
+                },
+                "resource_name": "all watchers"
+              },
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 0.451405216,
+                "readable_value": {
+                  "value": 451.41,
+                  "unit": "ms"
+                },
+                "resource_name": "all watchers"
+              },
+              {
+                "pod_name": "ovnkube-node-g2mmp",
+                "node_name": "ip-10-0-3-134.us-east-2.compute.internal",
+                "value": 0.449823085,
+                "readable_value": {
+                  "value": 449.82,
+                  "unit": "ms"
+                },
+                "resource_name": "all watchers"
+              },
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 0.445055763,
+                "readable_value": {
+                  "value": 445.06,
+                  "unit": "ms"
+                },
+                "resource_name": "all watchers"
+              },
+              {
+                "pod_name": "ovnkube-node-k8v2j",
+                "node_name": "ip-10-0-3-148.us-east-2.compute.internal",
+                "value": 0.387737292,
+                "readable_value": {
+                  "value": 387.74,
+                  "unit": "ms"
+                },
+                "resource_name": "all watchers"
+              },
+              {
+                "pod_name": "ovnkube-node-x5jxj",
+                "node_name": "ip-10-0-73-107.us-east-2.compute.internal",
+                "value": 0.375501719,
+                "readable_value": {
+                  "value": 375.5,
+                  "unit": "ms"
+                },
+                "resource_name": "all watchers"
+              },
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 0.203097829,
+                "readable_value": {
+                  "value": 203.1,
+                  "unit": "ms"
+                },
+                "resource_name": "service"
+              },
+              {
+                "pod_name": "ovnkube-node-k8v2j",
+                "node_name": "ip-10-0-3-148.us-east-2.compute.internal",
+                "value": 0.2029663,
+                "readable_value": {
+                  "value": 202.97,
+                  "unit": "ms"
+                },
+                "resource_name": "service"
+              },
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 0.202437568,
+                "readable_value": {
+                  "value": 202.44,
+                  "unit": "ms"
+                },
+                "resource_name": "service"
+              },
+              {
+                "pod_name": "ovnkube-node-fkgh7",
+                "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+                "value": 0.202314948,
+                "readable_value": {
+                  "value": 202.31,
+                  "unit": "ms"
+                },
+                "resource_name": "service"
+              },
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 0.202309982,
+                "readable_value": {
+                  "value": 202.31,
+                  "unit": "ms"
+                },
+                "resource_name": "service"
+              },
+              {
+                "pod_name": "ovnkube-node-g2mmp",
+                "node_name": "ip-10-0-3-134.us-east-2.compute.internal",
+                "value": 0.202152451,
+                "readable_value": {
+                  "value": 202.15,
+                  "unit": "ms"
+                },
+                "resource_name": "service"
+              },
+              {
+                "pod_name": "ovnkube-node-zwnxm",
+                "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+                "value": 0.202035464,
+                "readable_value": {
+                  "value": 202.04,
+                  "unit": "ms"
+                },
+                "resource_name": "service"
+              },
+              {
+                "pod_name": "ovnkube-node-x5jxj",
+                "node_name": "ip-10-0-73-107.us-east-2.compute.internal",
+                "value": 0.201942761,
+                "readable_value": {
+                  "value": 201.94,
+                  "unit": "ms"
+                },
+                "resource_name": "service"
+              },
+              {
+                "pod_name": "ovnkube-node-fkgh7",
+                "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+                "value": 0.19399781,
+                "readable_value": {
+                  "value": 194,
+                  "unit": "ms"
+                },
+                "resource_name": "network policy"
+              },
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 0.152660716,
+                "readable_value": {
+                  "value": 152.66,
+                  "unit": "ms"
+                },
+                "resource_name": "namespace"
+              },
+              {
+                "pod_name": "ovnkube-node-zwnxm",
+                "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+                "value": 0.143407807,
+                "readable_value": {
+                  "value": 143.41,
+                  "unit": "ms"
+                },
+                "resource_name": "network policy"
+              }
+            ]
           },
-          "memory_usage": {
-            "min": 10315.43,
-            "avg": 10470.6,
-            "max": 10567.05,
-            "unit": "MB"
-          },
-          "network_rx": {
-            "min": 80471.44,
-            "avg": 105581.51,
-            "max": 151582.51,
-            "unit": "bytes/s"
-          },
-          "network_tx": {
-            "min": 168920.62,
-            "avg": 202123.35,
-            "max": 258634.34,
-            "unit": "bytes/s"
-          }
+          "top_5": []
         }
-      ],
-      "count": 1
+      },
+      "percentile_latency": {
+        "controller_sync_duration_p95": {
+          "metric_name": "ovnkube_controller_sync_duration_p95",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 0
+          },
+          "top_5": []
+        },
+        "node_sync_duration_p95": {
+          "metric_name": "ovnkube_node_sync_duration_p95",
+          "component": "node",
+          "unit": "seconds",
+          "statistics": {
+            "count": 0
+          },
+          "top_5": []
+        }
+      },
+      "pod_latency": {
+        "pod_annotation_latency_p99": {
+          "metric_name": "Pod_Annotation_Latency_p99",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 0
+          },
+          "top_5": []
+        },
+        "pod_creation_first_seen_lsp_p99": {
+          "metric_name": "Pod_creation_latency_first_seen_lsp_p99",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 3,
+            "max_value": 0.0792,
+            "avg_value": 0.05280000000000001,
+            "readable_max": {
+              "value": 79.2,
+              "unit": "ms"
+            },
+            "readable_avg": {
+              "value": 52.8,
+              "unit": "ms"
+            },
+            "top_5": [
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 0.0792,
+                "readable_value": {
+                  "value": 79.2,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 0.0396,
+                "readable_value": {
+                  "value": 39.6,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 0.0396,
+                "readable_value": {
+                  "value": 39.6,
+                  "unit": "ms"
+                }
+              }
+            ]
+          },
+          "top_5": [
+            {
+              "pod_name": "ovnkube-node-l6nbt",
+              "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+              "value": 0.0792,
+              "readable_value": {
+                "value": 79.2,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-bfhjm",
+              "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+              "value": 0.0396,
+              "readable_value": {
+                "value": 39.6,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-l9lh9",
+              "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+              "value": 0.0396,
+              "readable_value": {
+                "value": 39.6,
+                "unit": "ms"
+              }
+            }
+          ]
+        },
+        "pod_creation_port_binding_p99": {
+          "metric_name": "pod_creation_latency_port_binding_p99",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 3,
+            "max_value": 0.0396,
+            "avg_value": 0.0198,
+            "readable_max": {
+              "value": 39.6,
+              "unit": "ms"
+            },
+            "readable_avg": {
+              "value": 19.8,
+              "unit": "ms"
+            },
+            "top_5": [
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 0.0396,
+                "readable_value": {
+                  "value": 39.6,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 0.0099,
+                "readable_value": {
+                  "value": 9.9,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 0.0099,
+                "readable_value": {
+                  "value": 9.9,
+                  "unit": "ms"
+                }
+              }
+            ]
+          },
+          "top_5": [
+            {
+              "pod_name": "ovnkube-node-l6nbt",
+              "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+              "value": 0.0396,
+              "readable_value": {
+                "value": 39.6,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-bfhjm",
+              "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+              "value": 0.0099,
+              "readable_value": {
+                "value": 9.9,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-l9lh9",
+              "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+              "value": 0.0099,
+              "readable_value": {
+                "value": 9.9,
+                "unit": "ms"
+              }
+            }
+          ]
+        }
+      },
+      "cni_latency": {
+        "cni_add_latency_p99": {
+          "metric_name": "CNI_Request_ADD_Latency_p99",
+          "component": "node",
+          "unit": "seconds",
+          "statistics": {
+            "count": 3,
+            "max_value": 0.3960000000000001,
+            "avg_value": 0.19800000000000004,
+            "readable_max": {
+              "value": 396,
+              "unit": "ms"
+            },
+            "readable_avg": {
+              "value": 198,
+              "unit": "ms"
+            },
+            "top_5": [
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 0.3960000000000001,
+                "readable_value": {
+                  "value": 396,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 0.09900000000000002,
+                "readable_value": {
+                  "value": 99,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 0.09900000000000002,
+                "readable_value": {
+                  "value": 99,
+                  "unit": "ms"
+                }
+              }
+            ]
+          },
+          "top_5": [
+            {
+              "pod_name": "ovnkube-node-l6nbt",
+              "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+              "value": 0.3960000000000001,
+              "readable_value": {
+                "value": 396,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-bfhjm",
+              "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+              "value": 0.09900000000000002,
+              "readable_value": {
+                "value": 99,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-l9lh9",
+              "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+              "value": 0.09900000000000002,
+              "readable_value": {
+                "value": 99,
+                "unit": "ms"
+              }
+            }
+          ]
+        },
+        "cni_del_latency_p99": {
+          "metric_name": "CNI_Request_DEL_Latency_p99",
+          "component": "node",
+          "unit": "seconds",
+          "statistics": {
+            "count": 3,
+            "max_value": 0.19800000000000004,
+            "avg_value": 0.13200000000000003,
+            "readable_max": {
+              "value": 198,
+              "unit": "ms"
+            },
+            "readable_avg": {
+              "value": 132,
+              "unit": "ms"
+            },
+            "top_5": [
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 0.19800000000000004,
+                "readable_value": {
+                  "value": 198,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 0.09900000000000002,
+                "readable_value": {
+                  "value": 99,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-l9lh9",
+                "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+                "value": 0.09900000000000002,
+                "readable_value": {
+                  "value": 99,
+                  "unit": "ms"
+                }
+              }
+            ]
+          },
+          "top_5": [
+            {
+              "pod_name": "ovnkube-node-l6nbt",
+              "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+              "value": 0.19800000000000004,
+              "readable_value": {
+                "value": 198,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-bfhjm",
+              "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+              "value": 0.09900000000000002,
+              "readable_value": {
+                "value": 99,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-l9lh9",
+              "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+              "value": 0.09900000000000002,
+              "readable_value": {
+                "value": 99,
+                "unit": "ms"
+              }
+            }
+          ]
+        }
+      },
+      "service_latency": {
+        "sync_service_latency": {
+          "metric_name": "sync_service_latency",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 0
+          },
+          "top_5": []
+        },
+        "sync_service_latency_p99": {
+          "metric_name": "sync_service_latency_p99",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 0
+          },
+          "top_5": []
+        }
+      },
+      "network_programming": {
+        "network_programming_pod_p99": {
+          "metric_name": "apply_network_config_pod_duration_p99",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 8,
+            "max_value": 0.24750000000000003,
+            "avg_value": 0.24750000000000003,
+            "readable_max": {
+              "value": 247.5,
+              "unit": "ms"
+            },
+            "readable_avg": {
+              "value": 247.5,
+              "unit": "ms"
+            },
+            "top_5": [
+              {
+                "pod_name": "ovnkube-node-bfhjm",
+                "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+                "value": 0.24750000000000003,
+                "readable_value": {
+                  "value": 247.5,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-fkgh7",
+                "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+                "value": 0.24750000000000003,
+                "readable_value": {
+                  "value": 247.5,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-g2mmp",
+                "node_name": "ip-10-0-3-134.us-east-2.compute.internal",
+                "value": 0.24750000000000003,
+                "readable_value": {
+                  "value": 247.5,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-k8v2j",
+                "node_name": "ip-10-0-3-148.us-east-2.compute.internal",
+                "value": 0.24750000000000003,
+                "readable_value": {
+                  "value": 247.5,
+                  "unit": "ms"
+                }
+              },
+              {
+                "pod_name": "ovnkube-node-l6nbt",
+                "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+                "value": 0.24750000000000003,
+                "readable_value": {
+                  "value": 247.5,
+                  "unit": "ms"
+                }
+              }
+            ]
+          },
+          "top_5": [
+            {
+              "pod_name": "ovnkube-node-bfhjm",
+              "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+              "value": 0.24750000000000003,
+              "readable_value": {
+                "value": 247.5,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-fkgh7",
+              "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+              "value": 0.24750000000000003,
+              "readable_value": {
+                "value": 247.5,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-g2mmp",
+              "node_name": "ip-10-0-3-134.us-east-2.compute.internal",
+              "value": 0.24750000000000003,
+              "readable_value": {
+                "value": 247.5,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-k8v2j",
+              "node_name": "ip-10-0-3-148.us-east-2.compute.internal",
+              "value": 0.24750000000000003,
+              "readable_value": {
+                "value": 247.5,
+                "unit": "ms"
+              }
+            },
+            {
+              "pod_name": "ovnkube-node-l6nbt",
+              "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+              "value": 0.24750000000000003,
+              "readable_value": {
+                "value": 247.5,
+                "unit": "ms"
+              }
+            }
+          ]
+        },
+        "network_programming_service_p99": {
+          "metric_name": "apply_network_config_service_duration_p99",
+          "component": "controller",
+          "unit": "seconds",
+          "statistics": {
+            "count": 0
+          },
+          "top_5": []
+        }
+      }
     },
-    "infra_nodes": {
-      "summary": {
-        "cpu_usage": {},
-        "memory_usage": {},
-        "network_rx": {},
-        "network_tx": {}
-      },
-      "individual_nodes": [],
-      "count": 0
-    },
-    "top5_worker_nodes": {
-      "summary": {
-        "cpu_usage": {
-          "min": 3.98,
-          "avg": 5.78,
-          "max": 81.9,
-          "unit": "%"
-        },
-        "memory_usage": {
-          "min": 3675.1,
-          "avg": 3782.57,
-          "max": 4245.05,
-          "unit": "MB"
-        },
-        "network_rx": {
-          "min": 85398.83,
-          "avg": 304569.71,
-          "max": 3973447.82,
-          "unit": "bytes/s"
-        },
-        "network_tx": {
-          "min": 8392.63,
-          "avg": 11518.68,
-          "max": 53831.02,
-          "unit": "bytes/s"
-        }
-      },
-      "individual_nodes": [
-        {
-          "name": "ip-10-0-64-118.us-east-2.compute.internal",
-          "instance": "ip-10-0-64-118.us-east-2.compute.internal",
-          "rank": 1,
-          "cpu_usage": {
-            "min": 3.98,
-            "avg": 5.78,
-            "max": 81.9,
-            "unit": "%"
-          },
-          "memory_usage": {
-            "min": 3675.1,
-            "avg": 3782.57,
-            "max": 4245.05,
-            "unit": "MB"
-          },
-          "network_rx": {
-            "min": 85398.83,
-            "avg": 304569.71,
-            "max": 3973447.82,
-            "unit": "bytes/s"
-          },
-          "network_tx": {
-            "min": 8392.63,
-            "avg": 11518.68,
-            "max": 53831.02,
-            "unit": "bytes/s"
-          }
-        }
-      ],
-      "count": 1
+    "query_parameters": {
+      "duration": "1h",
+      "start_time": "2025-09-08T11:49:45.900462Z",
+      "end_time": "2025-09-08T12:49:45.900462Z"
     }
+  },
+  "controller_sync_duration": {
+    "collection_timestamp": "2025-09-08T12:49:22.180839+00:00",
+    "query_type": "duration",
+    "timezone": "UTC",
+    "metric_name": "ovnkube_controller_sync_duration_seconds",
+    "data": [
+      {
+        "rank": 1,
+        "pod_name": "ovnkube-node-l9lh9",
+        "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+        "resource_name": "all watchers",
+        "value_seconds": 1.274614583,
+        "readable_value": {
+          "value": 1.275,
+          "unit": "s"
+        },
+        "avg_value": 1.274614583,
+        "max_value": 1.274614583
+      },
+      {
+        "rank": 2,
+        "pod_name": "ovnkube-node-fkgh7",
+        "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+        "resource_name": "all watchers",
+        "value_seconds": 0.774325628,
+        "readable_value": {
+          "value": 774.33,
+          "unit": "ms"
+        },
+        "avg_value": 0.774325628,
+        "max_value": 0.774325628
+      },
+      {
+        "rank": 3,
+        "pod_name": "ovnkube-node-l9lh9",
+        "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+        "resource_name": "network policy",
+        "value_seconds": 0.677060899,
+        "readable_value": {
+          "value": 677.06,
+          "unit": "ms"
+        },
+        "avg_value": 0.677060899,
+        "max_value": 0.677060899
+      },
+      {
+        "rank": 4,
+        "pod_name": "ovnkube-node-zwnxm",
+        "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+        "resource_name": "all watchers",
+        "value_seconds": 0.540109309,
+        "readable_value": {
+          "value": 540.11,
+          "unit": "ms"
+        },
+        "avg_value": 0.540109309,
+        "max_value": 0.540109309
+      },
+      {
+        "rank": 5,
+        "pod_name": "ovnkube-node-bfhjm",
+        "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+        "resource_name": "all watchers",
+        "value_seconds": 0.451405216,
+        "readable_value": {
+          "value": 451.41,
+          "unit": "ms"
+        },
+        "avg_value": 0.451405216,
+        "max_value": 0.451405216
+      },
+      {
+        "rank": 6,
+        "pod_name": "ovnkube-node-g2mmp",
+        "node_name": "ip-10-0-3-134.us-east-2.compute.internal",
+        "resource_name": "all watchers",
+        "value_seconds": 0.449823085,
+        "readable_value": {
+          "value": 449.82,
+          "unit": "ms"
+        },
+        "avg_value": 0.449823085,
+        "max_value": 0.449823085
+      },
+      {
+        "rank": 7,
+        "pod_name": "ovnkube-node-l6nbt",
+        "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+        "resource_name": "all watchers",
+        "value_seconds": 0.445055763,
+        "readable_value": {
+          "value": 445.06,
+          "unit": "ms"
+        },
+        "avg_value": 0.445055763,
+        "max_value": 0.445055763
+      },
+      {
+        "rank": 8,
+        "pod_name": "ovnkube-node-k8v2j",
+        "node_name": "ip-10-0-3-148.us-east-2.compute.internal",
+        "resource_name": "all watchers",
+        "value_seconds": 0.387737292,
+        "readable_value": {
+          "value": 387.74,
+          "unit": "ms"
+        },
+        "avg_value": 0.387737292,
+        "max_value": 0.387737292
+      },
+      {
+        "rank": 9,
+        "pod_name": "ovnkube-node-x5jxj",
+        "node_name": "ip-10-0-73-107.us-east-2.compute.internal",
+        "resource_name": "all watchers",
+        "value_seconds": 0.375501719,
+        "readable_value": {
+          "value": 375.5,
+          "unit": "ms"
+        },
+        "avg_value": 0.375501719,
+        "max_value": 0.375501719
+      },
+      {
+        "rank": 10,
+        "pod_name": "ovnkube-node-l6nbt",
+        "node_name": "ip-10-0-89-178.us-east-2.compute.internal",
+        "resource_name": "service",
+        "value_seconds": 0.203097829,
+        "readable_value": {
+          "value": 203.1,
+          "unit": "ms"
+        },
+        "avg_value": 0.203097829,
+        "max_value": 0.203097829
+      },
+      {
+        "rank": 11,
+        "pod_name": "ovnkube-node-k8v2j",
+        "node_name": "ip-10-0-3-148.us-east-2.compute.internal",
+        "resource_name": "service",
+        "value_seconds": 0.2029663,
+        "readable_value": {
+          "value": 202.97,
+          "unit": "ms"
+        },
+        "avg_value": 0.2029663,
+        "max_value": 0.2029663
+      },
+      {
+        "rank": 12,
+        "pod_name": "ovnkube-node-bfhjm",
+        "node_name": "ip-10-0-44-85.us-east-2.compute.internal",
+        "resource_name": "service",
+        "value_seconds": 0.202437568,
+        "readable_value": {
+          "value": 202.44,
+          "unit": "ms"
+        },
+        "avg_value": 0.202437568,
+        "max_value": 0.202437568
+      },
+      {
+        "rank": 13,
+        "pod_name": "ovnkube-node-fkgh7",
+        "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+        "resource_name": "service",
+        "value_seconds": 0.202314948,
+        "readable_value": {
+          "value": 202.31,
+          "unit": "ms"
+        },
+        "avg_value": 0.202314948,
+        "max_value": 0.202314948
+      },
+      {
+        "rank": 14,
+        "pod_name": "ovnkube-node-l9lh9",
+        "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+        "resource_name": "service",
+        "value_seconds": 0.202309982,
+        "readable_value": {
+          "value": 202.31,
+          "unit": "ms"
+        },
+        "avg_value": 0.202309982,
+        "max_value": 0.202309982
+      },
+      {
+        "rank": 15,
+        "pod_name": "ovnkube-node-g2mmp",
+        "node_name": "ip-10-0-3-134.us-east-2.compute.internal",
+        "resource_name": "service",
+        "value_seconds": 0.202152451,
+        "readable_value": {
+          "value": 202.15,
+          "unit": "ms"
+        },
+        "avg_value": 0.202152451,
+        "max_value": 0.202152451
+      },
+      {
+        "rank": 16,
+        "pod_name": "ovnkube-node-zwnxm",
+        "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+        "resource_name": "service",
+        "value_seconds": 0.202035464,
+        "readable_value": {
+          "value": 202.04,
+          "unit": "ms"
+        },
+        "avg_value": 0.202035464,
+        "max_value": 0.202035464
+      },
+      {
+        "rank": 17,
+        "pod_name": "ovnkube-node-x5jxj",
+        "node_name": "ip-10-0-73-107.us-east-2.compute.internal",
+        "resource_name": "service",
+        "value_seconds": 0.201942761,
+        "readable_value": {
+          "value": 201.94,
+          "unit": "ms"
+        },
+        "avg_value": 0.201942761,
+        "max_value": 0.201942761
+      },
+      {
+        "rank": 18,
+        "pod_name": "ovnkube-node-fkgh7",
+        "node_name": "ip-10-0-71-119.us-east-2.compute.internal",
+        "resource_name": "network policy",
+        "value_seconds": 0.19399781,
+        "readable_value": {
+          "value": 194,
+          "unit": "ms"
+        },
+        "avg_value": 0.19399781,
+        "max_value": 0.19399781
+      },
+      {
+        "rank": 19,
+        "pod_name": "ovnkube-node-l9lh9",
+        "node_name": "ip-10-0-2-248.us-east-2.compute.internal",
+        "resource_name": "namespace",
+        "value_seconds": 0.152660716,
+        "readable_value": {
+          "value": 152.66,
+          "unit": "ms"
+        },
+        "avg_value": 0.152660716,
+        "max_value": 0.152660716
+      },
+      {
+        "rank": 20,
+        "pod_name": "ovnkube-node-zwnxm",
+        "node_name": "ip-10-0-47-143.us-east-2.compute.internal",
+        "resource_name": "network policy",
+        "value_seconds": 0.143407807,
+        "readable_value": {
+          "value": 143.41,
+          "unit": "ms"
+        },
+        "avg_value": 0.143407807,
+        "max_value": 0.143407807
+      }
+    ],
+    "summary": {
+      "total_count": 20,
+      "returned_count": 20,
+      "max_value_seconds": 1.274614583,
+      "avg_value_seconds": 0.3742478565,
+      "enhanced_statistics": {
+        "count": 20,
+        "min": 0.143407807,
+        "max": 1.274614583,
+        "mean": 0.3742478565,
+        "median": 0.2030320645,
+        "std_dev": 0.27889853684122257,
+        "variance": 0.0777843938521748,
+        "p50": 0.203097829,
+        "p75": 0.451405216,
+        "p90": 0.774325628,
+        "p95": 1.274614583,
+        "p99": 1.274614583
+      },
+      "readable_max": {
+        "value": 1.275,
+        "unit": "s"
+      },
+      "readable_avg": {
+        "value": 374.25,
+        "unit": "ms"
+      },
+      "component": "controller",
+      "unit": "seconds"
+    }
+  },
+  "error": "name 'latency_data' is not defined",
+  "request_parameters": {
+    "duration": "1h",
+    "include_performance_insights": true,
+    "focus_components": null,
+    "top_n_results": 5,
+    "analysis_scope": "comprehensive"
+  },
+  "execution_metadata": {
+    "tool_name": "analysis_ovnk_performance_deepdrive",
+    "timeout_seconds": 300,
+    "components_analyzed": 9,
+    "data_freshness": null,
+    "analysis_duration_type": "historical"
   }
 }

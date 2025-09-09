@@ -84,18 +84,18 @@ class kubeAPICollector:
         }
         
         return await self._execute_and_process_queries(queries, 'readonly_latency', start_time, end_time)
-    
+            
     async def get_mutating_latency_metrics(self, duration: str = "5m", start_time: Optional[str] = None, end_time: Optional[str] = None) -> Dict[str, Any]:
         """Get mutating API calls latency metrics with top 5 avg and max values"""
         elapsed_placeholder = f"[{duration}:]"
-        
+            
         queries = {
             'avg_mutating_apicalls_latency': f'''avg_over_time(histogram_quantile(0.99, sum(irate(apiserver_request_duration_seconds_bucket{{apiserver="kube-apiserver", verb=~"POST|PUT|DELETE|PATCH", subresource!~"log|exec|portforward|attach|proxy"}}[2m])) by (le, resource, verb, scope)){elapsed_placeholder}) > 0''',
             'max_mutating_apicalls_latency': f'''max_over_time(histogram_quantile(0.99, sum(irate(apiserver_request_duration_seconds_bucket{{apiserver="kube-apiserver", verb=~"POST|PUT|DELETE|PATCH", subresource!~"log|exec|portforward|attach|proxy"}}[2m])) by (le, resource, verb, scope)){elapsed_placeholder}) > 0'''
         }
-        
+            
         return await self._execute_and_process_queries(queries, 'mutating_latency', start_time, end_time)
-    
+            
     async def get_basic_api_metrics(self, duration: str = "5m", start_time: Optional[str] = None, end_time: Optional[str] = None) -> Dict[str, Any]:
         """Get basic API server metrics"""
         queries = {
@@ -409,7 +409,7 @@ class kubeAPICollector:
             return sorted_values[f]
         else:
             return sorted_values[f] * (1 - c) + sorted_values[f + 1] * c
-
+    
     def _to_number(self, value: Any) -> Optional[float]:
         """Convert input to a finite float; return None for NaN/Inf or invalid."""
         try:

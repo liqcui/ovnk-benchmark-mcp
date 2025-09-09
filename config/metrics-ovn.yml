@@ -82,12 +82,6 @@ metrics:
     description: "95th percentile of controller sync duration over 5 minutes"
     component: controller
     
-  - query: histogram_quantile(0.95, rate(ovnkube_node_sync_duration_seconds_bucket[5m]))
-    metricName: ovnkube_node_sync_duration_p95
-    unit: seconds
-    description: "95th percentile of node sync duration over 5 minutes"
-    component: node
-
   - query: histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_pod_creation_latency_seconds_bucket[$interval]))) > 0
     metricName: Pod_Annotation_Latency_p99
   

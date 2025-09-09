@@ -1,0 +1,93 @@
+# OVN-Kubernetes Latency Metrics Configuration
+# This file defines PromQL queries for collecting OVN-K latency metrics
+# The $interval placeholder will be replaced with '2m' by default
+
+metrics:
+  # CNI Latency Metrics
+  - query: histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_node_cni_request_duration_seconds_bucket{command="ADD"}[$interval])) > 0)
+    metricName: cni_request_add_latency_p99
+    unit: seconds
+    type: cni_latency
+    component: node
+    description: "99th percentile latency for CNI ADD requests"
+
+  - query: histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_node_cni_request_duration_seconds_bucket{command="DEL"}[$interval])) > 0)
+    metricName: cni_request_del_latency_p99
+    unit: seconds
+    type: cni_latency
+    component: node
+    description: "99th percentile latency for CNI DEL requests"
+
+  # Pod Annotation Latency
+  - query: histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_pod_creation_latency_seconds_bucket[$interval]))) > 0
+    metricName: pod_annotation_latency_p99
+    unit: seconds
+    type: pod_annotation_latency
+    component: controller
+    description: "99th percentile latency for pod annotation processing"
+
+  # Pod Creation Latency Metrics
+  - query: histogram_quantile(0.99, sum by(pod, le) (rate(ovnkube_controller_pod_lsp_created_port_binding_duration_seconds_bucket[$interval])))
+    metricName: pod_lsp_created_p99
+    unit: seconds
+    type: pod_creation_latency
+    component: controller
+    description: "99th percentile latency for pod LSP creation to port binding"
+
+  - query: histogram_quantile(0.99, sum by(pod, le) (rate(ovnkube_controller_pod_port_binding_port_binding_chassis_duration_seconds_bucket[$interval])))
+    metricName: pod_port_binding_p99
+    unit: seconds
+    type: pod_creation_latency
+    component: controller
+    description: "99th percentile latency for pod port binding to chassis binding"
+
+  - query: histogram_quantile(0.99, sum by(pod, le) (rate(ovnkube_controller_pod_port_binding_chassis_port_binding_up_duration_seconds_bucket[$interval])))
+    metricName: pod_port_binding_up_p99
+    unit: seconds
+    type: pod_creation_latency
+    component: controller
+    description: "99th percentile latency for pod chassis binding to port up"
+
+  - query: histogram_quantile(0.99, sum by(pod, le) (rate(ovnkube_controller_pod_first_seen_lsp_created_duration_seconds_bucket[$interval])))
+    metricName: pod_first_seen_lsp_created_p99
+    unit: seconds
+    type: pod_creation_latency
+    component: controller
+    description: "99th percentile latency for pod first seen to LSP created"
+
+  # Service Latency Metrics
+  - query: sum by (pod) (rate(ovnkube_controller_sync_service_latency_seconds_sum[$interval])) / sum by (pod) (rate(ovnkube_controller_sync_service_latency_seconds_count[$interval]))
+    metricName: sync_service_latency
+    unit: seconds
+    type: service_latency
+    component: controller
+    description: "Average service synchronization latency"
+
+  - query: histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_sync_service_latency_seconds_bucket[$interval])) > 0)
+    metricName: sync_service_latency_p99
+    unit: seconds
+    type: service_latency
+    component: controller
+    description: "99th percentile service synchronization latency"
+
+  # Network Configuration Application Metrics
+  - query: histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_network_programming_duration_seconds_bucket[$interval])) > 0)
+    metricName: apply_network_config_pod_duration_p99
+    unit: seconds
+    type: apply_network_configuration
+    component: controller
+    description: "99th percentile latency for applying network configuration to pods"
+
+  - query: histogram_quantile(0.99, sum by (pod, le) (rate(ovnkube_controller_network_programming_service_duration_seconds_bucket[$interval])) > 0)
+    metricName: apply_network_config_service_duration_p99
+    unit: seconds
+    type: apply_network_configuration
+    component: controller
+    description: "99th percentile latency for applying network configuration to services"
+
+# Configuration options
+config:
+  default_interval: "2m"
+  cache_expiry_minutes: 10
+  query_timeout_seconds: 600
+  max_concurrent_queries: 4

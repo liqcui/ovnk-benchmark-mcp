@@ -522,8 +522,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
     
     async def collect_latency_metrics_summary(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """
-        Collect comprehensive latency metrics including top 20 controller sync duration metrics
-        Merged functionality from collect_controller_sync_duration_top20
+        Collect comprehensive latency metrics 
         """
         try:
             # Use duration window to avoid instant-query zeros
@@ -535,26 +534,14 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
                 top_n_results=5
             )
             
-            # Collect controller sync duration top 20 (merged functionality)
-            sync_duration_data = await self.latency_collector.collect_controller_sync_duration(
-                time=None, 
-                duration=latency_window, 
-                end_time=None
-            )
-            
             result = {
                 'collection_timestamp': datetime.now(timezone.utc).isoformat(),
                 'query_type': 'duration' if duration else 'instant',
                 'timezone': 'UTC',
-                'categories': {},
-                'controller_sync_duration_top20': {
-                    'metric_name': 'ovnkube_controller_sync_duration_seconds',
-                    'data': [],
-                    'summary': {}
-                }
+                'categories': {}
             }
             
-            # Process standard latency categories
+            # Process standard latency categories, but drop metrics with no data
             categories = [
                 'ready_duration_metrics', 'sync_duration_metrics', 
                 'percentile_latency_metrics', 'pod_latency_metrics',
@@ -565,7 +552,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
             for category in categories:
                 if category in latency_data:
                     category_data = latency_data[category]
-                    result['categories'][category.replace('_metrics', '')] = {}
+                    cleaned: Dict[str, Any] = {}
                     
                     for metric_name, metric_result in category_data.items():
                         if isinstance(metric_result, dict) and 'statistics' in metric_result:
@@ -574,72 +561,26 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
                             if stats.get('values'):
                                 enhanced_stats = StatisticsCalculator.calculate_basic_stats(stats['values'])
                                 stats.update(enhanced_stats)
-                            
-                            result['categories'][category.replace('_metrics', '')][metric_name] = {
-                                'metric_name': metric_result.get('metric_name', metric_name),
-                                'component': metric_result.get('component', 'unknown'),
-                                'unit': metric_result.get('unit', 'seconds'),
-                                'statistics': stats,
-                                'top_5': stats.get('top_5', [])
-                            }
-            
-            # Process controller sync duration top 20 (merged from collect_controller_sync_duration_top20)
-            if sync_duration_data and not sync_duration_data.get('error'):
-                statistics = sync_duration_data.get('statistics', {})
-                
-                if statistics and statistics.get('count', 0) > 0:
-                    # Get top entries - prioritize top_20, fallback to top_5
-                    top_entries = statistics.get('top_20', statistics.get('top_5', []))
-                    
-                    # Process and format the top 20 entries
-                    processed_entries = []
-                    for idx, entry in enumerate(top_entries[:20]):  # Ensure max 20 entries
-                        processed_entry = {
-                            'rank': idx + 1,
-                            'pod_name': entry.get('pod_name', 'unknown'),
-                            'node_name': entry.get('node_name', 'unknown'),
-                            'resource_name': entry.get('resource_name', 'all watchers'),
-                            'value_seconds': entry.get('value', 0),
-                            'readable_value': entry.get('readable_value', {}),
-                            'avg_value': entry.get('value', 0),
-                            'max_value': entry.get('value', 0)
-                        }
-                        processed_entries.append(processed_entry)
-                    
-                    result['controller_sync_duration_top20']['data'] = processed_entries
-                    
-                    # Enhanced summary using StatisticsCalculator
-                    values = [entry.get('value', 0) for entry in top_entries if entry.get('value', 0) > 0]
-                    if values:
-                        enhanced_summary = StatisticsCalculator.calculate_basic_stats(values)
-                        percentiles = StatisticsCalculator.calculate_percentiles(values, [50, 75, 90, 95, 99])
-                        enhanced_summary.update(percentiles)
-                    else:
-                        enhanced_summary = {}
-                    
-                    result['controller_sync_duration_top20']['summary'] = {
-                        'total_count': statistics.get('count', 0),
-                        'returned_count': len(processed_entries),
-                        'max_value_seconds': statistics.get('max_value', 0),
-                        'avg_value_seconds': statistics.get('avg_value', 0),
-                        'enhanced_statistics': enhanced_summary,
-                        'readable_max': statistics.get('readable_max', {}),
-                        'readable_avg': statistics.get('readable_avg', {}),
-                        'component': sync_duration_data.get('component', 'controller'),
-                        'unit': sync_duration_data.get('unit', 'seconds')
-                    }
-                else:
-                    result['controller_sync_duration_top20'] = {
-                        'metric_name': 'ovnkube_controller_sync_duration_seconds',
-                        'data': [],
-                        'summary': {'count': 0, 'message': 'No data available'},
-                        'error': 'No sync duration data found'
-                    }
-            else:
-                result['controller_sync_duration_top20'] = {
-                    'metric_name': 'ovnkube_controller_sync_duration_seconds',
-                    'error': sync_duration_data.get('error', 'Failed to collect sync duration data')
-                }
+                            # Keep only if meaningful (non-zero) data exists
+                            count = stats.get('count') or 0
+                            max_val = stats.get('max_value') or 0
+                            avg_val = stats.get('avg_value') or 0
+                            top_5 = stats.get('top_5') or []
+                            if (count > 0) or (max_val > 0) or (avg_val > 0) or (isinstance(top_5, list) and len(top_5) > 0):
+                                cleaned[metric_name] = {
+                                    'metric_name': metric_result.get('metric_name', metric_name),
+                                    'component': metric_result.get('component', 'unknown'),
+                                    'unit': metric_result.get('unit', 'seconds'),
+                                    'statistics': {
+                                        'count': count,
+                                        'max_value': max_val,
+                                        'avg_value': avg_val,
+                                        'top_5': top_5
+                                    }
+                                }
+                    # Only add non-empty categories
+                    if cleaned:
+                        result['categories'][category.replace('_metrics', '')] = cleaned
             
             # Add query parameters if duration was specified
             if duration:
@@ -784,7 +725,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
             'resource_hotspots': {},
             'latency_analysis': {},
             'node_analysis': {},
-            'controller_sync_analysis': {}  # New section for controller sync analysis
+            'controller_sync_analysis': {}
         }
         
         # Use the enhanced performance score calculation
@@ -864,49 +805,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
             
             insights['node_analysis'] = node_insights
         
-        # Enhanced Controller Sync Analysis
-        latency_data = metrics_summary.get('latency_metrics', {})
-        if latency_data and not latency_data.get('error'):
-            controller_sync_data = latency_data.get('controller_sync_duration_top20', {})
-            if controller_sync_data and not controller_sync_data.get('error'):
-                sync_analysis = {
-                    'total_entries': controller_sync_data.get('summary', {}).get('total_count', 0),
-                    'high_latency_controllers': [],
-                    'performance_classification': {},
-                    'statistics': controller_sync_data.get('summary', {}).get('enhanced_statistics', {})
-                }
-                
-                # Analyze top controllers for high latency
-                top_controllers = controller_sync_data.get('data', [])
-                sync_threshold = PerformanceThreshold(
-                    excellent_max=0.1, good_max=0.5, moderate_max=1.0, poor_max=2.0,
-                    unit='seconds', component_type='controller_sync'
-                )
-                
-                for controller in top_controllers[:10]:  # Analyze top 10
-                    sync_time = controller.get('value_seconds', 0)
-                    level, severity = ThresholdClassifier.classify_performance(sync_time, sync_threshold)
-                    
-                    if level in [PerformanceLevel.POOR, PerformanceLevel.CRITICAL]:
-                        sync_analysis['high_latency_controllers'].append({
-                            'pod_name': controller.get('pod_name'),
-                            'node_name': controller.get('node_name'),
-                            'sync_time_seconds': sync_time,
-                            'performance_level': level.value,
-                            'severity_score': severity,
-                            'rank': controller.get('rank')
-                        })
-                
-                # Performance classification summary
-                sync_analysis['performance_classification'] = {
-                    'excellent_count': sum(1 for c in top_controllers if c.get('value_seconds', 0) <= 0.1),
-                    'good_count': sum(1 for c in top_controllers if 0.1 < c.get('value_seconds', 0) <= 0.5),
-                    'moderate_count': sum(1 for c in top_controllers if 0.5 < c.get('value_seconds', 0) <= 1.0),
-                    'poor_count': sum(1 for c in top_controllers if 1.0 < c.get('value_seconds', 0) <= 2.0),
-                    'critical_count': sum(1 for c in top_controllers if c.get('value_seconds', 0) > 2.0)
-                }
-                
-                insights['controller_sync_analysis'] = sync_analysis
+        # Controller sync analysis is reported under latency_metrics.sync_duration only
         
         # Enhanced Resource hotspots analysis
         ovnkube_pods = metrics_summary.get('ovnkube_pods_cpu', {})
@@ -963,6 +862,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
             }
         
         # Enhanced Latency analysis
+        latency_data = metrics_summary.get('latency_metrics', {})
         if latency_data and not latency_data.get('error'):
             high_latency_metrics = []
             for category, metrics in latency_data.get('categories', {}).items():
@@ -1018,10 +918,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
         if insights.get('node_analysis', {}).get('high_cpu_nodes'):
             findings.append(f"Found {len(insights['node_analysis']['high_cpu_nodes'])} worker nodes with high CPU usage")
         
-        # Controller sync findings
-        if insights.get('controller_sync_analysis', {}).get('high_latency_controllers'):
-            count = len(insights['controller_sync_analysis']['high_latency_controllers'])
-            findings.append(f"Detected {count} controllers with concerning sync latency")
+        # Controller sync findings are covered by latency analysis
         
         insights['key_findings'] = findings
         
@@ -1063,7 +960,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
     async def run_comprehensive_analysis(self, duration: Optional[str] = None) -> Dict[str, Any]:
         """Run complete deep drive analysis with enhanced utility integration"""
         print(f"Running comprehensive OVN analysis {'with duration: ' + duration if duration else 'instant'}...")
-        
+
         # Generate metadata using utility function
         metadata = self.generate_metadata(
             collection_type='comprehensive_deep_drive',
@@ -1085,7 +982,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
                 self.collect_ovnkube_pods_usage(duration),
                 self.collect_ovn_containers_usage(duration), 
                 self.collect_ovs_metrics_summary(duration),
-                self.collect_latency_metrics_summary(duration),  # Now includes controller sync duration top 20
+                self.collect_latency_metrics_summary(duration),
                 self.collect_nodes_usage_summary(duration)
             ]
             
@@ -1097,7 +994,7 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
                 'ovnkube_pods_cpu': results[1] if not isinstance(results[1], Exception) else {'error': str(results[1])},
                 'ovn_containers': results[2] if not isinstance(results[2], Exception) else {'error': str(results[2])},
                 'ovs_metrics': results[3] if not isinstance(results[3], Exception) else {'error': str(results[3])},
-                'latency_metrics': results[4] if not isinstance(results[4], Exception) else {'error': str(results[4])},  # Contains controller sync duration
+                'latency_metrics': results[4] if not isinstance(results[4], Exception) else {'error': str(results[4])},
                 'nodes_usage': results[5] if not isinstance(results[5], Exception) else {'error': str(results[5])}
             })
             
@@ -1119,9 +1016,8 @@ class ovnDeepDriveAnalyzer(BasePerformanceAnalyzer):
             print(f"Error in comprehensive analysis: {e}")
             return analysis_result
 
-# Remove the standalone collect_controller_sync_duration_top20 function as it's now integrated
 
-# Updated convenience functions
+
 async def run_ovn_deep_drive_analysis(prometheus_client: PrometheusBaseQuery, 
                                     auth: Optional[OpenShiftAuth] = None,
                                     duration: Optional[str] = None) -> Dict[str, Any]:
@@ -1136,29 +1032,6 @@ async def get_ovn_performance_json(prometheus_client: PrometheusBaseQuery,
     results = await run_ovn_deep_drive_analysis(prometheus_client, auth, duration)
     return json.dumps(results, indent=2, default=str)
 
-async def get_controller_sync_duration_top20(prometheus_client: PrometheusBaseQuery, 
-                                           auth: Optional[OpenShiftAuth] = None,
-                                           duration: Optional[str] = None,
-                                           end_time: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Get top 20 ovnkube_controller_sync_duration_seconds metrics
-    Now integrated into the latency_metrics collection
-    """
-    analyzer = ovnDeepDriveAnalyzer(prometheus_client, auth)
-    latency_results = await analyzer.collect_latency_metrics_summary(duration)
-    
-    # Extract just the controller sync duration data
-    return latency_results.get('controller_sync_duration_top20', {
-        'error': 'Controller sync duration data not available'
-    })
-
-async def get_controller_sync_duration_top20_json(prometheus_client: PrometheusBaseQuery,
-                                                 auth: Optional[OpenShiftAuth] = None,
-                                                 duration: Optional[str] = None,
-                                                 end_time: Optional[str] = None) -> str:
-    """Get top 20 ovnkube_controller_sync_duration_seconds metrics as JSON string"""
-    results = await get_controller_sync_duration_top20(prometheus_client, auth, duration, end_time)
-    return json.dumps(results, indent=2, default=str)
 
 # Import utility function for backward compatibility
 from .ovnk_benchmark_performance_utility import calculate_node_resource_efficiency
@@ -1207,3 +1080,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
