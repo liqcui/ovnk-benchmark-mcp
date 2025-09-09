@@ -158,7 +158,13 @@ class EltUtility:
         elif table_name == 'network_analysis':  # Allow more columns for network analysis
             max_cols = 6  # Network analysis can show more columns
         
-        # NEW: Latency tables - show all columns for detailed latency analysis
+        # NEW: Latency summary tables - show all columns for comprehensive view
+        elif table_name == 'latency_overview':
+            return df  # Don't limit the new latency overview table to show all metric details
+        elif table_name == 'latency_overall_stats':
+            max_cols = 3  # Overall stats table uses 3 columns for property-value-metric format
+        
+        # Existing latency tables - show all columns for detailed latency analysis
         elif table_name in ['controller_ready_duration', 'node_ready_duration', 'sync_duration', 
                         'pod_latency', 'cni_latency', 'service_latency', 'network_programming']:
             return df  # Don't limit latency tables to show all metric details

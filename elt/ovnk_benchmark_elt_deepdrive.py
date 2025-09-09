@@ -47,13 +47,14 @@ class deepDriveELT(EltUtility):
             return 0.0
 
     def extract_deepdrive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract deep drive analysis data from JSON"""
+        """Extract deep drive analysis data from JSON - UPDATED"""
         try:
             extracted = {
                 'metadata': self._extract_metadata(data),
                 'basic_info': self._extract_basic_info(data),
                 'resource_usage': self._extract_resource_usage(data),
                 'latency_analysis': self._extract_latency_analysis(data),
+                'latency_summary_metrics': self._extract_latency_summary_metrics(data),  # NEW
                 'performance_insights': self._extract_performance_insights(data),
                 'node_analysis': self._extract_node_analysis(data),
                 'ovs_metrics': self._extract_ovs_summary(data)
@@ -654,6 +655,93 @@ class deepDriveELT(EltUtility):
             'findings_and_recommendations': findings_and_recommendations
         }
 
+    def _extract_latency_summary_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract latency summary metrics with avg/max from formatted_summary - NEW FUNCTION"""
+        try:
+            formatted_summary = data.get('formatted_summary', {})
+            latency_metrics = formatted_summary.get('latency_metrics', {})
+            
+            if not latency_metrics:
+                return {'latency_overview': []}
+            
+            # Extract summary from the summary section
+            summary = latency_metrics.get('summary', {})
+            top_latencies = summary.get('top_latencies', [])
+            
+            latency_overview = []
+            
+            for idx, metric in enumerate(top_latencies, 1):
+                metric_name = metric.get('metric_name', '')
+                component = metric.get('component', '')
+                max_value = metric.get('max_value', 0)
+                avg_value = metric.get('avg_value', 0)
+                data_points = metric.get('data_points', 0)
+                
+                # Get readable values
+                readable_max = metric.get('readable_max', {})
+                readable_avg = metric.get('readable_avg', {})
+                
+                max_display = f"{readable_max.get('value', max_value)} {readable_max.get('unit', 's')}"
+                avg_display = f"{readable_avg.get('value', avg_value)} {readable_avg.get('unit', 's')}"
+                
+                # Highlight critical and top 1
+                rank_display = f"🏆 {idx}" if idx == 1 else idx
+                if max_value > 3.0:  # Critical threshold for seconds
+                    rank_display = f"🔥 {idx}" if idx == 1 else f"⚠️ {idx}"
+                elif max_value > 1.0:  # Warning threshold
+                    rank_display = f"⚠️ {idx}" if idx == 1 else idx
+                
+                latency_overview.append({
+                    'Rank': rank_display,
+                    'Metric': self.truncate_metric_name(metric_name, 35),
+                    'Component': component.title(),
+                    'Max Latency': max_display,
+                    'Avg Latency': avg_display,
+                    'Data Points': str(data_points)
+                })
+            
+            # Overall summary stats
+            overall_stats = []
+            overall_max = summary.get('overall_max_latency', {})
+            overall_avg = summary.get('overall_avg_latency', {})
+            
+            if overall_max:
+                max_readable = overall_max.get('readable', {})
+                max_display = f"{max_readable.get('value', 0)} {max_readable.get('unit', 's')}"
+                overall_stats.append({
+                    'Property': 'Overall Max Latency',
+                    'Value': max_display,
+                    'Metric': overall_max.get('metric', '')
+                })
+            
+            if overall_avg:
+                avg_readable = overall_avg.get('readable', {})
+                avg_display = f"{avg_readable.get('value', 0)} {avg_readable.get('unit', 's')}"
+                overall_stats.append({
+                    'Property': 'Overall Avg Latency', 
+                    'Value': avg_display,
+                    'Metric': 'All Metrics'
+                })
+            
+            # Component breakdown
+            component_breakdown = summary.get('component_breakdown', {})
+            for comp, count in component_breakdown.items():
+                if comp != 'unknown' or count > 0:
+                    overall_stats.append({
+                        'Property': f'{comp.title()} Metrics',
+                        'Value': str(count),
+                        'Metric': 'Count'
+                    })
+            
+            return {
+                'latency_overview': latency_overview,
+                'overall_stats': overall_stats
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to extract latency summary metrics: {e}")
+            return {'latency_overview': []}
+
     def _extract_performance_insights(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract performance insights"""
         perf_analysis = data.get('performance_analysis', {})
@@ -1005,11 +1093,14 @@ class deepDriveELT(EltUtility):
             return f"Deep drive analysis summary generation failed: {str(e)}"
 
     def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-        """Transform structured data to DataFrames"""
+        """Transform structured data to DataFrames - UPDATED"""
         try:
             if not isinstance(structured_data, dict) or not structured_data:
                 return {}
             dataframes = {}
+            
+            # Existing transformations...
+            # [Keep all existing code from the original function]
             
             # Analysis metadata
             metadata = structured_data.get('metadata') or {}
@@ -1069,7 +1160,20 @@ class deepDriveELT(EltUtility):
                 df = pd.DataFrame(nodes_network_usage)
                 dataframes['nodes_network_usage'] = df
             
-            # NEW: Latency analysis tables
+            # NEW: Latency summary metrics
+            latency_summary_metrics = structured_data.get('latency_summary_metrics') or {}
+            
+            latency_overview = latency_summary_metrics.get('latency_overview', [])
+            if latency_overview:
+                df = pd.DataFrame(latency_overview)
+                dataframes['latency_overview'] = df  # Don't limit to show all columns
+            
+            overall_stats = latency_summary_metrics.get('overall_stats', [])
+            if overall_stats:
+                df = pd.DataFrame(overall_stats)
+                dataframes['latency_overall_stats'] = self.limit_dataframe_columns(df, 3, 'latency_overall_stats')
+            
+            # Existing latency analysis tables
             latency_analysis = structured_data.get('latency_analysis') or {}
             
             # Controller ready duration
@@ -1190,23 +1294,25 @@ class deepDriveELT(EltUtility):
             return {}
 
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
-        """Generate HTML tables with enhanced styling for deep drive analysis"""
+        """Generate HTML tables with enhanced styling for deep drive analysis - UPDATED"""
         try:
             html_tables = {}
             
-            # Define table priorities with latency tables first
+            # Define table priorities with new latency summary tables first
             table_priorities = {
                 'analysis_metadata': 0,
                 'cluster_overview': 1,
+                'latency_overview': 2,  # NEW: Priority placement for new summary table
+                'latency_overall_stats': 3,  # NEW: Overall latency statistics
                 'performance_summary': 28,
-                'latency_summary': 3,
-                'controller_ready_duration': 4,
-                'node_ready_duration': 5,
-                'sync_duration': 6,
-                'pod_latency': 7,
-                'cni_latency': 8,
-                'service_latency': 9,
-                'network_programming': 10,
+                'latency_summary': 4,
+                'controller_ready_duration': 5,
+                'node_ready_duration': 6,
+                'sync_duration': 7,
+                'pod_latency': 8,
+                'cni_latency': 9,
+                'service_latency': 10,
+                'network_programming': 11,
                 'findings_and_recommendations': 27,
                 'node_summary': 12,
                 'nodes_usage_detailed': 13,
@@ -1237,8 +1343,49 @@ class deepDriveELT(EltUtility):
                 
                 styled_df = df.copy()
                 
+                # NEW: Latency overview table highlighting
+                if table_name == 'latency_overview':
+                    for idx, row in styled_df.iterrows():
+                        # Highlight critical latencies
+                        max_latency = str(row.get('Max Latency', ''))
+                        if 's' in max_latency:  # seconds
+                            try:
+                                value = float(max_latency.split()[0])
+                                if value > 3.0:
+                                    styled_df.at[idx, 'Max Latency'] = f'<span class="text-danger font-weight-bold">{max_latency}</span>'
+                                elif value > 1.0:
+                                    styled_df.at[idx, 'Max Latency'] = f'<span class="text-warning font-weight-bold">{max_latency}</span>'
+                            except (ValueError, IndexError):
+                                pass
+                        
+                        # Highlight component
+                        component = str(row.get('Component', ''))
+                        if component.lower() == 'controller':
+                            styled_df.at[idx, 'Component'] = f'<span class="badge badge-primary">{component}</span>'
+                        elif component.lower() == 'node':
+                            styled_df.at[idx, 'Component'] = f'<span class="badge badge-success">{component}</span>'
+                
+                # NEW: Overall stats highlighting
+                elif table_name == 'latency_overall_stats':
+                    for idx, row in styled_df.iterrows():
+                        prop = str(row.get('Property', ''))
+                        value = str(row.get('Value', ''))
+                        
+                        if 'Overall Max Latency' in prop and 's' in value:
+                            try:
+                                val = float(value.split()[0])
+                                if val > 3.0:
+                                    styled_df.at[idx, 'Value'] = f'<span class="text-danger font-weight-bold">{value}</span>'
+                                elif val > 1.0:
+                                    styled_df.at[idx, 'Value'] = f'<span class="text-warning font-weight-bold">{value}</span>'
+                            except (ValueError, IndexError):
+                                pass
+                
+                # Existing highlighting code for other tables...
+                # [Keep all existing table highlighting logic from the original function]
+                
                 # Latency tables highlighting
-                if table_name == 'controller_ready_duration':
+                elif table_name == 'controller_ready_duration':
                     for idx, row in styled_df.iterrows():
                         value_str = str(row.get('Value', '0s'))
                         try:
@@ -1346,7 +1493,9 @@ class deepDriveELT(EltUtility):
                 html_table = self.create_html_table(styled_df, table_name)
                 
                 # Add custom styling for important tables
-                if table_name in ['performance_summary', 'latency_summary', 'alerts', 'findings_and_recommendations']:
+                if table_name in ['latency_overview', 'latency_overall_stats']:  # NEW: Highlight new latency tables
+                    html_table = f'<div class="border border-success rounded p-2 mb-3">{html_table}</div>'
+                elif table_name in ['performance_summary', 'latency_summary', 'alerts', 'findings_and_recommendations']:
                     html_table = f'<div class="border border-primary rounded p-2 mb-3">{html_table}</div>'
                 elif table_name in ['node_ready_duration', 'controller_ready_duration', 'pod_latency']:
                     html_table = f'<div class="border border-warning rounded p-2 mb-3">{html_table}</div>'
@@ -1358,4 +1507,3 @@ class deepDriveELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to generate deep drive HTML tables: {e}")
             return {}
-
