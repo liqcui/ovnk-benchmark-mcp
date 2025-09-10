@@ -147,21 +147,54 @@ class EltUtility:
         """Limit DataFrame columns to maximum number - Updated with Deep Drive and Latency support"""
         if max_cols is None:
             max_cols = self.max_columns
-        
-        # Special handling for latencyELT tables
+
+      # Special handling for latencyELT tables
         if table_name and table_name.startswith('latencyelt_'):
-            if table_name == 'latencyelt_collection_info':
+            if table_name in ['latencyelt_collection_info', 'latencyelt_essential_summary']:
                 max_cols = 2  # Property-value format
-            elif table_name == 'latencyelt_summary':
-                max_cols = 2  # Property-value format
-            elif table_name == 'latencyelt_top_latencies':
-                return df  # Show all columns for top latencies detail
+            elif table_name == 'latencyelt_top_latencies_ranking':
+                max_cols = 6  # Show rank, metric, component, latency, severity, data points
+            elif table_name == 'latencyelt_controller_sync_top20':
+                max_cols = 5  # Show rank, pod, node, resource, latency
+            elif table_name == 'latencyelt_all_metrics_top5':
+                max_cols = 7  # Show metric, component, category, rank, pod, node, latency
+            elif table_name == 'latencyelt_critical_findings':
+                max_cols = 3  # Show type, description, details
             elif table_name in ['latencyelt_ready_duration', 'latencyelt_sync_duration', 
                             'latencyelt_cni_latency', 'latencyelt_pod_annotation',
                             'latencyelt_pod_creation', 'latencyelt_service_latency', 
                             'latencyelt_network_config']:
                 max_cols = 6  # Show more columns for detailed latency metrics
+        # Continue with existing logic...
+        if len(df.columns) <= max_cols:
+            return df
         
+        # Enhanced priority columns for latencyELT tables
+        if table_name and table_name.startswith('latencyelt_'):
+            if 'ranking' in table_name or 'top20' in table_name:
+                priority_cols = ['rank', 'metric name', 'metric_name', 'pod name', 'pod_name', 'node name', 'node_name', 'latency', 'max latency', 'component', 'severity']
+            elif 'top5' in table_name or 'all_metrics' in table_name:
+                priority_cols = ['metric name', 'metric_name', 'component', 'category', 'rank', 'pod name', 'pod_name', 'node name', 'node_name', 'latency', 'value']
+            else:
+                priority_cols = ['property', 'value', 'metric', 'component', 'max_value', 'avg_value', 'severity', 'rank']
+        else:
+            # Default priority columns for other tables
+            priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory', 'metric']
+        
+        # Find priority columns that exist
+        keep_cols = []
+        for col in df.columns:
+            col_lower = col.lower()
+            if any(priority in col_lower for priority in priority_cols):
+                keep_cols.append(col)
+        
+        # Add remaining columns up to limit
+        remaining_cols = [col for col in df.columns if col not in keep_cols]
+        while len(keep_cols) < max_cols and remaining_cols:
+            keep_cols.append(remaining_cols.pop(0))
+        
+        return df[keep_cols[:max_cols]]        
+
         # Special handling for specific tables that should show all columns or have different limits
         if table_name in ['controlplane_nodes_detail', 'infra_nodes_detail', 'nodes_usage_detailed', 'nodes_network_usage']:
             return df  # Don't limit detail tables - UPDATED to include both new node tables
