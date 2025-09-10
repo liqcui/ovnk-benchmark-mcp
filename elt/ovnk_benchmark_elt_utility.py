@@ -1,6 +1,7 @@
 """
 Utility functions for OpenShift Benchmark ELT modules
 Common functions used across multiple ELT modules
+Updated to support optimized latency ELT
 """
 
 import logging
@@ -144,11 +145,11 @@ class EltUtility:
             return f'<div class="alert alert-danger">Error generating table: {str(e)}</div>'
  
     def limit_dataframe_columns(self, df: pd.DataFrame, max_cols: int = None, table_name: str = None) -> pd.DataFrame:
-        """Limit DataFrame columns to maximum number - Updated with Deep Drive and Latency support"""
+        """Limit DataFrame columns to maximum number - Updated with enhanced latency support"""
         if max_cols is None:
             max_cols = self.max_columns
 
-      # Special handling for latencyELT tables
+        # Enhanced handling for latencyELT tables
         if table_name and table_name.startswith('latencyelt_'):
             if table_name in ['latencyelt_collection_info', 'latencyelt_essential_summary']:
                 max_cols = 2  # Property-value format
@@ -165,7 +166,7 @@ class EltUtility:
                             'latencyelt_pod_creation', 'latencyelt_service_latency', 
                             'latencyelt_network_config']:
                 max_cols = 6  # Show more columns for detailed latency metrics
-        # Continue with existing logic...
+
         if len(df.columns) <= max_cols:
             return df
         
@@ -179,126 +180,6 @@ class EltUtility:
                 priority_cols = ['property', 'value', 'metric', 'component', 'max_value', 'avg_value', 'severity', 'rank']
         else:
             # Default priority columns for other tables
-            priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory', 'metric']
-        
-        # Find priority columns that exist
-        keep_cols = []
-        for col in df.columns:
-            col_lower = col.lower()
-            if any(priority in col_lower for priority in priority_cols):
-                keep_cols.append(col)
-        
-        # Add remaining columns up to limit
-        remaining_cols = [col for col in df.columns if col not in keep_cols]
-        while len(keep_cols) < max_cols and remaining_cols:
-            keep_cols.append(remaining_cols.pop(0))
-        
-        return df[keep_cols[:max_cols]]        
-
-        # Special handling for specific tables that should show all columns or have different limits
-        if table_name in ['controlplane_nodes_detail', 'infra_nodes_detail', 'nodes_usage_detailed', 'nodes_network_usage']:
-            return df  # Don't limit detail tables - UPDATED to include both new node tables
-        elif table_name == 'node_distribution':
-            return df  # Don't limit node distribution table
-        elif table_name == 'node_groups':  # Allow more columns for node groups
-            max_cols = 6  # Node groups can show more columns
-        elif table_name == 'network_analysis':  # Allow more columns for network analysis
-            max_cols = 6  # Network analysis can show more columns
-        
-        # NEW: Latency summary tables - show all columns for comprehensive view
-        elif table_name == 'latency_overview':
-            return df  # Don't limit the new latency overview table to show all metric details
-        elif table_name == 'latency_overall_stats':
-            max_cols = 3  # Overall stats table uses 3 columns for property-value-metric format
-        
-        # Existing latency tables - show all columns for detailed latency analysis
-        elif table_name in ['controller_ready_duration', 'node_ready_duration', 'sync_duration', 
-                        'pod_latency', 'cni_latency', 'service_latency', 'network_programming']:
-            return df  # Don't limit latency tables to show all metric details
-        elif table_name in ['latency_summary', 'performance_summary', 'findings_and_recommendations']:
-            max_cols = 2  # Summary tables use 2 columns for property-value format
-        
-        # OVS-specific table handling
-        elif table_name in ['cpu_usage_summary', 'memory_usage_summary', 'dp_flows_top', 'bridge_flows_summary']:
-            max_cols = 4  # OVS usage tables get 4 columns for readability
-        # Deep Drive OVS-specific table handling
-        elif table_name in ['ovs_vswitchd_cpu', 'ovsdb_server_cpu', 'ovs_db_memory', 'ovs_vswitchd_memory']:
-            max_cols = 4  # OVS CPU and memory tables get 4 columns for readability
-        elif table_name in ['ovs_dp_flows', 'ovs_br_int_flows', 'ovs_br_ex_flows']:
-            max_cols = 4  # OVS flow tables get 4 columns for readability
-        elif table_name == 'ovs_connection_metrics':
-            max_cols = 4  # OVS connection metrics get 4 columns to show status            
-        elif table_name in ['connection_metrics']:
-            max_cols = 2  # Connection metrics are simple key-value
-        
-        # Pods usage specific handling
-        elif table_name in ['top_cpu_pods', 'top_memory_pods']:
-            max_cols = 4  # Top pods usage tables - 4 columns for readability
-        elif table_name in ['cpu_detailed', 'memory_detailed']:
-            max_cols = 6  # Detailed pods metrics - allow more columns
-        elif table_name == 'usage_summary':
-            max_cols = 2  # Usage summary - simple property-value format                      
-        elif 'top_' in (table_name or ''):
-            max_cols = 4  # Limit top usage tables to 4 columns for readability
-        elif 'summary' in (table_name or '') or 'metadata' in (table_name or ''):
-            max_cols = 2  # Limit summary/metadata tables to 2 columns for better readability
-        elif table_name == 'alerts' and len(df.columns) > 4:
-            max_cols = 4  # Limit alerts to 4 columns
-        elif table_name in ['cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status']:  # 2-column for status tables
-            max_cols = 2
-        
-        # Deep Drive specific handling
-        elif table_name in ['analysis_metadata', 'cluster_overview', 'insights']:
-            max_cols = 2  # Deep drive metadata and summary tables use 2 columns
-        elif table_name in ['top_worker_nodes', 'controlplane_nodes', 'container_usage']:
-            max_cols = 4  # Deep drive resource usage tables get 4 columns for readability
-        elif table_name == 'deep_drive_summary':
-            max_cols = 2  # Deep drive summary - simple property-value format            
-        elif table_name in ['database_sizes', 'latency_categories']:
-            max_cols = 3  # Allow 3 columns for these specific tables
-
-        if len(df.columns) <= max_cols:
-            return df
-        
-        # Keep most important columns based on table type
-        if table_name in ['summary', 'metadata', 'cluster_health', 'resource_utilization', 'cluster_operators', 'mcp_status', 'usage_summary', 'analysis_metadata', 'performance_summary', 'cluster_overview', 'insights', 'latency_summary', 'findings_and_recommendations']:
-            # For summary/status tables, keep metric and value columns
-            priority_cols = ['metric', 'value', 'property', 'type', 'description']
-        elif table_name == 'node_groups':
-            # For node groups, prioritize key status columns
-            priority_cols = ['node_type', 'node type', 'total', 'ready', 'health_score', 'health score', 'cpu_cores', 'cpu cores']
-        elif table_name == 'alerts':
-            # For alerts, prioritize severity and message
-            priority_cols = ['alert', 'severity', 'component', 'message', 'rank']
-        elif table_name in ['cpu_usage_summary', 'memory_usage_summary', 'ovs_cpu_usage']:
-            # For OVS usage summaries, prioritize component, node/pod, and key metrics
-            priority_cols = ['component', 'node', 'pod', 'max', 'avg', 'cpu', 'memory', 'rank']
-        elif table_name in ['dp_flows_top', 'bridge_flows_summary', 'ovs_flows']:
-            # For flow tables, prioritize instance/bridge and flow counts
-            priority_cols = ['instance', 'bridge', 'max', 'avg', 'flows', 'type']
-        elif table_name in ['top_cpu_pods', 'top_memory_pods']:
-            # For top pods usage tables, prioritize rank, pod, and usage metrics
-            priority_cols = ['rank', 'pod', 'cpu', 'memory', 'usage', 'node']
-        elif table_name in ['cpu_detailed', 'memory_detailed']:
-            # For detailed pods metrics, prioritize pod name and key metrics
-            priority_cols = ['pod', 'min', 'avg', 'max', 'node', 'namespace']
-        elif table_name in ['container_usage']:
-            # For container usage, prioritize container name and metrics
-            priority_cols = ['container', 'cpu', 'memory', 'status']
-        elif table_name in ['node_summary', 'top_worker_nodes']:
-            # For node analysis, prioritize node info and usage
-            priority_cols = ['node', 'type', 'rank', 'cpu', 'memory', 'count', 'status']
-        elif table_name in ['database_sizes']:
-            # For database info, prioritize database and size
-            priority_cols = ['database', 'size', 'status']
-        elif table_name in ['latency_categories']:
-            # For latency categories, prioritize category and latency
-            priority_cols = ['category', 'latency', 'severity']
-        elif 'top_' in (table_name or ''):
-            # For top usage tables, keep rank, name, and main metric columns
-            priority_cols = ['rank', 'name', 'node', 'cpu', 'memory', 'max', 'avg', 'metric', 'component']
-        else:
-            # Default priority columns
             priority_cols = ['name', 'status', 'value', 'count', 'property', 'rank', 'node', 'type', 'ready', 'cpu', 'memory', 'metric']
         
         # Find priority columns that exist
@@ -461,56 +342,6 @@ class EltUtility:
         node_name = first_non_empty(entry, ['node_name', 'node', 'instance', 'nodename', 'nodeName', 'host'], 'unknown')
         return pod_name, node_name
 
-    def sort_latency_metrics_by_priority(self, metrics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Sort latency metrics by priority/importance"""
-        def get_priority_score(metric: Dict[str, Any]) -> int:
-            """Calculate priority score for a metric (higher = more important)"""
-            score = 0
-            metric_name = metric.get('metric_name', '').lower()
-            
-            # Component priority
-            component = metric.get('component', '').lower()
-            if component == 'controller':
-                score += 100
-            elif component == 'node':
-                score += 80
-            elif component == 'cni':
-                score += 60
-            
-            # Metric type priority
-            if 'ready' in metric_name:
-                score += 50
-            elif 'sync' in metric_name:
-                score += 40
-            elif 'pod' in metric_name:
-                score += 30
-            elif 'service' in metric_name:
-                score += 20
-            
-            # Percentile priority (p99 > p95 > avg)
-            if 'p99' in metric_name:
-                score += 15
-            elif 'p95' in metric_name:
-                score += 10
-            elif 'avg' in metric_name:
-                score += 5
-            
-            # Value-based priority (higher latency = higher priority for attention)
-            try:
-                max_value = metric.get('statistics', {}).get('max_value', 0)
-                if max_value > 5:  # > 5 seconds
-                    score += 30
-                elif max_value > 1:  # > 1 second
-                    score += 20
-                elif max_value > 0.5:  # > 500ms
-                    score += 10
-            except (ValueError, TypeError):
-                pass
-            
-            return score
-        
-        return sorted(metrics, key=get_priority_score, reverse=True)
-
     def create_status_badge(self, status: str, value: str = None) -> str:
         """Create HTML badge for status with optional value"""
         badge_colors = {
@@ -541,140 +372,7 @@ class EltUtility:
         else:
             return f'{value}{unit}'
 
-    def highlight_latencyelt_critical_metric(self, metric_name: str, rank: int = None) -> str:
-        """Highlight critical metrics in latencyELT tables"""
-        if rank == 1:
-            return f'<span class="text-danger font-weight-bold">{metric_name}</span> <span class="badge badge-danger">CRITICAL</span>'
-        elif rank and rank <= 3:
-            return f'<span class="text-warning font-weight-bold">{metric_name}</span>'
-        else:
-            return metric_name
-
-    def create_latencyelt_component_badge(self, component: str) -> str:
-        """Create component badge for latencyELT with appropriate styling"""
-        component_colors = {
-            'controller': 'primary',
-            'node': 'info',
-            'cni': 'success',
-            'unknown': 'secondary'
-        }
-        
-        color = component_colors.get(component.lower(), 'secondary')
-        return f'<span class="badge badge-{color}">{component.title()}</span>'
-
-    def format_latencyelt_duration(self, value: float, unit: str = 'seconds') -> str:
-        """Format duration values for latencyELT with enhanced readability"""
-        try:
-            if unit == 'seconds' and isinstance(value, (int, float)):
-                if value == 0:
-                    return '0 ms'
-                elif value < 0.001:  # Less than 1ms
-                    return f"{round(value * 1000000, 1)} μs"
-                elif value < 1:
-                    return f"{round(value * 1000, 2)} ms"
-                elif value < 60:
-                    return f"{round(value, 3)} s"
-                elif value < 3600:
-                    return f"{round(value / 60, 2)} min"
-                else:
-                    return f"{round(value / 3600, 2)} h"
-            else:
-                return f"{round(float(value), 4)} {unit}"
-        except (ValueError, TypeError):
-            return str(value)
-
-    def categorize_latencyelt_performance(self, max_value: float, avg_value: float, unit: str = 'seconds') -> Dict[str, str]:
-        """Categorize latencyELT performance with detailed analysis"""
-        try:
-            if unit == 'seconds':
-                # Performance thresholds
-                if max_value > 300:  # > 5 minutes
-                    max_severity = 'critical'
-                elif max_value > 60:  # > 1 minute
-                    max_severity = 'high'
-                elif max_value > 5:  # > 5 seconds
-                    max_severity = 'medium'
-                elif max_value > 1:  # > 1 second
-                    max_severity = 'low'
-                else:
-                    max_severity = 'excellent'
-                
-                if avg_value > 60:  # > 1 minute
-                    avg_severity = 'critical'
-                elif avg_value > 10:  # > 10 seconds
-                    avg_severity = 'high'
-                elif avg_value > 2:  # > 2 seconds
-                    avg_severity = 'medium'
-                elif avg_value > 0.5:  # > 500ms
-                    avg_severity = 'low'
-                else:
-                    avg_severity = 'excellent'
-                    
-                return {
-                    'max_severity': max_severity,
-                    'avg_severity': avg_severity,
-                    'overall': max_severity if max_severity in ['critical', 'high'] else avg_severity
-                }
-            else:
-                return {'max_severity': 'unknown', 'avg_severity': 'unknown', 'overall': 'unknown'}
-        except (ValueError, TypeError):
-            return {'max_severity': 'unknown', 'avg_severity': 'unknown', 'overall': 'unknown'}
-
-    def create_latencyelt_rank_badge(self, rank: int) -> str:
-        """Create rank badge for latencyELT top metrics with special styling"""
-        if rank == 1:
-            return f'<span class="badge badge-danger badge-lg"><i class="fas fa-exclamation-triangle"></i> #{rank}</span>'
-        elif rank <= 3:
-            return f'<span class="badge badge-warning font-weight-bold">#{rank}</span>'
-        elif rank <= 5:
-            return f'<span class="badge badge-info">#{rank}</span>'
-        else:
-            return f'<span class="badge badge-secondary">#{rank}</span>'
-
-    def sort_latencyelt_metrics_by_criticality(self, metrics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Sort latencyELT metrics by criticality and performance impact"""
-        def get_criticality_score(metric: Dict[str, Any]) -> int:
-            """Calculate criticality score for a metric (higher = more critical)"""
-            score = 0
-            
-            # Severity-based scoring
-            severity = metric.get('severity', 'unknown')
-            severity_scores = {'critical': 1000, 'high': 500, 'medium': 100, 'low': 50, 'unknown': 0}
-            score += severity_scores.get(severity, 0)
-            
-            # Component priority (controller issues are more critical)
-            component = metric.get('component', '').lower()
-            if component == 'controller':
-                score += 200
-            elif component == 'node':
-                score += 100
-            
-            # Metric type priority
-            metric_name = metric.get('metric_name', '').lower()
-            if 'ready' in metric_name:
-                score += 150  # Ready duration issues are critical
-            elif 'network_config' in metric_name or 'programming' in metric_name:
-                score += 140  # Network programming delays are very important
-            elif 'pod_annotation' in metric_name or 'pod_creation' in metric_name:
-                score += 120  # Pod creation issues are important
-            elif 'sync' in metric_name:
-                score += 100  # Sync issues affect overall performance
-            elif 'cni' in metric_name:
-                score += 80   # CNI issues affect pod networking
-            elif 'service' in metric_name:
-                score += 60   # Service latency issues
-            
-            # Data points (more data points = more reliable, slightly higher score)
-            data_points = metric.get('data_points', 0)
-            if data_points > 10:
-                score += 20
-            elif data_points > 5:
-                score += 10
-            
-            return score
-        
-        return sorted(metrics, key=get_criticality_score, reverse=True)
-
+    # Enhanced latencyELT utility functions
     def truncate_latencyelt_pod_name(self, pod_name: str, max_length: int = 25) -> str:
         """Truncate pod name for latencyELT tables with intelligent shortening"""
         if len(pod_name) <= max_length:
@@ -693,22 +391,80 @@ class EltUtility:
         
         return self.truncate_text(pod_name, max_length)
 
-    def create_latencyelt_severity_badge(self, value: str, severity: str) -> str:
-        """Create HTML badge for latencyELT severity with enhanced styling"""
-        badge_colors = {
-            'critical': 'danger',
-            'high': 'warning',
-            'medium': 'info', 
-            'low': 'success',
+    def create_latencyelt_component_badge(self, component: str) -> str:
+        """Create component badge for latencyELT with appropriate styling"""
+        component_colors = {
+            'controller': 'primary',
+            'node': 'info',
+            'cni': 'success',
             'unknown': 'secondary'
         }
         
-        color = badge_colors.get(severity, 'secondary')
-        
-        # Add pulsing animation for critical values
-        if severity == 'critical':
-            return f'<span class="badge badge-{color} badge-pulse">{value}</span>'
-        elif severity == 'high':
-            return f'<span class="badge badge-{color} font-weight-bold">{value}</span>'
-        else:
-            return f'<span class="badge badge-{color}">{value}</span>'        
+        color = component_colors.get(component.lower(), 'secondary')
+        return f'<span class="badge badge-{color}">{component.title()}</span>'
+
+    def categorize_latencyelt_severity_enhanced(self, max_value: float, avg_value: float, data_points: int, unit: str = 'seconds') -> Dict[str, str]:
+        """Enhanced severity categorization for latencyELT metrics"""
+        try:
+            if unit == 'seconds':
+                # Enhanced thresholds based on metric impact
+                if max_value > 300:  # > 5 minutes - system critical
+                    max_severity = 'critical'
+                    impact = 'system_critical'
+                elif max_value > 60:  # > 1 minute - service critical
+                    max_severity = 'critical' 
+                    impact = 'service_critical'
+                elif max_value > 10:  # > 10 seconds - performance critical
+                    max_severity = 'high'
+                    impact = 'performance_critical'
+                elif max_value > 2:   # > 2 seconds - noticeable delay
+                    max_severity = 'medium'
+                    impact = 'noticeable'
+                elif max_value > 0.5: # > 500ms - minor impact
+                    max_severity = 'low'
+                    impact = 'minor'
+                else:
+                    max_severity = 'excellent'
+                    impact = 'minimal'
+                
+                # Average value assessment
+                if avg_value > 30:
+                    avg_severity = 'critical'
+                elif avg_value > 5:
+                    avg_severity = 'high' 
+                elif avg_value > 1:
+                    avg_severity = 'medium'
+                elif avg_value > 0.2:
+                    avg_severity = 'low'
+                else:
+                    avg_severity = 'excellent'
+                
+                # Data reliability factor
+                reliability = 'high' if data_points > 10 else 'medium' if data_points > 3 else 'low'
+                
+                return {
+                    'max_severity': max_severity,
+                    'avg_severity': avg_severity,
+                    'overall': max_severity if max_severity in ['critical'] else avg_severity,
+                    'impact_level': impact,
+                    'data_reliability': reliability,
+                    'is_critical': max_severity == 'critical' or avg_severity == 'critical'
+                }
+            else:
+                return {
+                    'max_severity': 'unknown',
+                    'avg_severity': 'unknown', 
+                    'overall': 'unknown',
+                    'impact_level': 'unknown',
+                    'data_reliability': 'unknown',
+                    'is_critical': False
+                }
+        except (ValueError, TypeError):
+            return {
+                'max_severity': 'unknown',
+                'avg_severity': 'unknown',
+                'overall': 'unknown', 
+                'impact_level': 'unknown',
+                'data_reliability': 'unknown',
+                'is_critical': False
+            }
