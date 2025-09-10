@@ -541,26 +541,6 @@ class EltUtility:
         else:
             return f'{value}{unit}'
 
-    def create_latencyelt_severity_badge(self, value: str, severity: str) -> str:
-        """Create HTML badge for latencyELT severity with enhanced styling"""
-        badge_colors = {
-            'critical': 'danger',
-            'high': 'warning',
-            'medium': 'info', 
-            'low': 'success',
-            'unknown': 'secondary'
-        }
-        
-        color = badge_colors.get(severity, 'secondary')
-        
-        # Add pulsing animation for critical values
-        if severity == 'critical':
-            return f'<span class="badge badge-{color} badge-pulse">{value}</span>'
-        elif severity == 'high':
-            return f'<span class="badge badge-{color} font-weight-bold">{value}</span>'
-        else:
-            return f'<span class="badge badge-{color}">{value}</span>'
-
     def highlight_latencyelt_critical_metric(self, metric_name: str, rank: int = None) -> str:
         """Highlight critical metrics in latencyELT tables"""
         if rank == 1:
@@ -651,24 +631,6 @@ class EltUtility:
         else:
             return f'<span class="badge badge-secondary">#{rank}</span>'
 
-    def truncate_latencyelt_pod_name(self, pod_name: str, max_length: int = 25) -> str:
-        """Truncate pod name for latencyELT tables with intelligent shortening"""
-        if len(pod_name) <= max_length:
-            return pod_name
-        
-        # For OVN pods, keep the important parts
-        if 'ovnkube' in pod_name:
-            if 'controller' in pod_name:
-                return pod_name.replace('ovnkube-controller-', 'ovn-ctrl-')[:max_length]
-            elif 'node' in pod_name:
-                parts = pod_name.split('-')
-                if len(parts) >= 3:
-                    return f"ovn-node-{parts[-1]}"
-            elif 'master' in pod_name:
-                return pod_name.replace('ovnkube-master-', 'ovn-mstr-')[:max_length]
-        
-        return self.truncate_text(pod_name, max_length)
-
     def sort_latencyelt_metrics_by_criticality(self, metrics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Sort latencyELT metrics by criticality and performance impact"""
         def get_criticality_score(metric: Dict[str, Any]) -> int:
@@ -712,3 +674,41 @@ class EltUtility:
             return score
         
         return sorted(metrics, key=get_criticality_score, reverse=True)
+
+    def truncate_latencyelt_pod_name(self, pod_name: str, max_length: int = 25) -> str:
+        """Truncate pod name for latencyELT tables with intelligent shortening"""
+        if len(pod_name) <= max_length:
+            return pod_name
+        
+        # For OVN pods, keep the important parts
+        if 'ovnkube' in pod_name:
+            if 'controller' in pod_name:
+                return pod_name.replace('ovnkube-controller-', 'ovn-ctrl-')[:max_length]
+            elif 'node' in pod_name:
+                parts = pod_name.split('-')
+                if len(parts) >= 3:
+                    return f"ovn-node-{parts[-1]}"
+            elif 'master' in pod_name:
+                return pod_name.replace('ovnkube-master-', 'ovn-mstr-')[:max_length]
+        
+        return self.truncate_text(pod_name, max_length)
+
+    def create_latencyelt_severity_badge(self, value: str, severity: str) -> str:
+        """Create HTML badge for latencyELT severity with enhanced styling"""
+        badge_colors = {
+            'critical': 'danger',
+            'high': 'warning',
+            'medium': 'info', 
+            'low': 'success',
+            'unknown': 'secondary'
+        }
+        
+        color = badge_colors.get(severity, 'secondary')
+        
+        # Add pulsing animation for critical values
+        if severity == 'critical':
+            return f'<span class="badge badge-{color} badge-pulse">{value}</span>'
+        elif severity == 'high':
+            return f'<span class="badge badge-{color} font-weight-bold">{value}</span>'
+        else:
+            return f'<span class="badge badge-{color}">{value}</span>'        

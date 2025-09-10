@@ -92,13 +92,42 @@ class PerformanceDataELT(EltUtility):
     
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from MCP results"""
-        # NEW: Check for latencyELT comprehensive latency data (enhanced structure)
+
+        # Check for controller sync top20 data
+        if ('metric_name' in data and data.get('metric_name') == 'ovnkube_controller_sync_duration_seconds' and
+            'top_20_detailed' in data and 'query_type' in data and 
+            data.get('query_type') == 'controller_sync_top20'):
+            return 'latencyelt_controller_sync_top20'
+        
+        # Check for all metrics top5 detailed data
+        if ('metrics_details' in data and 'query_type' in data and 
+            data.get('query_type') == 'all_metrics_top5_detailed' and
+            'total_metrics' in data):
+            return 'latencyelt_all_metrics_top5'
+        
+        # Check for essential results data
+        if ('overall_summary' in data and 'top_latencies_ranking' in data and
+            'metrics_by_category' in data and 'critical_findings' in data):
+            return 'latencyelt_essential_results'
+
+        # NEW: Check for controller sync top20 specific data
+        if ('top_20_detailed' in data and 'metric_name' in data and 
+            data.get('metric_name') == 'ovnkube_controller_sync_duration_seconds'):
+            return 'latencyelt_metrics'
+        
+        # NEW: Check for all metrics top5 detailed data  
+        if ('metrics_details' in data and 'query_type' in data and
+            'all_metrics_top5_detailed' in data.get('query_type', '')):
+            return 'latencyelt_metrics'
+        
+        # NEW: Check for essential results structure
+        if ('top_latencies_ranking' in data and 'metrics_by_category' in data and
+            'critical_findings' in data and 'overall_summary' in data):
+            return 'latencyelt_metrics'
+        
+        # Continue with existing latencyELT checks...
         if ('collection_timestamp' in data and 'query_type' in data and 'summary' in data and
-            any(key in data for key in ['ready_duration_metrics', 'sync_duration_metrics', 
-                                    'cni_latency_metrics', 'pod_annotation_metrics', 
-                                    'pod_creation_metrics', 'service_latency_metrics', 
-                                    'network_config_metrics']) and
-            'component_breakdown' in data.get('summary', {})):
+            any(key in data for key in ['ready_duration_metrics', 'sync_duration_metrics'])):
             return 'latencyelt_metrics'
 
         # NEW: Check for OVN Deep Drive analysis data
@@ -342,6 +371,93 @@ class PerformanceDataELT(EltUtility):
             logger.error(f"Failed to generate HTML tables: {e}")
             return {}
 
+    async def latencyelt_process_essential_results(latency_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process latencyELT essential results data for table generation"""
+        try:
+            from .ovnk_benchmark_elt_latency import latencyelt_extract_essential_results
+            
+            # Extract essential results
+            essential_data = latencyelt_extract_essential_results(latency_data)
+            
+            if 'error' in essential_data:
+                return essential_data
+            
+            # Use ELT to transform to tables
+            elt = PerformanceDataELT()
+            dataframes = elt.latencyelt.transform_to_dataframes(essential_data)
+            html_tables = elt.latencyelt.generate_html_tables(dataframes)
+            summary = elt.latencyelt.summarize_ovn_latency_data(essential_data)
+            
+            return {
+                'data_type': 'latencyelt_essential_results',
+                'summary': summary,
+                'html_tables': html_tables,
+                'dataframes': dataframes,
+                'structured_data': essential_data,
+                'timestamp': latency_data.get('collection_timestamp', datetime.now().isoformat())
+            }
+            
+        except Exception as e:
+            return {'error': f"Failed to process essential results: {str(e)}"}
+
+    async def latencyelt_process_controller_sync_top20(prometheus_client, time: str = None, duration: str = None, end_time: str = None) -> Dict[str, Any]:
+        """Process controller sync top20 data for table generation"""
+        try:
+            from .ovnk_benchmark_elt_latency import latencyelt_get_controller_sync_top20
+            
+            # Get top 20 data
+            top20_data = await latencyelt_get_controller_sync_top20(prometheus_client, time, duration, end_time)
+            
+            if 'error' in top20_data:
+                return top20_data
+            
+            # Use ELT to transform to tables
+            elt = PerformanceDataELT()
+            dataframes = elt.latencyelt.transform_to_dataframes(top20_data)
+            html_tables = elt.latencyelt.generate_html_tables(dataframes)
+            summary = f"Controller sync duration top 20 - Max: {top20_data.get('readable_max', {}).get('value', 0)} {top20_data.get('readable_max', {}).get('unit', '')}"
+            
+            return {
+                'data_type': 'latencyelt_controller_sync_top20',
+                'summary': summary,
+                'html_tables': html_tables,
+                'dataframes': dataframes,
+                'structured_data': top20_data,
+                'timestamp': top20_data.get('collection_timestamp', datetime.now().isoformat())
+            }
+            
+        except Exception as e:
+            return {'error': f"Failed to process controller sync top20: {str(e)}"}
+
+    async def latencyelt_process_all_metrics_top5(prometheus_client, time: str = None, duration: str = None, end_time: str = None) -> Dict[str, Any]:
+        """Process all metrics top5 data for table generation"""
+        try:
+            from .ovnk_benchmark_elt_latency import latencyelt_get_all_metrics_top5_detailed
+            
+            # Get all metrics top 5 data
+            metrics_data = await latencyelt_get_all_metrics_top5_detailed(prometheus_client, time, duration, end_time)
+            
+            if 'error' in metrics_data:
+                return metrics_data
+            
+            # Use ELT to transform to tables
+            elt = PerformanceDataELT()
+            dataframes = elt.latencyelt.transform_to_dataframes(metrics_data)
+            html_tables = elt.latencyelt.generate_html_tables(dataframes)
+            summary = f"All metrics top 5 details - {metrics_data.get('total_metrics', 0)} metrics analyzed"
+            
+            return {
+                'data_type': 'latencyelt_all_metrics_top5',
+                'summary': summary,
+                'html_tables': html_tables,
+                'dataframes': dataframes,
+                'structured_data': metrics_data,
+                'timestamp': metrics_data.get('collection_timestamp', datetime.now().isoformat())
+            }
+            
+        except Exception as e:
+            return {'error': f"Failed to process all metrics top5: {str(e)}"}
+
 # Enhanced module functions using the reorganized structure
 def extract_and_transform_mcp_results(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
     """Extract and transform MCP results into tables and summaries"""
@@ -570,5 +686,8 @@ _all__ = [
     'convert_json_to_tables',
     'latencyelt_get_comprehensive_latency_data',
     'latencyelt_get_controller_sync_top20_detail', 
-    'latencyelt_convert_to_html_tables'
+    'latencyelt_convert_to_html_tables',
+    'latencyelt_process_essential_results',
+    'latencyelt_process_controller_sync_top20', 
+    'latencyelt_process_all_metrics_top5'    
 ]

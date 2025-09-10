@@ -318,7 +318,7 @@ class latencyELT(EltUtility):
                 ]
                 dataframes['latencyelt_collection_info'] = pd.DataFrame(collection_data)
 
-            # Essential results summary (if from latencyelt_extract_essential_results)
+            # Essential results summary (NEW)
             if 'overall_summary' in structured_data:
                 summary_data = []
                 overall = structured_data['overall_summary']
@@ -359,7 +359,7 @@ class latencyELT(EltUtility):
                 if summary_data:
                     dataframes['latencyelt_essential_summary'] = pd.DataFrame(summary_data)
 
-            # Top latencies ranking (from essential results)
+            # Top latencies ranking (NEW)
             if 'top_latencies_ranking' in structured_data:
                 df_data = []
                 for entry in structured_data['top_latencies_ranking']:
@@ -377,7 +377,7 @@ class latencyELT(EltUtility):
                 if df_data:
                     dataframes['latencyelt_top_latencies_ranking'] = pd.DataFrame(df_data)
 
-            # Controller sync top 20 (if from latencyelt_get_controller_sync_top20)
+            # Controller sync top 20 (NEW)
             if 'top_20_detailed' in structured_data:
                 df_data = []
                 for entry in structured_data['top_20_detailed']:
@@ -395,7 +395,7 @@ class latencyELT(EltUtility):
                 if df_data:
                     dataframes['latencyelt_controller_sync_top20'] = pd.DataFrame(df_data)
 
-            # All metrics top 5 detailed (if from latencyelt_get_all_metrics_top5_detailed)
+            # All metrics top 5 detailed (NEW)
             if 'metrics_details' in structured_data:
                 all_top5_data = []
                 
@@ -417,9 +417,25 @@ class latencyELT(EltUtility):
                 if all_top5_data:
                     dataframes['latencyelt_all_metrics_top5'] = pd.DataFrame(all_top5_data)
 
+            # Metrics by category (NEW)
+            if 'metrics_by_category' in structured_data:
+                for category_name, metrics in structured_data['metrics_by_category'].items():
+                    if metrics:
+                        category_data = []
+                        for metric in metrics:
+                            category_data.append({
+                                'Metric Name': self.truncate_metric_name(metric['metric_name'], 30),
+                                'Component': metric['component'].title(),
+                                'Max Latency': f"{metric['readable_max'].get('value', 0)} {metric['readable_max'].get('unit', '')}",
+                                'Avg Latency': f"{metric['readable_avg'].get('value', 0)} {metric['readable_avg'].get('unit', '')}",
+                                'Severity': metric['severity'],
+                                'Data Points': metric['data_points']
+                            })
+                        
+                        table_name = f"latencyelt_{category_name.lower().replace(' ', '_')}"
+                        dataframes[table_name] = pd.DataFrame(category_data)
+
             # Continue with existing dataframe creation for other categories...
-            # (keeping existing code for ready_duration_metrics, sync_duration_metrics, etc.)
-            
             # Ready duration metrics
             if structured_data.get('ready_duration_metrics'):
                 df = pd.DataFrame(structured_data['ready_duration_metrics'])
@@ -462,7 +478,7 @@ class latencyELT(EltUtility):
                 if not df.empty:
                     dataframes['latencyelt_network_config'] = df
 
-            # Critical findings
+            # Critical findings (NEW)
             if 'critical_findings' in structured_data and structured_data['critical_findings']:
                 findings_data = []
                 for finding in structured_data['critical_findings']:
@@ -480,7 +496,7 @@ class latencyELT(EltUtility):
         except Exception as e:
             logger.error(f"Failed to create latency DataFrames: {e}")
             return {}
- 
+
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
         """Generate HTML tables with enhanced latency-specific styling and highlighting"""
         html_tables = {}
@@ -814,118 +830,27 @@ class latencyELT(EltUtility):
             'metrics_details': metrics_top5_detailed,
             'summary': comprehensive_data.get('summary', {})
         }
-
-    def latencyelt_extract_essential_results(data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract all essential results from latency.json format data"""
+ 
+    def latencyelt_extract_essential_results(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract all essential results from latency.json format data - integrated version"""
         try:
-            structured = {
-                'collection_info': {
-                    'timestamp': data.get('collection_timestamp', 'Unknown'),
-                    'timezone': data.get('timezone', 'UTC'),
-                    'query_type': data.get('query_type', 'Unknown'),
-                    'total_metrics': data.get('summary', {}).get('total_metrics', 0),
-                    'successful_metrics': data.get('summary', {}).get('successful_metrics', 0),
-                    'failed_metrics': data.get('summary', {}).get('failed_metrics', 0)
-                },
-                'overall_summary': {
-                    'max_latency': data.get('summary', {}).get('overall_max_latency', {}),
-                    'avg_latency': data.get('summary', {}).get('overall_avg_latency', {}),
-                    'component_breakdown': data.get('summary', {}).get('component_breakdown', {}),
-                    'critical_metric': data.get('summary', {}).get('overall_max_latency', {}).get('metric', 'N/A')
-                },
-                'top_latencies_ranking': [],
-                'metrics_by_category': {},
-                'critical_findings': []
-            }
+            # Use existing extract_ovn_latency_data as base and enhance it
+            base_data = self.extract_ovn_latency_data(data)
             
-            # Extract top latencies ranking
-            top_latencies = data.get('summary', {}).get('top_latencies', [])
-            for i, metric in enumerate(top_latencies[:10]):
-                entry = {
-                    'rank': i + 1,
-                    'metric_name': metric.get('metric_name', 'Unknown'),
-                    'component': metric.get('component', 'Unknown'),
-                    'max_value': metric.get('max_value', 0),
-                    'avg_value': metric.get('avg_value', 0),
-                    'readable_max': metric.get('readable_max', {}),
-                    'readable_avg': metric.get('readable_avg', {}),
-                    'data_points': metric.get('data_points', 0),
-                    'severity': 'critical' if i == 0 else 'high' if i < 3 else 'medium',
-                    'is_top1': i == 0
-                }
-                structured['top_latencies_ranking'].append(entry)
+            # Add the essential results structure
+            base_data.update({
+                'overall_summary': self._extract_latency_summary(data),
+                'top_latencies_ranking': self._extract_top_latencies_detail(data),
+                'metrics_by_category': self._group_metrics_by_category(base_data),
+                'critical_findings': self._identify_critical_findings(data)
+            })
             
-            # Extract metrics by category
-            categories = [
-                'ready_duration_metrics', 'sync_duration_metrics', 'cni_latency_metrics',
-                'pod_annotation_metrics', 'pod_creation_metrics', 'service_latency_metrics', 
-                'network_config_metrics'
-            ]
-            
-            for category in categories:
-                if category in data:
-                    category_name = category.replace('_metrics', '').replace('_', ' ').title()
-                    structured['metrics_by_category'][category_name] = []
-                    
-                    for metric_key, metric_info in data[category].items():
-                        if 'statistics' in metric_info and metric_info['statistics'].get('count', 0) > 0:
-                            stats = metric_info['statistics']
-                            
-                            # Get top pod info
-                            top_pod_info = {}
-                            top_entries = stats.get('top_5', stats.get('top_20', []))
-                            if top_entries:
-                                top_entry = top_entries[0]
-                                top_pod_info = {
-                                    'pod_name': top_entry.get('pod_name', 'N/A'),
-                                    'node_name': top_entry.get('node_name', 'N/A'),
-                                    'value': top_entry.get('value', 0),
-                                    'formatted_value': f"{top_entry.get('readable_value', {}).get('value', 0)} {top_entry.get('readable_value', {}).get('unit', 'ms')}"
-                                }
-                                if 'resource_name' in top_entry:
-                                    top_pod_info['resource_name'] = top_entry.get('resource_name', 'N/A')
-                            
-                            metric_summary = {
-                                'metric_name': metric_info.get('metric_name', metric_key),
-                                'component': metric_info.get('component', 'Unknown'),
-                                'unit': metric_info.get('unit', 'seconds'),
-                                'max_value': stats.get('max_value', 0),
-                                'avg_value': stats.get('avg_value', 0),
-                                'readable_max': stats.get('readable_max', {}),
-                                'readable_avg': stats.get('readable_avg', {}),
-                                'data_points': stats.get('count', 0),
-                                'severity': elt_utility.categorize_latency_severity(stats.get('max_value', 0)),
-                                'top_pod': top_pod_info
-                            }
-                            structured['metrics_by_category'][category_name].append(metric_summary)
-            
-            # Identify critical findings
-            if top_latencies:
-                # Critical metric (top 1)
-                top_metric = top_latencies[0]
-                if top_metric.get('max_value', 0) > 60:  # > 1 minute
-                    structured['critical_findings'].append({
-                        'type': 'critical_latency',
-                        'metric': top_metric.get('metric_name', 'Unknown'),
-                        'component': top_metric.get('component', 'Unknown'),
-                        'value': top_metric.get('readable_max', {}),
-                        'description': f"Extremely high latency detected in {top_metric.get('metric_name', 'Unknown')}"
-                    })
-                
-                # High controller latencies
-                controller_metrics = [m for m in top_latencies if m.get('component') == 'controller' and m.get('max_value', 0) > 5]
-                if len(controller_metrics) > 2:
-                    structured['critical_findings'].append({
-                        'type': 'controller_performance',
-                        'count': len(controller_metrics),
-                        'description': f"Multiple controller metrics showing high latency ({len(controller_metrics)} metrics > 5s)"
-                    })
-            
-            return structured
+            return base_data
             
         except Exception as e:
             logger.error(f"Failed to extract essential results: {e}")
             return {'error': str(e)}
+
 
     def create_latencyelt_critical_badge(self, value: str, is_critical: bool = False, is_top1: bool = False) -> str:
         """Create critical badge for latencyELT with enhanced styling"""
