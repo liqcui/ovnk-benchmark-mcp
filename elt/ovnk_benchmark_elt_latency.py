@@ -31,6 +31,80 @@ class latencyELT(EltUtility):
                 'network_config_metrics': self._extract_network_config_metrics(data),
                 'latency_summary': self._extract_latency_summary(data)
             }
+            # Derive controller sync top20 for HTML table if available
+            try:
+                sync_metrics = data.get('sync_duration_metrics', {}) or {}
+                for metric_key, metric_info in sync_metrics.items():
+                    if metric_info.get('metric_name') == 'ovnkube_controller_sync_duration_seconds':
+                        stats = metric_info.get('statistics', {}) or {}
+                        top_entries = stats.get('top_20', []) or stats.get('top_5', [])
+                        detailed = []
+                        for idx, entry in enumerate(top_entries[:20], 1):
+                            rv = entry.get('readable_value', {}) or {}
+                            detailed.append({
+                                'rank': idx,
+                                'pod_name': entry.get('pod_name', 'N/A'),
+                                'node_name': entry.get('node_name', 'N/A'),
+                                'resource_name': entry.get('resource_name', 'N/A'),
+                                'value': entry.get('value', 0),
+                                'formatted_value': f"{rv.get('value', 0)} {rv.get('unit', '')}"
+                            })
+                        if detailed:
+                            structured['top_20_detailed'] = detailed
+                        break
+            except Exception:
+                pass
+
+            # Derive all metrics top5 detailed across categories for HTML table
+            try:
+                categories = [
+                    'ready_duration_metrics', 'sync_duration_metrics', 'cni_latency_metrics',
+                    'pod_annotation_metrics', 'pod_creation_metrics', 'service_latency_metrics',
+                    'network_config_metrics'
+                ]
+                metrics_details = {}
+                for category in categories:
+                    cat_data = data.get(category, {}) or {}
+                    for metric_key, metric_info in cat_data.items():
+                        stats = metric_info.get('statistics', {}) or {}
+                        if stats.get('count', 0) <= 0:
+                            continue
+                        top_entries = stats.get('top_5', []) or stats.get('top_20', [])
+                        top_details = []
+                        for i, entry in enumerate(top_entries[:5]):
+                            if entry.get('value') is None:
+                                continue
+                            rv = entry.get('readable_value', {}) or {}
+                            detail = {
+                                'rank': i + 1,
+                                'pod_name': entry.get('pod_name', 'N/A'),
+                                'node_name': entry.get('node_name', 'N/A'),
+                                'value': entry.get('value', 0),
+                                'unit': metric_info.get('unit', 'seconds'),
+                                'formatted_value': f"{rv.get('value', 0)} {rv.get('unit', '')}"
+                            }
+                            if 'resource_name' in entry:
+                                detail['resource_name'] = entry.get('resource_name', 'N/A')
+                            if 'service_name' in entry:
+                                detail['service_name'] = entry.get('service_name', 'N/A')
+                            top_details.append(detail)
+                        if top_details:
+                            metrics_details[metric_key] = {
+                                'metric_name': metric_info.get('metric_name', metric_key),
+                                'component': metric_info.get('component', 'Unknown'),
+                                'unit': metric_info.get('unit', 'seconds'),
+                                'category': category.replace('_metrics', ''),
+                                'max_value': stats.get('max_value', 0),
+                                'avg_value': stats.get('avg_value', 0),
+                                'readable_max': stats.get('readable_max', {}),
+                                'readable_avg': stats.get('readable_avg', {}),
+                                'data_points': stats.get('count', 0),
+                                'top_5_detailed': top_details
+                            }
+                if metrics_details:
+                    structured['metrics_details'] = metrics_details
+            except Exception:
+                pass
             
             return structured
             

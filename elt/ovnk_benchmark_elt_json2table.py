@@ -76,7 +76,8 @@ class PerformanceDataELT(EltUtility):
             elif extracted['data_type'] == 'latencyelt_metrics':  # NEW: Handle latencyELT data
                 extracted['structured_data'] = self.latencyelt.extract_ovn_latency_data(mcp_results)                
             elif extracted['data_type'] == 'ovn_latency_metrics':  # NEW: Handle OVN latency metrics
-                extracted['structured_data'] = self.ovn_latency_elt.extract_ovn_latency_data(mcp_results)
+                # Use latencyELT to ensure derived latencyelt_* tables (sync top20, all metrics top5)
+                extracted['structured_data'] = self.latencyelt.extract_ovn_latency_data(mcp_results)
             elif extracted['data_type'] == 'kube_api_metrics':  # NEW: Handle Kube API metrics
                 extracted['structured_data'] = self.kube_api_elt.extract_kube_api_data(mcp_results)   
             elif extracted['data_type'] == 'ovn_deep_drive':  # NEW: Handle deep drive data
@@ -355,7 +356,8 @@ class PerformanceDataELT(EltUtility):
             elif data_type == 'latencyelt_metrics':  # NEW: Handle latencyELT HTML generation
                 return self.latencyelt.generate_html_tables(dataframes)                     
             elif data_type == 'ovn_latency_metrics':  # NEW: Handle OVN latency HTML generation
-                return self.ovn_latency_elt.generate_html_tables(dataframes)
+                # Use latencyELT generator so latencyelt_* tables render in HTML
+                return self.latencyelt.generate_html_tables(dataframes)
             elif data_type == 'kube_api_metrics':  # NEW: Handle Kube API metrics HTML generation
                 return self.kube_api_elt.generate_html_tables(dataframes)   
             elif data_type == 'ovn_deep_drive':  # NEW: Handle deep drive HTML generation
