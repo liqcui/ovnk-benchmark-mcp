@@ -45,9 +45,27 @@ warnings.filterwarnings(
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Add filter to suppress invalid HTTP request logs
+class _SuppressInvalidHttp(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return "Invalid HTTP request received" not in msg
+
+logging.getLogger("uvicorn").addFilter(_SuppressInvalidHttp())
+logging.getLogger("uvicorn.error").addFilter(_SuppressInvalidHttp())
+logging.getLogger("uvicorn.access").addFilter(_SuppressInvalidHttp())
+logging.getLogger("uvicorn.protocols.http.h11_impl").addFilter(_SuppressInvalidHttp())
+logging.getLogger("uvicorn.protocols.http.httptools_impl").addFilter(_SuppressInvalidHttp())
+
 class ChatRequest(BaseModel):
     """Chat request model"""
     message: str = Field(..., description="User message to process")
+    conversation_id: str = Field(default="default", description="Conversation identifier")
+    system_prompt: Optional[str] = Field(default=None, description="Optional system prompt override")
+
+class SystemPromptRequest(BaseModel):
+    """System prompt configuration request"""
+    system_prompt: str = Field(..., description="System prompt to set")
     conversation_id: str = Field(default="default", description="Conversation identifier")
 
 class HealthResponse(BaseModel):
@@ -74,7 +92,13 @@ class MCPTool(BaseTool):
     async def _arun(self, **kwargs) -> str:
         """Asynchronous tool execution"""
         try:
-            result = await self.mcp_client.call_tool(self.name, kwargs)
+            # Handle both direct kwargs and nested kwargs
+            params = kwargs.get('kwargs', kwargs) or {}
+            if isinstance(params, dict):
+                # Remove None values to use tool defaults
+                params = {k: v for k, v in params.items() if v is not None}
+            
+            result = await self.mcp_client.call_tool(self.name, params)
             return json.dumps(result, indent=2)
         except Exception as e:
             logger.error(f"Error calling MCP tool {self.name}: {e}")
@@ -95,26 +119,19 @@ class MCPClient:
             url = f"{self.mcp_server_url}/mcp"
 
             # Connect to the server using Streamable HTTP
-            async with streamablehttp_client(
-                url,
-                # headers={"accept": "application/json"}
-                ) as (
-                    read_stream,
-                    write_stream,
-                    get_session_id,
-            ):
+            async with streamablehttp_client(url) as (read_stream, write_stream, get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
                     # Initialize the connection
                     await session.initialize()
  
                     # Get session id once connection established
                     session_id = get_session_id()
-                    print("Session ID: in call_tool", session_id)
+                    logger.info(f"Session ID: {session_id}")
                     tools_result = await session.list_tools()
+                    logger.info(f"Discovered {len(tools_result.tools)} MCP tools")
                    
-                    #print("Available tools:")
                     for tool in tools_result.tools:
- 
+                        logger.info(f"Tool discovered: {tool.name}")
                         # Handle schema that may be a dict or a Pydantic model
                         input_schema = {}
                         try:
@@ -155,33 +172,19 @@ class MCPClient:
     async def call_tool(self, tool_name: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Call an MCP tool with parameters"""
         try:
-            primary_url = f"{self.mcp_server_url}/mcp"
+            url = f"{self.mcp_server_url}/mcp"
 
-            async def _open_and_call(url: str) -> Dict[str, Any]:
-                async with streamablehttp_client(url) as connection:
-                    if isinstance(connection, tuple) and len(connection) == 3:
-                        read_stream, write_stream, get_session_id = connection
-                    else:
-                        read_stream, write_stream = connection
-                        get_session_id = None
-
+            async with streamablehttp_client(url) as (read_stream, write_stream, get_session_id):
+                try:
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         if get_session_id:
-                            logger.info(f"Session ID: in call_tool {get_session_id()}")
+                            logger.info(f"Session ID in call_tool: {get_session_id()}")
                         logger.info(f"Calling tool {tool_name} with params {params}")
 
                         # Pass parameters directly according to the tool's input schema
-                        request_data = {
-                            "request": params or {}
-                        }
+                        result = await session.call_tool(tool_name, params or {})
 
-                        result = await session.call_tool(tool_name, request_data)
-                        print("#*"*50)
-                        print(type(result))
-                        print("result in call_tool of mcp client:\n",result)
-                        print("#*"*50)
-                        
                         # Enhanced error handling for JSON parsing
                         if not result.content:
                             logger.warning(f"Tool {tool_name} returned empty content")
@@ -199,24 +202,23 @@ class MCPClient:
                         # Handle different response formats
                         content_text = content_text.strip()
                         
-                        # If content is empty after stripping
-                        if not content_text:
-                            return {"error": "Empty response after trimming whitespace", "tool": tool_name}
-                        
                         # Try to parse as JSON first
                         try:
-                            json_data = json.loads(content_text)
-                            # print("#*"*50)
-                            # print("json_data type is:\n",type(json_data))
-                            if tool_name in ["get_mcp_health_status",]:
-                                formated_result=json_data           
+                            # Check if content looks like JSON
+                            if content_text[:1] in ['{', '[']:
+                                json_data = json.loads(content_text)
+                                logger.info(f"Parsed JSON from {tool_name}")
+                                
+                                # Return health check data directly
+                                if tool_name in ["get_mcp_health_status"]:
+                                    return json_data
+                                else:
+                                    # Format other data as HTML table
+                                    return json_to_html_table(json_data)
                             else:
-                                # formated_result=format_results_as_table(json_data)
-                                formated_result=json_to_html_table(json_data)
-                            # print("formated_result in call_tool of mcp client:\n",formated_result)
-                            # print("#*"*50)
-                            # return json_data
-                            return formated_result 
+                                # Return plain text
+                                return content_text
+                                
                         except json.JSONDecodeError as json_err:
                             logger.error(f"Failed to parse JSON from tool {tool_name}. Content: '{content_text[:200]}...'")
                             logger.error(f"JSON decode error: {json_err}")
@@ -238,19 +240,13 @@ class MCPClient:
                                     "content_type": "text",
                                     "message": "Tool returned plain text instead of JSON"
                                 }
-
-            last_error = None
-            for attempt in range(1, 3):
-                try:
-                    logger.info(f"Calling tool via {primary_url} (attempt {attempt})")
-                    return await _open_and_call(primary_url)
                 except Exception as e:
-                    traceback.print_exc()
-                    last_error = e
-                    logger.warning(f"call_tool attempt {attempt} failed for {primary_url}: {repr(e)}")
-                    await asyncio.sleep(0.2 * attempt)
-            if last_error:
-                raise last_error
+                    logger.error(f"MCP ClientSession error for tool {tool_name}: {e}")
+                    return {
+                        "error": str(e),
+                        "tool": tool_name,
+                        "error_type": type(e).__name__
+                    }
                     
         except Exception as e:
             logger.error(f"Error calling tool {tool_name}: {e}")
@@ -267,21 +263,14 @@ class MCPClient:
             url = f"{self.mcp_server_url}/mcp"
 
             # Connect to the server using Streamable HTTP
-            async with streamablehttp_client(
-                url
-                # headers={"accept": "application/json"}
-                ) as (
-                    read_stream,
-                    write_stream,
-                    get_session_id,
-            ):
+            async with streamablehttp_client(url) as (read_stream, write_stream, get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
                     # Initialize the connection
                     await session.initialize()
  
                     # Get session id once connection established
                     session_id = get_session_id()
-                    print("Session ID: in call_tool", session_id)
+                    logger.info(f"Health check session ID: {session_id}")
                     if session_id:
                        return {
                         "status": "healthy",
@@ -312,9 +301,7 @@ class MCPClient:
             await self.connect()
             
             # Try different health check tools in order of preference
-            health_tools = [
-                "get_mcp_health_status"
-            ]
+            health_tools = ["get_mcp_health_status"]
             
             health_result = None
             tool_used = None
@@ -346,13 +333,6 @@ class MCPClient:
                 overall_health = "unknown"
                 if tool_used == "get_mcp_health_status":
                     overall_health = health_result.get("status", "unknown")
-                elif tool_used == "get_openshift_general_info":
-                    # Infer health from cluster info
-                    if "nodes" in health_result or "cluster_version" in health_result:
-                        overall_health = "good"
-                elif tool_used in ["get_node_info", "get_api_server_metrics"]:
-                    # If we can get node or API metrics, cluster is responsive
-                    overall_health = "moderate"
                 
                 return {
                     "status": "healthy",
@@ -391,24 +371,75 @@ class ChatBot:
         self.mcp_client = mcp_client
         self.memory = MemorySaver()
         self.conversations: Dict[str, CompiledStateGraph] = {}
+        self.conversation_system_prompts: Dict[str, str] = {}
+        
+        # Default system prompt based on OVN-K benchmark capabilities
+        self.default_system_prompt = """You are an expert OpenShift OVN-Kubernetes (OVN-K) performance analyst with deep knowledge of:
+- OVN-Kubernetes networking architecture and components
+- OpenShift cluster performance monitoring and optimization
+- Prometheus metrics analysis and interpretation
+- Network performance troubleshooting and debugging
+- OVS (Open vSwitch) dataplane performance analysis
+- Container networking performance optimization
+- Be able to explain metrics and typical scenarios where metrics are used
+
+When analyzing OVN-K performance data:
+1. Focus on network performance bottlenecks, latency issues, and resource utilization patterns
+2. Provide actionable insights with specific, prioritized recommendations
+3. Explain technical findings in clear, well-structured responses with proper formatting
+4. Use available MCP tools to gather comprehensive performance data across all components
+5. Correlate metrics across multiple dimensions (pods, containers, nodes, OVS) to identify root causes
+6. Prioritize critical issues affecting network stability and performance
+
+Key analysis areas:
+- **Cluster Information**: Node health, resource capacity, operator status, network policies
+- **Node Usage**: CPU, memory, network I/O utilization across control plane and worker nodes
+- **OVN-K Pods**: Resource consumption of ovnkube-controller and ovnkube-node pods
+- **OVN Containers**: Container-level metrics for sb-ovsdb, nb-ovsdb, northd, ovn-controller
+- **OVS Metrics**: Flow table statistics, bridge performance, connection health
+- **Latency Metrics**: Pod ready duration, sync duration, CNI latency, service latency
+- **API Performance**: Kubernetes API server request rates, latencies, and error rates
+- **Overall Performance**: Cross-component analysis with health scoring and recommendations
+
+Always structure your responses with:
+- **Explain Metrics**: Clarify what each metric means and typical scenarios where it's used
+- **Executive Summary**: High-level findings suitable for management stakeholders
+- **Detailed Analysis**: Technical deep-dive with specific metrics and thresholds
+- **Performance Insights**: Trends, patterns, and anomalies detected in the data
+- **Prioritized Recommendations**: Specific actions ranked by urgency and impact
+- **Next Steps**: Guidance for further investigation or immediate remediation
+
+Formatting guidelines:
+- Use **bold** for emphasis on critical findings and section headers
+- Use bullet points for lists and multiple items
+- Include specific metric values and thresholds when discussing performance
+- Explain technical terms clearly for mixed technical/non-technical audiences
+- Always explain the business impact of technical issues found
+
+Be thorough, data-driven, and always explain both what you found and why it matters for cluster operations."""
 
         load_dotenv()
         api_key = os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("BASE_URL")    
 
         self.llm = ChatOpenAI(
-                model="gemini-1.5-flash",
-                base_url=base_url,
-                api_key=api_key,
-                temperature=0.1,
-                streaming=True         
-            )        
-        # Initialize LLM (you may need to set OPENAI_API_KEY environment variable)
-        # self.llm = ChatOpenAI(
-        #     model="gpt-4o-mini",  # or gpt-3.5-turbo for cost efficiency
-        #     temperature=0,
-        #     streaming=True
-        # )
+            model="gemini-2.5-pro",
+            base_url=base_url,
+            api_key=api_key,
+            temperature=0.1,
+            streaming=True         
+        )
+
+    def set_system_prompt(self, conversation_id: str, system_prompt: str):
+        """Set custom system prompt for a conversation"""
+        self.conversation_system_prompts[conversation_id] = system_prompt
+        # Clear existing agent to force recreation with new prompt
+        if conversation_id in self.conversations:
+            del self.conversations[conversation_id]
+
+    def get_system_prompt(self, conversation_id: str) -> str:
+        """Get system prompt for a conversation"""
+        return self.conversation_system_prompts.get(conversation_id, self.default_system_prompt)
     
     def get_or_create_agent(self, conversation_id: str) -> CompiledStateGraph:
         """Get or create a conversation agent with memory"""
@@ -423,50 +454,106 @@ class ChatBot:
             
         return self.conversations[conversation_id]
     
-    async def chat_stream(self, message: str, conversation_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream chat response"""
+    async def chat_stream(self, message: str, conversation_id: str, system_prompt: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream chat response with proper message streaming"""
         try:
+            # Set custom system prompt if provided
+            if system_prompt:
+                self.set_system_prompt(conversation_id, system_prompt)
+            
             agent = self.get_or_create_agent(conversation_id)
             
             # Create thread config for this conversation
             config = {"configurable": {"thread_id": conversation_id}}
             
+            # Track what we've already sent to avoid duplicates
+            tool_results_sent = set()
+            last_ai_content = ""
+            
+            # Get effective system prompt
+            system_prompt_effective = self.get_system_prompt(conversation_id)
+            
+            # Construct input with system prompt
+            input_messages = [("system", system_prompt_effective), ("user", message)]
+            
             # Stream the response
-            async for chunk in agent.astream(
-                {"messages": [("user", message)]},
-                config=config
-            ):
+            async for chunk in agent.astream({"messages": input_messages}, config=config):
                 # Process different types of chunks
                 if "agent" in chunk:
                     agent_data = chunk["agent"]
                     if "messages" in agent_data:
                         for msg in agent_data["messages"]:
                             if hasattr(msg, 'content') and msg.content:
-                                yield {
-                                    "type": "message",
-                                    "content": str(msg.content),
-                                    "timestamp": datetime.now(timezone.utc).isoformat()
-                                }
+                                content = str(msg.content)
+                                
+                                # Only send new content (avoid duplicates)
+                                if content != last_ai_content:
+                                    last_ai_content = content
+                                    yield {
+                                        "type": "message",
+                                        "content": content,
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                        "streaming": True,
+                                        "tool_result": False
+                                    }
                 
                 elif "tools" in chunk:
                     tool_data = chunk["tools"]
                     if "messages" in tool_data:
                         for msg in tool_data["messages"]:
                             if hasattr(msg, 'content') and msg.content:
-                                # Format tool result for display
                                 try:
-                                    result = json.loads(msg.content)
-                                    yield {
-                                        "type": "message",
-                                        "content": self._format_json_response(result),
-                                        "timestamp": datetime.now(timezone.utc).isoformat()
-                                    }
-                                except (json.JSONDecodeError, TypeError):
+                                    content = msg.content
+                                    
+                                    # Handle different content types
+                                    if isinstance(content, dict):
+                                        # Check for HTML table or formatted content
+                                        if any(key in content for key in ['html', 'table', 'content']):
+                                            formatted_content = content.get('html') or content.get('table') or content.get('content') or json.dumps(content, indent=2)
+                                        else:
+                                            formatted_content = json.dumps(content, indent=2)
+                                    elif isinstance(content, str):
+                                        # Check if it's HTML or JSON
+                                        if content.strip().startswith('<table') or content.strip().startswith('<!DOCTYPE') or '<html>' in content:
+                                            formatted_content = content
+                                        elif content[:1] in ['{', '[']:
+                                            try:
+                                                parsed = json.loads(content)
+                                                formatted_content = json.dumps(parsed, indent=2)
+                                            except:
+                                                formatted_content = content
+                                        else:
+                                            formatted_content = content
+                                    else:
+                                        formatted_content = str(content)
+                                    
+                                    # Use hash to track duplicates
+                                    tool_result_id = hash(str(content))
+                                    if tool_result_id not in tool_results_sent:
+                                        tool_results_sent.add(tool_result_id)
+                                        
+                                        yield {
+                                            "type": "message",
+                                            "content": formatted_content,
+                                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                                            "tool_result": True,
+                                            "streaming": False
+                                        }
+                                except Exception as e:
+                                    logger.error(f"Error formatting tool result: {e}")
                                     yield {
                                         "type": "message",
                                         "content": str(msg.content),
-                                        "timestamp": datetime.now(timezone.utc).isoformat()
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                        "tool_result": True,
+                                        "streaming": False
                                     }
+            
+            # Signal completion
+            yield {
+                "type": "message_complete",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
                         
         except Exception as e:
             logger.error(f"Error in chat stream: {e}")
@@ -475,89 +562,6 @@ class ChatBot:
                 "content": f"An error occurred: {str(e)}",
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
-    
-    def _format_json_response(self, data: Dict[str, Any]) -> str:
-        """Format JSON response as readable text"""
-        # If not a dict, return as string safely
-        if not isinstance(data, dict):
-            return data if isinstance(data, str) else json.dumps(data, indent=2)
-
-        if "error" in data:
-            return f"⚠️ Error: {data.get('error')}"
-
-        # Format different types of responses
-        if "health_check_timestamp" in data:
-            return self._format_health_check(data)
-        elif "analysis_result" in data:
-            return self._format_analysis_result(data)
-        elif "collection_type" in data:
-            return self._format_metrics_collection(data)
-
-        # Generic formatting
-        return json.dumps(data, indent=2)
-    
-    def _format_health_check(self, data: Dict[str, Any]) -> str:
-        """Format health check response"""
-        status = data.get("overall_cluster_health", "unknown")
-        critical = data.get("critical_issues", 0)
-        warnings = data.get("warning_issues", 0)
-        
-        status_emoji = {
-            "excellent": "🟢",
-            "good": "🟢", 
-            "moderate": "🟡",
-            "poor": "🟠",
-            "critical": "🔴"
-        }.get(status.lower(), "❓")
-        
-        response = f"{status_emoji} **Cluster Health: {status.upper()}**\n\n"
-        
-        if critical > 0:
-            response += f"🚨 **Critical Issues:** {critical}\n"
-        if warnings > 0:
-            response += f"⚠️ **Warnings:** {warnings}\n"
-            
-        if data.get("immediate_action_required"):
-            response += "\n🔥 **Immediate action required!**\n"
-        
-        return response
-    
-    def _format_analysis_result(self, data: Dict[str, Any]) -> str:
-        """Format analysis result response"""
-        analysis = data.get("analysis_result", {})
-        
-        response = "📊 **Performance Analysis Complete**\n\n"
-        
-        if "health_score" in analysis:
-            score = analysis["health_score"]
-            response += f"**Health Score:** {score}/100\n"
-        
-        if "summary" in analysis:
-            response += f"**Summary:** {analysis['summary']}\n"
-        
-        if "critical_issues" in analysis:
-            issues = analysis["critical_issues"]
-            if issues:
-                response += f"\n🚨 **Critical Issues ({len(issues)}):**\n"
-                for issue in issues[:3]:  # Show first 3
-                    response += f"• {issue}\n"
-        
-        return response
-    
-    def _format_metrics_collection(self, data: Dict[str, Any]) -> str:
-        """Format metrics collection response"""
-        collection_type = data.get("collection_type", "unknown")
-        timestamp = data.get("collection_timestamp", "")
-        
-        response = f"📈 **Metrics Collection: {collection_type.title()}**\n"
-        if timestamp:
-            response += f"**Collected at:** {timestamp}\n"
-        
-        # Add summary statistics
-        if "top_10_pods" in data:
-            response += f"**Pods analyzed:** {len(data['top_10_pods'])}\n"
-        
-        return response
 
 # Global instances
 mcp_client = MCPClient()
@@ -648,25 +652,71 @@ async def list_tools():
 async def call_tool_direct(tool_name: str, params: Dict[str, Any] = None):
     """Direct tool call endpoint"""
     try:
-        params={
-            "request": params or {}
-        }
         result = await mcp_client.call_tool(tool_name, params or {})
-        print("#*"*35)
-        print("result of /api/tools is:\n",type(result),result)
+        logger.info(f"Direct tool call result type: {type(result)}")
+        
         # If the tool already returned a formatted HTML string, return as is
         if isinstance(result, str):
             return result
         # If the result is a dict with an error from the tool call, pass through
         if isinstance(result, dict) and result.get("error") and result.get("tool"):
             return result
-        # Otherwise, attempt to format dict results into HTML table
-        # formated_result = json_to_html_table(result) if isinstance(result, dict) else result
-        print("#*"*35)
-        # print("result of /api/tools is:\n",type(formated_result),formated_result)        
+        # Otherwise, return the result
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/system-prompt")
+async def set_system_prompt(request: SystemPromptRequest):
+    """Set custom system prompt for a conversation"""
+    if not chatbot:
+        raise HTTPException(status_code=503, detail="Chatbot not initialized")
+    
+    try:
+        chatbot.set_system_prompt(request.conversation_id, request.system_prompt)
+        return {
+            "status": "success",
+            "message": f"System prompt updated for conversation {request.conversation_id}",
+            "conversation_id": request.conversation_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set system prompt: {str(e)}")
+
+@app.get("/api/system-prompt/{conversation_id}")
+async def get_system_prompt(conversation_id: str):
+    """Get current system prompt for a conversation"""
+    if not chatbot:
+        raise HTTPException(status_code=503, detail="Chatbot not initialized")
+    
+    try:
+        system_prompt = chatbot.get_system_prompt(conversation_id)
+        return {
+            "conversation_id": conversation_id,
+            "system_prompt": system_prompt,
+            "is_default": system_prompt == chatbot.default_system_prompt
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get system prompt: {str(e)}")
+
+@app.delete("/api/system-prompt/{conversation_id}")
+async def reset_system_prompt(conversation_id: str):
+    """Reset system prompt to default for a conversation"""
+    if not chatbot:
+        raise HTTPException(status_code=503, detail="Chatbot not initialized")
+    
+    try:
+        if conversation_id in chatbot.conversation_system_prompts:
+            del chatbot.conversation_system_prompts[conversation_id]
+        if conversation_id in chatbot.conversations:
+            del chatbot.conversations[conversation_id]
+        
+        return {
+            "status": "success",
+            "message": f"System prompt reset to default for conversation {conversation_id}",
+            "conversation_id": conversation_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reset system prompt: {str(e)}")
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
@@ -676,7 +726,7 @@ async def chat_stream(request: ChatRequest):
     
     async def generate():
         try:
-            async for chunk in chatbot.chat_stream(request.message, request.conversation_id):
+            async for chunk in chatbot.chat_stream(request.message, request.conversation_id, request.system_prompt):
                 # Format as Server-Sent Events
                 yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as e:
@@ -686,6 +736,13 @@ async def chat_stream(request: ChatRequest):
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
             yield f"data: {json.dumps(error_chunk)}\n\n"
+        
+        # Signal stream end
+        completion_chunk = {
+            "type": "stream_end",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        yield f"data: {json.dumps(completion_chunk)}\n\n"
     
     return StreamingResponse(
         generate(),
@@ -694,6 +751,7 @@ async def chat_stream(request: ChatRequest):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "text/event-stream",
+            "X-Accel-Buffering": "no"
         }
     )
 
@@ -704,7 +762,7 @@ async def chat_simple(request: ChatRequest):
         raise HTTPException(status_code=503, detail="Chatbot not initialized")
     
     responses = []
-    async for chunk in chatbot.chat_stream(request.message, request.conversation_id):
+    async for chunk in chatbot.chat_stream(request.message, request.conversation_id, request.system_prompt):
         responses.append(chunk)
     
     return {"responses": responses}

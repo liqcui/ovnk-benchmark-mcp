@@ -24,7 +24,6 @@
             display: flex;
             height: 100vh;
             background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
         }
 
         .sidebar {
@@ -119,16 +118,14 @@
         }
 
         @keyframes pulse {
-            0% {
+
+            0%,
+            100% {
                 opacity: 1;
             }
 
             50% {
                 opacity: 0.5;
-            }
-
-            100% {
-                opacity: 1;
             }
         }
 
@@ -234,6 +231,37 @@
             color: #2c3e50;
             align-self: flex-start;
             border: 1px solid #e9ecef;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            line-height: 1.6;
+            max-width: 90%;
+        }
+
+        .message.ai strong {
+            color: #2c3e50;
+        }
+
+        .message.ai em {
+            color: #7f8c8d;
+        }
+
+        .message.ai.streaming::after {
+            content: '▊';
+            animation: blink 1s infinite;
+            color: #3498db;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+
+            0%,
+            50% {
+                opacity: 1;
+            }
+
+            51%,
+            100% {
+                opacity: 0;
+            }
         }
 
         .message.system {
@@ -250,6 +278,62 @@
             color: #721c24;
             align-self: center;
             border: 1px solid #f5c6cb;
+        }
+
+        .message table.response-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 12px;
+            background: white;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .message table.response-table th,
+        .message table.response-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .message table.response-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .message table.response-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+
+        .message table.response-table tr:hover {
+            background: #e9ecef;
+        }
+
+        .tool-result-section {
+            background: #e8f4f8;
+            padding: 12px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border-left: 4px solid #3498db;
+        }
+
+        .tool-result-header {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .ai-analysis-section {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 2px solid #e9ecef;
         }
 
         .typing-indicator {
@@ -346,52 +430,6 @@
             cursor: not-allowed;
         }
 
-        .tables-container {
-            margin-top: 20px;
-            max-height: 300px;
-            overflow-y: auto;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            display: none;
-        }
-
-        .table-wrapper {
-            margin: 20px;
-        }
-
-        .table-wrapper h4 {
-            margin-bottom: 15px;
-            color: #2c3e50;
-            font-size: 16px;
-            font-weight: 600;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 12px;
-        }
-
-        th,
-        td {
-            padding: 8px 12px;
-            text-align: left;
-            border-bottom: 1px solid #e9ecef;
-        }
-
-        th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #495057;
-            position: sticky;
-            top: 0;
-        }
-
-        tr:hover {
-            background: #f8f9fa;
-        }
-
         .loading-overlay {
             position: fixed;
             top: 0;
@@ -463,6 +501,83 @@
             color: white;
         }
 
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            color: #2c3e50;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .modal-body label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .modal-body textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            resize: vertical;
+            min-height: 150px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            justify-content: flex-end;
+        }
+
         @media (max-width: 768px) {
             .container {
                 flex-direction: column;
@@ -516,40 +631,47 @@
 
             <div class="quick-actions">
                 <h3>Quick Actions</h3>
-                <button class="action-button" onclick="sendQuickMessage('Tell me the current cluster information?')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Tell me the current cluster information and analysis readable?')">
                     🏛️ Cluster Overview
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Perform comprehensive general cluster status check and health assessment')">
+                    onclick="sendQuickMessage('Perform comprehensive general cluster status check and health assessment and make it readable')">
                     🔍 Cluster Status Check
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Show me current cluster node usage')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me current cluster node usage and analysis readable')">
                     🖥️ Cluster Node Usage
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me OVN-K pod resource usage and analysis readable')">
                     🌐 OVN-K Pods Usage
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVS performance metrics')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Check and Analyze OVS performance metrics and make it readable')">
                     🌐 OVS Analysis
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze Multus CNI performance')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Check and Analyze Multus CNI performance and make it readable')">
                     🌐 Multus Analysis
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVN-K latency performance')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Check and Analyze OVN-K latency performance and make it readable')">
                     🌐 OVNK Latency
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Check and Analyze API server performance metrics')">
+                    onclick="sendQuickMessage('Check and Analyze API server performance metrics and make it readable')">
                     ⚡ API Performance
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Show me OVN-K components deep drive analysis')">
-                    🔀 OVN-K Deep Dive
+                    onclick="sendQuickMessage('Show me OVN-K components deep drive analysis and make it readable')">
+                    🔬 OVN-K Deep Dive
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Run overall OCP Cluster Performane analysis, include API perormance')">
+                    onclick="sendQuickMessage('Run overall OCP Cluster Performance analysis, include API performance and make it readable')">
                     📈 Full Performance Report
                 </button>
+                <button class="action-button" onclick="toggleSystemPromptModal()">⚙️ Configure AI Behavior</button>
             </div>
 
             <div class="status-panel">
@@ -618,11 +740,43 @@
         </div>
     </div>
 
-    <div class="tables-container" id="tablesContainer">
-        <div id="tables"></div>
+    <div class="modal-overlay" id="systemPromptModal" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Configure AI System Prompt</h3>
+                <button class="modal-close" onclick="toggleSystemPromptModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <label for="systemPromptInput">System Prompt:</label>
+                <textarea id="systemPromptInput" rows="8"
+                    placeholder="Enter custom system prompt to modify AI behavior..."></textarea>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="loadCurrentSystemPrompt()">Load Current</button>
+                    <button class="btn btn-secondary" onclick="resetSystemPrompt()">Reset to Default</button>
+                    <button class="btn btn-primary" onclick="saveSystemPrompt()">Apply</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
+        // Utility function to decode Unicode escapes
+        function decodeUnicodeEscapes(text) {
+            try {
+                if (!text || typeof text !== 'string') return text;
+                text = text.replace(/\\u([0-9a-fA-F]{4})/g, (m, g1) => {
+                    try {
+                        return String.fromCharCode(parseInt(g1, 16));
+                    } catch {
+                        return m;
+                    }
+                });
+                return text;
+            } catch (e) {
+                return text;
+            }
+        }
+
         // Global application state
         class ChatApplication {
             constructor() {
@@ -642,8 +796,6 @@
                 this.messageInput = document.getElementById('messageInput');
                 this.sendButton = document.getElementById('sendButton');
                 this.typingIndicator = document.getElementById('typingIndicator');
-                this.tablesContainer = document.getElementById('tablesContainer');
-                this.tablesDiv = document.getElementById('tables');
                 this.loadingOverlay = document.getElementById('loadingOverlay');
 
                 // Status elements
@@ -714,7 +866,7 @@
                 const message = customMessage || this.messageInput.value.trim();
                 if (!message || this.isTyping) return;
 
-                console.log(message, "in sendMessage");
+                console.log('Sending message:', message);
 
                 // Clear input if not using custom message
                 if (!customMessage) {
@@ -757,6 +909,9 @@
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let aiMessageDiv = null;
+                let toolResultsContent = [];
+                let aiAnalysisContent = '';
+                let hasToolResults = false;
 
                 try {
                     while (true) {
@@ -771,38 +926,98 @@
                             if (line.startsWith('data: ')) {
                                 try {
                                     const data = JSON.parse(line.slice(6));
+                                    console.log('Received stream data:', data.type, data.tool_result);
 
                                     if (data.type === 'message') {
                                         if (!aiMessageDiv) {
                                             this.showTyping(false);
                                             aiMessageDiv = this.addMessage('', 'ai');
+                                            aiMessageDiv.classList.add('streaming');
                                         }
 
-                                        // Convert markdown-style formatting to HTML
-                                        let content = data.content;
-                                        content = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-                                        content = content.replace(/\*(.*?)\*/g, '<em>$1</em>');
-                                        content = content.replace(/\n/g, '<br>');
+                                        // Decode Unicode escapes in content
+                                        let content = decodeUnicodeEscapes(data.content);
 
-                                        aiMessageDiv.innerHTML += content;
+                                        // Separate tool results from AI analysis
+                                        if (data.tool_result) {
+                                            console.log('Tool result received:', content.substring(0, 100));
+                                            hasToolResults = true;
+                                            toolResultsContent.push(content);
+                                        } else {
+                                            console.log('AI analysis received:', content.substring(0, 100));
+                                            if (data.streaming) {
+                                                aiAnalysisContent = content;
+                                            } else {
+                                                aiAnalysisContent += content;
+                                            }
+                                        }
+
+                                        // Update display with both tool results and AI analysis
+                                        this.updateMessageDisplay(aiMessageDiv, toolResultsContent, aiAnalysisContent, hasToolResults);
                                         this.scrollToBottom();
 
-                                    } else if (data.type === 'table') {
-                                        this.displayTable(data.content, data.metadata);
-
+                                    } else if (data.type === 'message_complete' || data.type === 'stream_end') {
+                                        if (aiMessageDiv) {
+                                            aiMessageDiv.classList.remove('streaming');
+                                            console.log('Message complete. Tool results:', toolResultsContent.length, 'AI analysis:', aiAnalysisContent.length);
+                                        }
                                     } else if (data.type === 'error') {
                                         this.showTyping(false);
                                         this.addMessage(data.content, 'error');
                                     }
                                 } catch (e) {
-                                    console.error('Error parsing SSE data:', e);
+                                    console.error('Error parsing SSE data:', e, line);
                                 }
                             }
                         }
                     }
                 } finally {
                     this.showTyping(false);
+                    if (aiMessageDiv) {
+                        aiMessageDiv.classList.remove('streaming');
+                    }
                 }
+            }
+
+            updateMessageDisplay(messageDiv, toolResults, aiAnalysis, hasToolResults) {
+                let displayContent = '';
+
+                // Display tool results first
+                if (toolResults.length > 0) {
+                    for (let i = 0; i < toolResults.length; i++) {
+                        let toolContent = toolResults[i];
+
+                        // Ensure tables have proper styling
+                        if (toolContent.includes('<table')) {
+                            toolContent = toolContent.replace(/<table/g, '<table class="response-table"');
+                        }
+
+                        displayContent += `<div class="tool-result-section">
+                            <div class="tool-result-header">📊 Data Result ${i + 1}</div>
+                            ${toolContent}
+                        </div>`;
+                    }
+                }
+
+                // Display AI analysis after tool results
+                if (aiAnalysis.trim()) {
+                    let formattedAnalysis = aiAnalysis;
+                    // Convert markdown-style formatting to HTML
+                    formattedAnalysis = formattedAnalysis.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                    formattedAnalysis = formattedAnalysis.replace(/\*(.*?)\*/g, '<em>$1</em>');
+                    formattedAnalysis = formattedAnalysis.replace(/\n/g, '<br>');
+
+                    if (hasToolResults) {
+                        displayContent += `<div class="ai-analysis-section">
+                            <div style="font-weight: 600; color: #2c3e50; margin-bottom: 10px;">🤖 AI Analysis</div>
+                            ${formattedAnalysis}
+                        </div>`;
+                    } else {
+                        displayContent += formattedAnalysis;
+                    }
+                }
+
+                messageDiv.innerHTML = displayContent || 'Processing...';
             }
 
             addMessage(content, type) {
@@ -834,17 +1049,6 @@
                 }
             }
 
-            displayTable(tableHtml, metadata) {
-                this.tablesDiv.innerHTML += `
-                    <div class="table-wrapper">
-                        <h4>${metadata?.title || 'Data Table'}</h4>
-                        ${tableHtml}
-                    </div>
-                `;
-                this.tablesContainer.style.display = 'block';
-                this.scrollToBottom();
-            }
-
             scrollToBottom() {
                 this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
             }
@@ -856,8 +1060,6 @@
                         <p>How can I help you with your OpenShift cluster today?</p>
                     </div>
                 `;
-                this.tablesContainer.style.display = 'none';
-                this.tablesDiv.innerHTML = '';
             }
 
             async checkHealth(showLoading = true) {
@@ -962,6 +1164,75 @@
             updateClusterStatus(status, text) {
                 this.clusterStatus.className = `status-dot ${status}`;
                 this.clusterStatusText.textContent = text;
+            }
+        }
+
+        // System prompt management functions
+        async function toggleSystemPromptModal() {
+            const modal = document.getElementById('systemPromptModal');
+            if (modal.style.display === 'none' || !modal.style.display) {
+                modal.style.display = 'flex';
+                await loadCurrentSystemPrompt();
+            } else {
+                modal.style.display = 'none';
+            }
+        }
+
+        async function loadCurrentSystemPrompt() {
+            try {
+                const response = await fetch(`/api/system-prompt/${chatApp.conversationId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('systemPromptInput').value = data.system_prompt;
+                }
+            } catch (error) {
+                console.error('Failed to load system prompt:', error);
+            }
+        }
+
+        async function saveSystemPrompt() {
+            const systemPrompt = document.getElementById('systemPromptInput').value.trim();
+            if (!systemPrompt) {
+                alert('Please enter a system prompt');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/system-prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        system_prompt: systemPrompt,
+                        conversation_id: chatApp.conversationId
+                    })
+                });
+
+                if (response.ok) {
+                    chatApp.addMessage('AI behavior updated successfully', 'system');
+                    toggleSystemPromptModal();
+                } else {
+                    throw new Error('Failed to save system prompt');
+                }
+            } catch (error) {
+                alert('Failed to save system prompt: ' + error.message);
+            }
+        }
+
+        async function resetSystemPrompt() {
+            try {
+                const response = await fetch(`/api/system-prompt/${chatApp.conversationId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    chatApp.addMessage('AI behavior reset to default', 'system');
+                    document.getElementById('systemPromptInput').value = '';
+                    toggleSystemPromptModal();
+                } else {
+                    throw new Error('Failed to reset system prompt');
+                }
+            } catch (error) {
+                alert('Failed to reset system prompt: ' + error.message);
             }
         }
 
