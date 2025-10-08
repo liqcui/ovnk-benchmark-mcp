@@ -98,7 +98,10 @@ class MCPTool(BaseTool):
                 # Remove None values to use tool defaults
                 params = {k: v for k, v in params.items() if v is not None}
             
-            result = await self.mcp_client.call_tool(self.name, params)
+            # Wrap parameters in 'request' key as expected by MCP server
+            wrapped_params = {"request": params} if params else {}
+            
+            result = await self.mcp_client.call_tool(self.name, wrapped_params)
             return json.dumps(result, indent=2)
         except Exception as e:
             logger.error(f"Error calling MCP tool {self.name}: {e}")
@@ -182,8 +185,16 @@ class MCPClient:
                             logger.info(f"Session ID in call_tool: {get_session_id()}")
                         logger.info(f"Calling tool {tool_name} with params {params}")
 
-                        # Pass parameters directly according to the tool's input schema
-                        result = await session.call_tool(tool_name, params or {})
+                        # Parameters should already be wrapped in 'request' key by MCPTool._arun
+                        # If not wrapped, wrap them here
+                        if params is None:
+                            request_params = {"request": {}}
+                        elif "request" not in params:
+                            request_params = {"request": params}
+                        else:
+                            request_params = params
+
+                        result = await session.call_tool(tool_name, request_params)
 
                         # Enhanced error handling for JSON parsing
                         if not result.content:
@@ -652,7 +663,10 @@ async def list_tools():
 async def call_tool_direct(tool_name: str, params: Dict[str, Any] = None):
     """Direct tool call endpoint"""
     try:
-        result = await mcp_client.call_tool(tool_name, params or {})
+        # Wrap parameters in 'request' key as expected by MCP server
+        wrapped_params = {"request": params} if params else {"request": {}}
+        
+        result = await mcp_client.call_tool(tool_name, wrapped_params)
         logger.info(f"Direct tool call result type: {type(result)}")
         
         # If the tool already returned a formatted HTML string, return as is
