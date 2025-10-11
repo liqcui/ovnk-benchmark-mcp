@@ -29,7 +29,6 @@ from tools.ovnk_benchmark_prometheus_ovnk_ovs import OVSUsageCollector
 from tools.ovnk_benchmark_prometheus_nodes_usage import nodeUsageCollector
 from ocauth.ovnk_benchmark_auth import OpenShiftAuth
 from config.ovnk_benchmark_config import Config
-from elt.ovnk_benchmark_elt_duckdb import PerformanceELT
 from storage.ovnk_benchmark_storage_ovnk import PrometheusStorage
 from analysis.ovnk_benchmark_performance_ovnk_deepdrive import ovnDeepDriveAnalyzer
         

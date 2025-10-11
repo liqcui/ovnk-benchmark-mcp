@@ -29,16 +29,6 @@ class PrometheusConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 
-class DatabaseConfig(BaseModel):
-    """Database configuration"""
-    type: str = "duckdb"
-    path: str = "storage/ovnk_benchmark.db"
-    backup_path: Optional[str] = "storage/backups/"
-    retention_days: int = 30
-    
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-
-
 class ReportConfig(BaseModel):
     """Report generation configuration"""
     output_dir: str = "exports"
@@ -53,7 +43,6 @@ class Config(BaseModel):
     kubeconfig_path: Optional[str] = Field(default=None)
     metrics_file: str = Field(default="config/metrics-base.yml")
     prometheus: PrometheusConfig = Field(default_factory=PrometheusConfig)
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     reports: ReportConfig = Field(default_factory=ReportConfig)
     timezone: str = Field(default="UTC")
     log_level: str = Field(default="INFO")
@@ -80,10 +69,6 @@ class Config(BaseModel):
             self.prometheus.url = prometheus_url
         if prometheus_token := os.getenv('PROMETHEUS_TOKEN'):
             self.prometheus.token = prometheus_token
-        
-        # Database
-        if db_path := os.getenv('DATABASE_PATH'):
-            self.database.path = db_path
         
         # Reports
         if output_dir := os.getenv('REPORT_OUTPUT_DIR'):
@@ -163,15 +148,11 @@ class Config(BaseModel):
     def _create_directories(self) -> None:
         """Create necessary directories"""
         directories = [
-            Path(self.database.path).parent,
             Path(self.reports.output_dir),
             'storage',
             'exports',
             'logs'
         ]
-        
-        if self.database.backup_path:
-            directories.append(Path(self.database.backup_path))
         
         for directory in directories:
             Path(directory).mkdir(parents=True, exist_ok=True)
